@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { CalendarPlus, ExternalLink, Eye, Heart } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { CalendarPlus, Copy, ExternalLink, Eye, Heart } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -12,6 +13,7 @@ import {
   TableHeader,
   TableRow
 } from '@/components/ui/table';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import EmptyState from '@/src/components/dashboard/EmptyState';
 import LeadStatusSelect from '@/src/components/dashboard/LeadStatusSelect';
 import RowDetailsDialog from '@/src/components/dashboard/RowDetailsDialog';
@@ -26,6 +28,7 @@ import {
   isStatusOnly
 } from '@/src/lib/rowUtils';
 import { ExcelRow } from '@/src/types';
+import { cn } from '@/lib/utils';
 
 interface LeadsTableProps {
   rows: ExcelRow[];
@@ -58,6 +61,16 @@ export default function LeadsTable({
   const allVisibleSelected =
     selectableVisible.length > 0 && selectableVisible.every((row) => selectedRowIds.has(row.id));
 
+  const copyToClipboard = async (value: string, label: string) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(`${label} copied`);
+    } catch {
+      toast.error(`Could not copy ${label.toLowerCase()}`);
+    }
+  };
+
   return (
     <>
       <Card>
@@ -69,10 +82,10 @@ export default function LeadsTable({
         </CardHeader>
         <CardContent className="p-0">
           <ScrollArea className="w-full whitespace-nowrap">
-            <Table>
+            <Table className="min-w-[1120px]">
               <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">
+                <TableRow className="sticky top-0 z-20 bg-card hover:bg-card">
+                  <TableHead className="w-10 bg-card">
                     <Checkbox
                       checked={allVisibleSelected}
                       onCheckedChange={onToggleAllVisible}
@@ -86,7 +99,9 @@ export default function LeadsTable({
                   <TableHead>Meeting Details</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Remarks</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="sticky right-0 z-30 bg-card text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)]">
+                    Actions
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -102,9 +117,14 @@ export default function LeadsTable({
                     const displayStatus = (status || LEAD_STATUS.FOLLOW_UP) as LeadStatusLabel | 'Failed';
                     const meetDetails = String(row['Meeting Details'] || '');
                     const selectable = canProcessLead(row);
+                    const rowHintClass = getRowHintClass(displayStatus);
 
                     return (
-                      <TableRow key={row.id} data-state={selectedRowIds.has(row.id) ? 'selected' : undefined}>
+                      <TableRow
+                        key={row.id}
+                        data-state={selectedRowIds.has(row.id) ? 'selected' : undefined}
+                        className={cn('transition-colors', rowHintClass)}
+                      >
                         <TableCell>
                           <Checkbox
                             checked={selectedRowIds.has(row.id)}
@@ -113,20 +133,52 @@ export default function LeadsTable({
                           />
                         </TableCell>
                         <TableCell className="font-medium">{row.full_name || '-'}</TableCell>
-                        <TableCell className="max-w-[200px] truncate">{row.email || '-'}</TableCell>
+                        <TableCell className="max-w-[220px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate">{row.email || '-'}</span>
+                            {row.email && (
+                              <IconTooltip label="Copy email">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label="Copy email"
+                                  className="h-7 w-7 shrink-0"
+                                  onClick={() => copyToClipboard(String(row.email), 'Email')}
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                </Button>
+                              </IconTooltip>
+                            )}
+                          </div>
+                        </TableCell>
                         <TableCell>{String(row['Date of Demo'] || '-')}</TableCell>
                         <TableCell>{String(row['Time of Demo'] || '-')}</TableCell>
                         <TableCell>
                           {hasMeetLink(meetDetails) ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => window.open(meetDetails, '_blank', 'noopener,noreferrer')}
-                            >
-                              Open Meet
-                              <ExternalLink className="h-3 w-3" />
-                            </Button>
+                            <div className="flex items-center gap-1.5">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => window.open(meetDetails, '_blank', 'noopener,noreferrer')}
+                              >
+                                Open Meet
+                                <ExternalLink className="h-3 w-3" />
+                              </Button>
+                              <IconTooltip label="Copy Meet link">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label="Copy Meet link"
+                                  className="h-7 w-7"
+                                  onClick={() => copyToClipboard(meetDetails, 'Meet link')}
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                </Button>
+                              </IconTooltip>
+                            </div>
                           ) : (
                             <span className="text-muted-foreground">-</span>
                           )}
@@ -146,8 +198,8 @@ export default function LeadsTable({
                         <TableCell className="max-w-[220px] truncate" title={row.Remarks}>
                           {row.Remarks || '-'}
                         </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
+                        <TableCell className="sticky right-0 z-10 bg-inherit text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)]">
+                          <div className="flex justify-end gap-1 bg-inherit">
                             {canScheduleDemo(row) && (
                               <Button
                                 type="button"
@@ -183,14 +235,17 @@ export default function LeadsTable({
                                 Update Status
                               </Button>
                             )}
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() => setDetailsRow(row)}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
+                            <IconTooltip label="View details">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                aria-label="View lead details"
+                                onClick={() => setDetailsRow(row)}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </IconTooltip>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -210,5 +265,25 @@ export default function LeadsTable({
         onOpenChange={(open) => !open && setDetailsRow(null)}
       />
     </>
+  );
+}
+
+function getRowHintClass(status: LeadStatusLabel | 'Failed' | '') {
+  if (status === 'Failed') return 'bg-destructive/5 hover:bg-destructive/10';
+  if (status === LEAD_STATUS.DEMO_SCHEDULED) {
+    return 'bg-orange-50/60 hover:bg-orange-50 dark:bg-orange-950/10 dark:hover:bg-orange-950/20';
+  }
+  if (status === LEAD_STATUS.DEMO_DONE) {
+    return 'bg-emerald-50/60 hover:bg-emerald-50 dark:bg-emerald-950/10 dark:hover:bg-emerald-950/20';
+  }
+  return '';
+}
+
+function IconTooltip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }

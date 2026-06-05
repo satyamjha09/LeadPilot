@@ -32,6 +32,7 @@ import {
 
 import { ExcelRow } from './src/types';
 import { findScheduledMeetLinkFromDb } from './server/scheduleDb';
+import { listEmailLogsForRow } from './server/emailLog';
 import { LEAD_STATUS, isValidLeadStatus, normalizeLeadStatus } from './server/leadStatus';
 import {
   buildProcessLeadPlan,
@@ -549,6 +550,28 @@ async function startServer() {
     } catch (err: any) {
       console.error('Lead status update failed:', err);
       return res.status(500).json({ error: err.message || 'Lead status update failed' });
+    }
+  });
+
+  app.post('/api/leads/email-history', async (req, res) => {
+    try {
+      const { row } = req.body as { row?: ExcelRow };
+      if (!row) return res.status(400).json({ error: 'Row is required.' });
+
+      const logs = await listEmailLogsForRow(row);
+      return res.json({
+        logs: logs.map((log) => ({
+          id: log.id,
+          type: log.type,
+          status: log.status,
+          messageId: log.messageId,
+          error: log.error,
+          createdAt: log.createdAt
+        }))
+      });
+    } catch (err: any) {
+      console.error('Email history lookup failed:', err);
+      return res.status(500).json({ error: err.message || 'Email history lookup failed' });
     }
   });
 

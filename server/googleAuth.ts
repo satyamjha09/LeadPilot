@@ -2,6 +2,12 @@ import { google } from 'googleapis';
 import fs from 'fs';
 import path from 'path';
 import { ExcelRow } from '../src/types';
+import {
+  buildMeetingInviteEmail,
+  buildRawEmail,
+  buildReminderEmail,
+  buildThankYouEmail
+} from './emailTemplates';
 
 const TOKENS_PATH = path.join(process.cwd(), 'data', 'google_tokens.json');
 const AUTH_STATE_PATH = path.join(process.cwd(), 'data', 'auth_state.json');
@@ -335,38 +341,14 @@ export async function sendThankYouEmail(row: ExcelRow) {
       console.warn('Failed to retrieve admin email profile:', err);
     }
 
-    const headers = [`To: ${row.email}`];
-    if (adminEmail && adminEmail.toLowerCase() !== String(row.email).toLowerCase()) {
-      headers.push(`Cc: ${adminEmail}`);
-    }
-    headers.push(
-      `Subject: Thank you for attending the demo`,
-      `Content-Type: text/plain; charset=utf-8`,
-      `MIME-Version: 1.0`
-    );
-
-    const greeting = row.full_name ? `Hi ${row.full_name},` : 'Hi there,';
-
-    const rawMessage = [
-      ...headers,
-      ``,
-      greeting,
-      ``,
-      `Thank you for attending the demo.`,
-      ``,
-      `It was a pleasure connecting with you and sharing the details with you.`,
-      ``,
-      `If you have any questions or need any further information, feel free to reply to this email.`,
-      ``,
-      `Regards,`,
-      `Team`
-    ].join('\r\n');
-
-    const encodedMessage = Buffer.from(rawMessage)
-      .toString('base64')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
+    const template = buildThankYouEmail({
+      fullName: row.full_name
+    });
+    const encodedMessage = buildRawEmail({
+      to: String(row.email || ''),
+      cc: adminEmail && adminEmail.toLowerCase() !== String(row.email).toLowerCase() ? adminEmail : undefined,
+      ...template
+    });
 
     const response = await gmail.users.messages.send({
       userId: 'me',
@@ -392,37 +374,17 @@ export async function sendGmailInvite(row: ExcelRow, meetLink: string) {
       console.warn('Failed to retrieve admin email profile:', err);
     }
 
-    const headers = [
-      `To: ${row.email}`,
-    ];
-    if (adminEmail && adminEmail.toLowerCase() !== row.email.toLowerCase()) {
-      headers.push(`Cc: ${adminEmail}`);
-    }
-    headers.push(
-      `Subject: Your Demo Meeting is Scheduled`,
-      `Content-Type: text/plain; charset=utf-8`,
-      `MIME-Version: 1.0`
-    );
-
-    const rawMessage = [
-      ...headers,
-      ``,
-      `Hi ${row.full_name || 'there'},`,
-      ``,
-      `Your demo meeting has been scheduled.`,
-      ``,
-      `Date: ${row['Date of Demo']}`,
-      `Time: ${row['Time of Demo']}`,
-      `Google Meet Link: ${meetLink}`,
-      ``,
-      `Thank you.`
-    ].join('\r\n');
-
-    const encodedMessage = Buffer.from(rawMessage)
-      .toString('base64')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
+    const template = buildMeetingInviteEmail({
+      fullName: row.full_name,
+      date: String(row['Date of Demo'] || ''),
+      time: String(row['Time of Demo'] || ''),
+      meetLink
+    });
+    const encodedMessage = buildRawEmail({
+      to: String(row.email || ''),
+      cc: adminEmail && adminEmail.toLowerCase() !== String(row.email).toLowerCase() ? adminEmail : undefined,
+      ...template
+    });
 
     const response = await gmail.users.messages.send({
       userId: 'me',
@@ -451,37 +413,17 @@ export async function sendGmailReminder(fullName: string, email: string, dateStr
     console.warn('Failed to retrieve admin email profile for reminder:', err);
   }
 
-  const headers = [
-    `To: ${email}`,
-  ];
-  if (adminEmail && adminEmail.toLowerCase() !== email.toLowerCase()) {
-    headers.push(`Cc: ${adminEmail}`);
-  }
-  headers.push(
-    `Subject: Reminder: Your Demo Meeting is starting soon`,
-    `Content-Type: text/plain; charset=utf-8`,
-    `MIME-Version: 1.0`
-  );
-
-  const rawMessage = [
-    ...headers,
-    ``,
-    `Hi ${fullName || 'there'},`,
-    ``,
-    `This is a reminder that your demo meeting is starting soon.`,
-    ``,
-    `Date: ${dateStr}`,
-    `Time: ${timeStr}`,
-    `Google Meet Link: ${meetLink}`,
-    ``,
-    `Thank you.`
-  ].join('\r\n');
-
-  const encodedMessage = Buffer.from(rawMessage)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
+  const template = buildReminderEmail({
+    fullName,
+    date: dateStr,
+    time: timeStr,
+    meetLink
+  });
+  const encodedMessage = buildRawEmail({
+    to: email,
+    cc: adminEmail && adminEmail.toLowerCase() !== email.toLowerCase() ? adminEmail : undefined,
+    ...template
+  });
 
   await gmail.users.messages.send({
     userId: 'me',

@@ -30,6 +30,22 @@ export async function findEmailLog(row: ExcelRow, type: EmailLogType) {
   });
 }
 
+export async function listEmailLogsForRow(row: ExcelRow) {
+  const keys = getLeadUniqueKeys(row);
+  if (!keys.email) return [];
+
+  const rowKey = getEmailRowKey(row);
+  return prisma.emailLog.findMany({
+    where: {
+      email: keys.email,
+      rowKey
+    },
+    orderBy: {
+      createdAt: 'desc'
+    }
+  });
+}
+
 export async function hasEmailBeenSent(row: ExcelRow, type: EmailLogType) {
   const log = await findEmailLog(row, type);
   return log?.status === 'sent';
