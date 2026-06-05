@@ -1,0 +1,51 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+data/
+data/*.json
+*.db
+*.db-journal
+prisma/dev.db
+prisma/dev.db-journal
+dev.db
+dev.db-journal
+
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.*
+
+# Database
+*.db
+*.db-journal
+prisma/dev.db
+prisma/dev.db-journal
+
+# Google credentials
+google_tokens.json
+token.json
+credentials.json
+
+# Local data
+data/
+data/*.json
+
+# Build
+dist/
+build/
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
