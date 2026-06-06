@@ -1,6 +1,6 @@
-# Excel Meet Scheduler
+# TallyKonnect
 
-Upload an Excel sheet or import a Google Sheets URL, create Google Calendar events with Google Meet links, send Gmail invitations, and update the source sheet or export Excel.
+Upload an Excel sheet or import a Google Sheets URL, schedule Smart TDS demos with Google Meet links, send Gmail invitations, and update the source sheet or export Excel.
 
 ## Local Setup
 
@@ -93,7 +93,7 @@ GOOGLE_CLIENT_ID=your_client_id
 GOOGLE_CLIENT_SECRET=your_client_secret
 GOOGLE_REDIRECT_URI=https://your-render-app.onrender.com/api/auth/callback/google
 DATA_DIR=/var/data
-DATABASE_URL=file:/var/data/leadpilot.db
+DATABASE_URL=file:/var/data/tallykonnect.db
 ```
 
 5. In Google Cloud Console, add this authorized redirect URI:

@@ -1,1 +1,1 @@
-{"name": "Excel Meet Scheduler", "description": "Upload excel sheets to schedule Google Meet events, notify attendees via Gmail, and manage automated meeting reminders.", "requestFramePermissions": [], "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]}
+{"name": "TallyKonnect", "description": "Upload excel sheets to schedule Smart TDS Google Meet demos, notify attendees via Gmail, and manage automated meeting reminders.", "requestFramePermissions": [], "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]}

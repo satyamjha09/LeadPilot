@@ -3,7 +3,6 @@ import {
   AlertCircle,
   CalendarCheck2,
   Clock3,
-  FileSpreadsheet,
   LayoutDashboard,
   List,
   Settings,
@@ -39,12 +38,12 @@ export default function Sidebar({ activeView, onNavigate, className }: SidebarPr
       )}
     >
       <div className="flex items-center gap-3 px-4 py-5">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-          <FileSpreadsheet className="h-5 w-5" />
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white ring-1 ring-border">
+          <img src="/images/logo.png" alt="TallyKonnect" className="h-8 w-8 object-contain" />
         </div>
         <div>
-          <p className="text-sm font-semibold leading-tight">LeadPilot</p>
-          <p className="text-xs text-muted-foreground">Email Automation Tool</p>
+          <p className="text-sm font-semibold leading-tight">TallyKonnect</p>
+          <p className="text-xs text-muted-foreground">Smart TDS Scheduler</p>
         </div>
       </div>
 
@@ -69,7 +68,7 @@ export default function Sidebar({ activeView, onNavigate, className }: SidebarPr
       </nav>
 
       <div className="border-t p-4 text-xs text-muted-foreground">
-        Google Automation Tool
+        TallyKonnect Automation
       </div>
     </aside>
   );

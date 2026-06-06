@@ -509,9 +509,9 @@ export default function App() {
         onToggleTheme={() => setIsDark((prev) => !prev)}
       >
         <div className="space-y-2">
-          <p className="text-sm font-medium text-muted-foreground">Meeting Scheduler Dashboard</p>
+          <p className="text-sm font-medium text-muted-foreground">TallyKonnect Dashboard</p>
           <p className="text-sm text-muted-foreground max-w-3xl">
-            Import leads from Excel or Google Sheets, create Google Meet links, send Gmail invites, and update your sheet automatically.
+            Import leads from Excel or Google Sheets, schedule Smart TDS demos, send Gmail invites, and update your sheet automatically.
           </p>
         </div>
 
