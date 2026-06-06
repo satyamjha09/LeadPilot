@@ -33,7 +33,7 @@ interface SidebarProps {
 export default function Sidebar({ activeView, onNavigate, className }: SidebarProps) {
   return (
     <aside
-      className={cn(
+      className={cn(  
         'flex h-full w-64 flex-col border-r bg-sidebar text-sidebar-foreground',
         className
       )}
@@ -43,8 +43,8 @@ export default function Sidebar({ activeView, onNavigate, className }: SidebarPr
           <FileSpreadsheet className="h-5 w-5" />
         </div>
         <div>
-          <p className="text-sm font-semibold leading-tight">Excel Meet Scheduler</p>
-          <p className="text-xs text-muted-foreground">Google Automation Tool</p>
+          <p className="text-sm font-semibold leading-tight">LeadPilot</p>
+          <p className="text-xs text-muted-foreground">Email Automation Tool</p>
         </div>
       </div>
 

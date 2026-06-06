@@ -44,7 +44,7 @@ import {
   isValidEmail
 } from './server/leadWorkflow';
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 
 async function startServer() {
   const app = express();

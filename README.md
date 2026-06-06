@@ -17,6 +17,7 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/callback/google
 GOOGLE_REFRESH_TOKEN=
+DATA_DIR=./data
 DATABASE_URL="file:./dev.db"
 ```
 
@@ -62,6 +63,46 @@ npm run dev
 ```text
 http://localhost:3000
 ```
+
+## Render deployment for small/private use
+
+For a small private deployment, SQLite is fine if you attach a Render persistent disk.
+
+1. Create a Render **Web Service** from this GitHub repo.
+2. Attach a persistent disk with mount path:
+
+```text
+/var/data
+```
+
+3. Use these commands:
+
+```bash
+npm install && npm run build
+```
+
+```bash
+npm start
+```
+
+4. Add Render environment variables:
+
+```env
+APP_URL=https://your-render-app.onrender.com
+GOOGLE_CLIENT_ID=your_client_id
+GOOGLE_CLIENT_SECRET=your_client_secret
+GOOGLE_REDIRECT_URI=https://your-render-app.onrender.com/api/auth/callback/google
+DATA_DIR=/var/data
+DATABASE_URL=file:/var/data/leadpilot.db
+```
+
+5. In Google Cloud Console, add this authorized redirect URI:
+
+```text
+https://your-render-app.onrender.com/api/auth/callback/google
+```
+
+`DATA_DIR` stores Google tokens, auth state, and reminder files. `DATABASE_URL` stores the SQLite database on the persistent disk.
 
 ## Google Sheets import
 

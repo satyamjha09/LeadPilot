@@ -17,6 +17,9 @@ GOOGLE_REDIRECT_URI="http://localhost:3000/api/auth/callback/google"
 # Optional: Pre-configured Refresh Token (if absent, link dynamically via UI button)
 GOOGLE_REFRESH_TOKEN=""
 
+# Local JSON/token storage. On Render, use DATA_DIR="/var/data" with a persistent disk.
+DATA_DIR="./data"
+
 # SQLite database for duplicate scheduling prevention
 DATABASE_URL="file:./dev.db"
 ```

@@ -9,8 +9,9 @@ import {
   buildThankYouEmail
 } from './emailTemplates';
 
-const TOKENS_PATH = path.join(process.cwd(), 'data', 'google_tokens.json');
-const AUTH_STATE_PATH = path.join(process.cwd(), 'data', 'auth_state.json');
+const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+const TOKENS_PATH = path.join(DATA_DIR, 'google_tokens.json');
+const AUTH_STATE_PATH = path.join(DATA_DIR, 'auth_state.json');
 const GOOGLE_CALENDAR_TIME_ZONE = 'Asia/Kolkata';
 
 // Ensure data directory exists

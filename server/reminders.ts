@@ -3,8 +3,9 @@ import path from 'path';
 import { ScheduledReminder, ReminderConfig, ExcelRow } from '../src/types';
 import { sendGmailReminder } from './googleAuth';
 
-const MEETINGS_PATH = path.join(process.cwd(), 'data', 'scheduled_meetings.json');
-const CONFIG_PATH = path.join(process.cwd(), 'data', 'reminder_config.json');
+const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+const MEETINGS_PATH = path.join(DATA_DIR, 'scheduled_meetings.json');
+const CONFIG_PATH = path.join(DATA_DIR, 'reminder_config.json');
 
 // Ensure database folder exists
 const dataDir = path.dirname(MEETINGS_PATH);
