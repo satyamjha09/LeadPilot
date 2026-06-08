@@ -49,12 +49,24 @@ type PlannedRow = {
   reason?: string;
 };
 
+type TimeConflictGroup = {
+  key: string;
+  date: string;
+  time: string;
+  count: number;
+  names: string[];
+  rowIds: string[];
+};
+
 export type ProcessLeadPlan = {
   demoScheduledRows: ExcelRow[];
+  rescheduleRows: ExcelRow[];
   demoDoneRows: ExcelRow[];
   statusOnlyRows: ExcelRow[];
   invalidRows: PlannedRow[];
   skippedRows: PlannedRow[];
+  timeConflictRows: PlannedRow[];
+  timeConflictGroups: TimeConflictGroup[];
   meetingRecipients: string[];
   thankYouRecipients: string[];
   estimatedTime: {
@@ -65,10 +77,12 @@ export type ProcessLeadPlan = {
   summary: {
     total: number;
     demoScheduled: number;
+    reschedule: number;
     demoDone: number;
     statusOnly: number;
     invalid: number;
     skipped: number;
+    timeConflicts: number;
     actionable: number;
   };
 };
@@ -78,10 +92,12 @@ export type ProcessLeadsResult = {
   summary: {
     total: number;
     demoScheduled: number;
+    reschedule: number;
     demoDone: number;
     statusOnly: number;
     failed: number;
     skipped: number;
+    timeConflicts: number;
   };
 };
 
@@ -92,6 +108,93 @@ export function normalizeWorkflowStatus(value: unknown) {
 export function isStatusOnlyStatus(value: unknown) {
   const normalized = normalizeLeadStatus(value);
   return normalized !== '' && STATUS_ONLY_VALUES.has(normalized);
+}
+
+const pad = (value: number) => String(value).padStart(2, '0');
+const TIME_CONFLICT_REMARK = 'Time conflict: another lead has the same date and time';
+
+function normalizeMeetingDate(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return new Date((value - 25569) * 86400 * 1000).toISOString().slice(0, 10);
+  }
+
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const parsed = Date.parse(raw);
+  if (!Number.isNaN(parsed)) {
+    return new Date(parsed).toISOString().slice(0, 10);
+  }
+
+  return raw.toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeMeetingTime(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${pad(value.getHours())}:${pad(value.getMinutes())}`;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const totalMinutes = Math.round(value * 24 * 60);
+    return `${pad(Math.floor(totalMinutes / 60) % 24)}:${pad(totalMinutes % 60)}`;
+  }
+
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const match = raw.match(/^(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*(am|pm)?$/i);
+  if (match) {
+    let hours = Number(match[1]);
+    const minutes = Number(match[2] || 0);
+    const suffix = match[3]?.toLowerCase();
+    if (suffix === 'pm' && hours < 12) hours += 12;
+    if (suffix === 'am' && hours === 12) hours = 0;
+    if (hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60) {
+      return `${pad(hours)}:${pad(minutes)}`;
+    }
+  }
+
+  return raw.toLowerCase().replace(/\s+/g, ' ');
+}
+
+function isMeetingAction(row: ExcelRow) {
+  const normalized = normalizeLeadStatus(row.lead_status);
+  return normalized === LEAD_STATUS.DEMO_SCHEDULED || normalized === LEAD_STATUS.RESCHEDULE;
+}
+
+function getMeetingTimeKey(row: ExcelRow) {
+  const date = normalizeMeetingDate(row['Date of Demo']);
+  const time = normalizeMeetingTime(row['Time of Demo']);
+  return date && time ? `${date}__${time}` : '';
+}
+
+export function findTimeConflictGroups(rows: ExcelRow[]): TimeConflictGroup[] {
+  const groups = new Map<string, ExcelRow[]>();
+
+  for (const row of rows) {
+    if (!isMeetingAction(row)) continue;
+    const key = getMeetingTimeKey(row);
+    if (!key) continue;
+    groups.set(key, [...(groups.get(key) || []), row]);
+  }
+
+  return Array.from(groups.entries())
+    .filter(([, groupRows]) => groupRows.length > 1)
+    .map(([key, groupRows]) => {
+      const [date, time] = key.split('__');
+      return {
+        key,
+        date,
+        time,
+        count: groupRows.length,
+        names: groupRows.map((row) => String(row.full_name || row.email || row.id || 'Lead')).slice(0, 5),
+        rowIds: groupRows.map((row) => row.id)
+      };
+    });
 }
 
 function failureRow(row: ExcelRow, message: string): ExcelRow {
@@ -163,23 +266,45 @@ function collectSheetUpdate(
 export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLeadPlan> {
   const plan: ProcessLeadPlan = {
     demoScheduledRows: [],
+    rescheduleRows: [],
     demoDoneRows: [],
     statusOnlyRows: [],
     invalidRows: [],
     skippedRows: [],
+    timeConflictRows: [],
+    timeConflictGroups: [],
     meetingRecipients: [],
     thankYouRecipients: [],
     estimatedTime: estimateProcessingTime(0, 0, 0),
     summary: {
       total: rows.length,
       demoScheduled: 0,
+      reschedule: 0,
       demoDone: 0,
       statusOnly: 0,
       invalid: 0,
       skipped: 0,
+      timeConflicts: 0,
       actionable: 0
     }
   };
+
+  const timeConflictGroups = findTimeConflictGroups(rows);
+  if (timeConflictGroups.length > 0) {
+    const conflictRowIds = new Set(timeConflictGroups.flatMap((group) => group.rowIds));
+    plan.timeConflictGroups = timeConflictGroups;
+    plan.timeConflictRows = rows
+      .filter((row) => conflictRowIds.has(row.id))
+      .map((row) => ({
+        row: failureRow(row, TIME_CONFLICT_REMARK),
+        reason: TIME_CONFLICT_REMARK
+      }));
+    plan.invalidRows = plan.timeConflictRows;
+    plan.summary.invalid = plan.invalidRows.length;
+    plan.summary.timeConflicts = plan.timeConflictRows.length;
+    plan.summary.actionable = 0;
+    return plan;
+  }
 
   for (const row of rows) {
     const normalized = normalizeLeadStatus(row.lead_status);
@@ -313,11 +438,21 @@ export async function processLeadsByStatus(
   const summary: ProcessLeadsResult['summary'] = {
     total: rows.length,
     demoScheduled: 0,
+    reschedule: 0,
     demoDone: 0,
     statusOnly: 0,
     failed: plan.invalidRows.length,
-    skipped: plan.skippedRows.length
+    skipped: plan.skippedRows.length,
+    timeConflicts: plan.summary.timeConflicts
   };
+
+  if (plan.summary.timeConflicts > 0) {
+    const conflictRowsById = new Map(plan.timeConflictRows.map((item) => [item.row.id, item.row]));
+    return {
+      rows: rows.map((row) => conflictRowsById.get(row.id) || row),
+      summary
+    };
+  }
 
   for (const item of plan.invalidRows) {
     resultsById.set(item.row.id, item.row);
@@ -581,6 +716,22 @@ export async function processScheduleRows(
     failed: 0,
     skipped: 0
   };
+
+  const timeConflictGroups = findTimeConflictGroups(rows);
+  if (timeConflictGroups.length > 0) {
+    const conflictRowIds = new Set(timeConflictGroups.flatMap((group) => group.rowIds));
+    const conflictRows = rows.map((row) =>
+      conflictRowIds.has(row.id) ? failureRow(row, TIME_CONFLICT_REMARK) : row
+    );
+    return {
+      rows: conflictRows,
+      summary: {
+        ...summary,
+        failed: conflictRows.filter((row) => row.__schedulerStatus === 'Failed').length,
+        timeConflicts: conflictRowIds.size
+      }
+    };
+  }
 
   const validateScheduleDateTime = (dateValue: unknown, timeValue: unknown) => {
     const startTime = parseExcelDateTime(dateValue, timeValue);

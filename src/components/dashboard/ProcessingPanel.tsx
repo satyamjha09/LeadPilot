@@ -85,11 +85,13 @@ export default function ProcessingPanel({
         <CardDescription>Batch processing finished for {total} row(s)</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-8">
           <SummaryItem label="Total" value={total} />
           <SummaryItem label="Demo Scheduled" value={lastSummary.demoScheduled ?? lastSummary.scheduled} />
+          <SummaryItem label="Reschedule" value={lastSummary.reschedule ?? 0} />
           <SummaryItem label="Demo Done" value={lastSummary.demoDone ?? 0} />
           <SummaryItem label="Status-only" value={lastSummary.statusOnly ?? 0} />
+          <SummaryItem label="Conflicts" value={lastSummary.timeConflicts ?? 0} />
           <SummaryItem label="Failed" value={lastSummary.failed} />
           <SummaryItem label="Skipped" value={lastSummary.skipped} />
         </div>

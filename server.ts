@@ -44,7 +44,7 @@ import {
   isValidEmail
 } from './server/leadWorkflow';
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = 3000;
 
 async function startServer() {
   const app = express();
@@ -585,6 +585,13 @@ async function startServer() {
       const plan = await buildProcessLeadPlan(rows);
       return res.json({
         summary: plan.summary,
+        timeConflictGroups: plan.timeConflictGroups.map((group) => ({
+          key: group.key,
+          date: group.date,
+          time: group.time,
+          count: group.count,
+          names: group.names
+        })),
         estimatedTime: plan.estimatedTime,
         meetingRecipients: plan.meetingRecipients.slice(0, 5),
         thankYouRecipients: plan.thankYouRecipients.slice(0, 5),
@@ -724,7 +731,7 @@ async function startServer() {
           <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background-color: #f3f4f6; margin: 0;">
             <div style="background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;">
               <h2 style="color: #10b981; margin-top: 0;">Authentication Successful!</h2>
-              <p style="color: #4b5563; margin-bottom: 1.5rem;">TallyKonnect has been linked with your Google Workspace credentials.</p>
+              <p style="color: #4b5563; margin-bottom: 1.5rem;">Excel Meet Scheduler has been linked with your Google Workspace credentials.</p>
               <p style="color: #9ca3af; font-size: 0.875rem;">This window will close automatically...</p>
             </div>
             <script>
@@ -792,7 +799,7 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`-----------------------------------------------`);
-    console.log(`TallyKonnect server starts on port ${PORT}`);
+    console.log(`Excel Meet Scheduler server starts on port ${PORT}`);
     console.log(`Env Redirect URI configured as: ${process.env.GOOGLE_REDIRECT_URI}`);
     console.log(`-----------------------------------------------`);
   });

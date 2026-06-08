@@ -26,8 +26,10 @@ export interface ScheduleSummary {
   failed: number;
   skipped: number;
   demoScheduled?: number;
+  reschedule?: number;
   demoDone?: number;
   statusOnly?: number;
+  timeConflicts?: number;
 }
 
 export type SourceType = 'excel' | 'google-sheet';

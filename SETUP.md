@@ -1,6 +1,6 @@
-# TallyKonnect Setup & Guidelines
+# Excel Meet Scheduler — Setup & Guidelines
 
-TallyKonnect is a robust, full-stack web application designed to automate booking Smart TDS Google Meet demos directly from uploaded spreadsheets, dispatch professional Gmail invitations, and manage automated email reminders.
+Excel Meet Scheduler is a robust, full-stack web application designed to automate booking Google Meet sessions directly from uploaded spreadsheets, dispatch professional Gmail invitations, and manage automated email reminders.
 
 ---
 
@@ -16,9 +16,6 @@ GOOGLE_REDIRECT_URI="http://localhost:3000/api/auth/callback/google"
 
 # Optional: Pre-configured Refresh Token (if absent, link dynamically via UI button)
 GOOGLE_REFRESH_TOKEN=""
-
-# Local JSON/token storage. On Render, use DATA_DIR="/var/data" with a persistent disk.
-DATA_DIR="./data"
 
 # SQLite database for duplicate scheduling prevention
 DATABASE_URL="file:./dev.db"

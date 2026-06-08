@@ -59,9 +59,9 @@ export default function Header({
               </SheetContent>
             </Sheet>
             <div>
-              <h1 className="text-xl font-bold tracking-tight sm:text-2xl">TallyKonnect Scheduler</h1>
+              <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Meeting Scheduler</h1>
               <p className="text-sm text-muted-foreground max-w-2xl">
-                Schedule Smart TDS demos from Excel or Google Sheets
+                Upload Excel or import Google Sheet to schedule Google Meet calls
               </p>
             </div>
           </div>

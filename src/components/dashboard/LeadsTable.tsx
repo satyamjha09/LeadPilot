@@ -21,6 +21,7 @@ import StatusBadge from '@/src/components/dashboard/StatusBadge';
 import { LEAD_STATUS, LeadStatusLabel } from '@/src/lib/leadStatus';
 import {
   canProcessLead,
+  canRescheduleDemo,
   canScheduleDemo,
   canSendThankYou,
   getLeadStatus,
@@ -222,6 +223,18 @@ export default function LeadsTable({
                               >
                                 <Heart className="h-3.5 w-3.5" />
                                 Thank You
+                              </Button>
+                            )}
+                            {canRescheduleDemo(row) && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={isProcessing}
+                                onClick={() => onProcessRow(row)}
+                              >
+                                <CalendarPlus className="h-3.5 w-3.5" />
+                                Reschedule
                               </Button>
                             )}
                             {isStatusOnly(row) && (

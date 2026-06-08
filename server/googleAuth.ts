@@ -9,9 +9,8 @@ import {
   buildThankYouEmail
 } from './emailTemplates';
 
-const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
-const TOKENS_PATH = path.join(DATA_DIR, 'google_tokens.json');
-const AUTH_STATE_PATH = path.join(DATA_DIR, 'auth_state.json');
+const TOKENS_PATH = path.join(process.cwd(), 'data', 'google_tokens.json');
+const AUTH_STATE_PATH = path.join(process.cwd(), 'data', 'auth_state.json');
 const GOOGLE_CALENDAR_TIME_ZONE = 'Asia/Kolkata';
 
 // Ensure data directory exists
@@ -23,18 +22,8 @@ if (!fs.existsSync(dataDir)) {
 // Get credentials from env or fallback configuration
 export function getCredentials() {
   const configuredRedirectUri = (process.env.GOOGLE_REDIRECT_URI || '').trim();
-  const renderExternalUrl = (process.env.RENDER_EXTERNAL_URL || '').trim();
-  const renderExternalHostname = (process.env.RENDER_EXTERNAL_HOSTNAME || '').trim();
   let baseUri = process.env.APP_URL && process.env.APP_URL !== 'MY_APP_URL' ? process.env.APP_URL : '';
-  if (!baseUri && renderExternalUrl) {
-    baseUri = renderExternalUrl;
-  } else if (!baseUri && renderExternalHostname) {
-    baseUri = `https://${renderExternalHostname}`;
-  }
-
-  const isLocalRedirect =
-    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/api\/auth\/callback\/google\/?$/i.test(configuredRedirectUri);
-  let redirectUri = configuredRedirectUri && !(process.env.RENDER && isLocalRedirect) ? configuredRedirectUri : '';
+  let redirectUri = configuredRedirectUri;
 
   if (!redirectUri) {
     if (!baseUri) {

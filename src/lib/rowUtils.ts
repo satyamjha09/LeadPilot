@@ -22,11 +22,93 @@ export const hasMeetLink = (value: unknown) => /meet\.google\.com/i.test(String(
 export const normalizeStatus = (status: unknown) =>
   String(normalizeLeadStatus(status) || status || '').trim().toLowerCase();
 
+const pad = (value: number) => String(value).padStart(2, '0');
+
+export function normalizeMeetingDate(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return new Date((value - 25569) * 86400 * 1000).toISOString().slice(0, 10);
+  }
+
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const parsed = Date.parse(raw);
+  if (!Number.isNaN(parsed)) {
+    return new Date(parsed).toISOString().slice(0, 10);
+  }
+
+  return raw.toLowerCase().replace(/\s+/g, ' ');
+}
+
+export function normalizeMeetingTime(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${pad(value.getHours())}:${pad(value.getMinutes())}`;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const totalMinutes = Math.round(value * 24 * 60);
+    return `${pad(Math.floor(totalMinutes / 60) % 24)}:${pad(totalMinutes % 60)}`;
+  }
+
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const match = raw.match(/^(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*(am|pm)?$/i);
+  if (match) {
+    let hours = Number(match[1]);
+    const minutes = Number(match[2] || 0);
+    const suffix = match[3]?.toLowerCase();
+    if (suffix === 'pm' && hours < 12) hours += 12;
+    if (suffix === 'am' && hours === 12) hours = 0;
+    if (hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60) {
+      return `${pad(hours)}:${pad(minutes)}`;
+    }
+  }
+
+  return raw.toLowerCase().replace(/\s+/g, ' ');
+}
+
+export function isMeetingAction(row: ExcelRow) {
+  const status = normalizeStatus(row.lead_status);
+  return status === 'demo scheduled' || status === 'reschedule';
+}
+
+export function getMeetingTimeKey(row: ExcelRow) {
+  const date = normalizeMeetingDate(row['Date of Demo']);
+  const time = normalizeMeetingTime(row['Time of Demo']);
+  return date && time ? `${date}__${time}` : '';
+}
+
+export function findTimeConflicts(rows: ExcelRow[]) {
+  const groups = new Map<string, ExcelRow[]>();
+
+  for (const row of rows) {
+    if (!isMeetingAction(row)) continue;
+    const key = getMeetingTimeKey(row);
+    if (!key) continue;
+    groups.set(key, [...(groups.get(key) || []), row]);
+  }
+
+  return Array.from(groups.entries())
+    .filter(([, groupRows]) => groupRows.length > 1)
+    .map(([key, groupRows]) => {
+      const [date, time] = key.split('__');
+      return { key, date, time, rows: groupRows };
+    });
+}
+
 export const canScheduleDemo = (row: ExcelRow) =>
   normalizeStatus(row.lead_status) === 'demo scheduled' && !hasMeetLink(row['Meeting Details']);
 
 export const canSendThankYou = (row: ExcelRow) =>
   normalizeStatus(row.lead_status) === 'demo done';
+
+export const canRescheduleDemo = (row: ExcelRow) =>
+  normalizeStatus(row.lead_status) === 'reschedule';
 
 export const isStatusOnly = (row: ExcelRow) =>
   [
@@ -34,12 +116,11 @@ export const isStatusOnly = (row: ExcelRow) =>
     'follow up',
     'to be called',
     'not required',
-    'repeated',
-    'reschedule'
+    'repeated'
   ].includes(normalizeStatus(row.lead_status));
 
 export const canProcessLead = (row: ExcelRow) =>
-  canScheduleDemo(row) || canSendThankYou(row) || isStatusOnly(row);
+  canScheduleDemo(row) || canSendThankYou(row) || canRescheduleDemo(row) || isStatusOnly(row);
 
 export const isDemoScheduledComplete = (row: ExcelRow) =>
   getLeadStatus(row) === LEAD_STATUS.DEMO_SCHEDULED && hasMeetLink(row['Meeting Details']);
