@@ -87,12 +87,12 @@ export default function ProcessingPanel({
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-8">
           <SummaryItem label="Total" value={total} />
-          <SummaryItem label="Demo Scheduled" value={lastSummary.demoScheduled ?? lastSummary.scheduled} />
-          <SummaryItem label="Reschedule" value={lastSummary.reschedule ?? 0} />
-          <SummaryItem label="Demo Done" value={lastSummary.demoDone ?? 0} />
+          <SummaryItem label="Meetings scheduled" value={lastSummary.demoScheduled ?? lastSummary.scheduled} />
+          <SummaryItem label="Meetings rescheduled" value={lastSummary.reschedule ?? 0} />
+          <SummaryItem label="Thank-you sent" value={lastSummary.demoDone ?? 0} />
           <SummaryItem label="Status-only" value={lastSummary.statusOnly ?? 0} />
-          <SummaryItem label="Conflicts" value={lastSummary.timeConflicts ?? 0} />
-          <SummaryItem label="Failed" value={lastSummary.failed} />
+          <SummaryItem label="Time conflicts" value={lastSummary.timeConflicts ?? 0} />
+          <SummaryItem label="Invalid rows" value={lastSummary.failed} />
           <SummaryItem label="Skipped" value={lastSummary.skipped} />
         </div>
         {source.type === 'google-sheet' ? (

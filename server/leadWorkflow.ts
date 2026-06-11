@@ -3,30 +3,59 @@ import {
   parseExcelDateTime,
   scheduleMeeting,
   sendGmailInvite,
-  sendThankYouEmail
+  sendGmailRescheduleInvite,
+  sendNoResponseEmail,
+  sendThankYouEmail,
+  updateCalendarMeeting
 } from './googleAuth';
-import { updateGoogleSheetRow, updateGoogleSheetRowsBatch } from './googleSheets';
-import { EMAIL_LOG_TYPES, hasEmailBeenSent, logEmailSent } from './emailLog';
+import { friendlySheetsError, updateGoogleSheetRow, updateGoogleSheetRowsBatch } from './googleSheets';
+import { EMAIL_LOG_TYPES } from './emailLog';
 import { LEAD_STATUS, isDemoScheduledStatus, normalizeLeadStatus } from './leadStatus';
 import {
-  findLeadSchedule,
   findScheduledMeetLinkFromDb,
+  assertCanCreateOrReuseActiveDemo,
+  closeActiveDemoForRow,
+  ensureScheduledDemoHistory,
+  getActiveDemoForRow,
+  getSheetLeadState,
+  markScheduledEmailSent,
+  normalizeLeadDate,
+  normalizeLeadTime,
+  rescheduleActiveDemoForRow,
   saveLeadScheduleFailure,
   saveLeadScheduleSuccess,
+  saveSheetLeadState,
   saveLeadStatusUpdate
 } from './scheduleDb';
-import { addScheduledReminder } from './reminders';
+import { addScheduledReminder, invalidateScheduledReminder } from './reminders';
+import { buildMeetingInviteEmail, buildNoResponseEmail, buildRescheduleEmail, buildThankYouEmail } from './emailTemplates';
+import {
+  claimEmailDelivery,
+  findEmailDeliveryByEventKey,
+  markEmailDeliveryFailed,
+  markEmailSheetSynced,
+  markEmailDeliverySent
+} from './emailDelivery';
+import {
+  createEmailEventKey,
+  createEmailPayloadHash,
+  EMAIL_TYPES,
+  getAutomationId,
+  type EmailType
+} from './emailIdentity';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const PROCESS_DELAY_MS = 1000;
+const RESCHEDULE_ACTION = 'RESCHEDULE';
+const CALENDAR_BLOCK_COOLDOWN_MS = 60 * 60 * 1000;
+let calendarBlockedUntil = 0;
 
 const STATUS_ONLY_VALUES = new Set<string>([
   LEAD_STATUS.NO_RESPONSE,
   LEAD_STATUS.FOLLOW_UP,
   LEAD_STATUS.TO_BE_CALLED,
   LEAD_STATUS.NOT_REQUIRED,
-  LEAD_STATUS.REPEATED,
-  LEAD_STATUS.RESCHEDULE
+  LEAD_STATUS.REPEATED
 ]);
 
 export const hasGoogleMeetLink = (value: unknown) => /meet\.google\.com/i.test(String(value || ''));
@@ -89,15 +118,25 @@ export type ProcessLeadPlan = {
 
 export type ProcessLeadsResult = {
   rows: ExcelRow[];
+  sheetSyncError?: string;
   summary: {
     total: number;
     demoScheduled: number;
     reschedule: number;
     demoDone: number;
     statusOnly: number;
+    invalid: number;
     failed: number;
     skipped: number;
     timeConflicts: number;
+  };
+  groups?: {
+    demoScheduledRows: ExcelRow[];
+    rescheduleRows: ExcelRow[];
+    demoDoneRows: ExcelRow[];
+    statusOnlyRows: ExcelRow[];
+    invalidRows: ExcelRow[];
+    skippedRows: ExcelRow[];
   };
 };
 
@@ -242,11 +281,36 @@ function validateDemoScheduledRow(row: ExcelRow) {
   return '';
 }
 
+function getInvalidLeadStatusReason(row: ExcelRow) {
+  const raw = String(row.lead_status ?? '').trim();
+  return raw ? `Invalid lead_status: ${raw}` : 'lead_status is missing';
+}
+
 function validateDemoDoneRow(row: ExcelRow) {
   const email = String(row.email || '').trim();
   if (!email) return 'Email is missing.';
   if (!isValidEmail(email)) return 'Email is invalid.';
   return '';
+}
+
+function hasMeetingStarted(startUtc?: string | null) {
+  if (!startUtc) return false;
+  const time = Date.parse(startUtc);
+  return Number.isFinite(time) && time <= Date.now();
+}
+
+async function assertManualCloseAllowed(row: ExcelRow) {
+  const active = await getActiveDemoForRow(row);
+  if (!active?.state.activeDemoSessionId) {
+    throw new Error('No active demo session exists.');
+  }
+  if (!active.state.meetingLink || !active.state.calendarEventId) {
+    throw new Error('An active meeting is required to update this demo.');
+  }
+  if (!hasMeetingStarted(active.state.demoStartUtc)) {
+    throw new Error('The scheduled meeting start time has not arrived yet.');
+  }
+  return active;
 }
 
 function sheetRowNumber(row: ExcelRow) {
@@ -260,7 +324,188 @@ function collectSheetUpdate(
 ) {
   const rowNumber = sheetRowNumber(row);
   if (!rowNumber || rowNumber < 2) return;
-  updates.push({ rowNumber, values });
+  updates.push({
+    rowNumber,
+    values: {
+      ...values,
+      ...(row.automation_id && values.automation_id === undefined ? { automation_id: row.automation_id } : {})
+    }
+  });
+}
+
+function maskEmail(email: string) {
+  const [name, domain] = email.split('@');
+  if (!domain) return 'invalid-email';
+  return `${name.slice(0, 2)}***@${domain}`;
+}
+
+function scheduleFailureStatus(message: string) {
+  if (/temporarily restricted|quotaExceeded|usage limits/i.test(message)) {
+    return 'Manual Link Required';
+  }
+  if (/Gmail invitation failed.*rate limit|Gmail invitation failed.*429|Gmail invitation failed.*5\d\d/i.test(message)) {
+    return 'Email Retry Pending';
+  }
+  if (/Gmail invitation failed|Gmail send returned no message ID/i.test(message)) {
+    return 'Email Failed';
+  }
+  return 'Failed';
+}
+
+function isCalendarQuotaBlocked(message: string) {
+  return /temporarily restricted|quotaExceeded|usage limits/i.test(message);
+}
+
+function calendarBlockedMessage() {
+  return 'Calendar event creation blocked: Google Calendar is temporarily restricted. Add a Meet link manually or retry later.';
+}
+
+function markCalendarBlocked() {
+  calendarBlockedUntil = Date.now() + CALENDAR_BLOCK_COOLDOWN_MS;
+}
+
+function isCalendarBlocked() {
+  return Date.now() < calendarBlockedUntil;
+}
+
+type IdempotentEmailInput = {
+  row: ExcelRow;
+  context: SheetContext;
+  emailType: EmailType;
+  date?: unknown;
+  time?: unknown;
+  reminderWindow?: string;
+  subject: string;
+  text: string;
+  html: string;
+  send: () => Promise<{ messageId: string; threadId?: string }>;
+};
+
+async function getEmailEventState(input: {
+  row: ExcelRow;
+  context: SheetContext;
+  emailType: EmailType;
+  date?: unknown;
+  time?: unknown;
+  reminderWindow?: string;
+}) {
+  const automationId = getAutomationId(input.row, input.context);
+  const eventKey = createEmailEventKey({
+    automationId,
+    recipient: input.row.email,
+    emailType: input.emailType,
+    date: input.date,
+    time: input.time,
+    reminderWindow: input.reminderWindow
+  });
+  const delivery = await findEmailDeliveryByEventKey(eventKey);
+
+  return { automationId, eventKey, delivery };
+}
+
+async function sendIdempotentEmail(input: IdempotentEmailInput) {
+  const recipient = String(input.row.email || '').trim().toLowerCase();
+  const automationId = getAutomationId(input.row, input.context);
+  const eventKey = createEmailEventKey({
+    automationId,
+    recipient,
+    emailType: input.emailType,
+    date: input.date,
+    time: input.time,
+    reminderWindow: input.reminderWindow
+  });
+  const payloadHash = createEmailPayloadHash({
+    recipient,
+    subject: input.subject,
+    text: input.text,
+    html: input.html
+  });
+
+  const claim = await claimEmailDelivery({
+    eventKey,
+    automationId,
+    emailType: input.emailType,
+    recipient,
+    payloadHash
+  });
+
+  if (claim.claimed === false) {
+    console.log('EMAIL_SKIPPED', {
+      eventKey,
+      automationId,
+      recipient: maskEmail(recipient),
+      emailType: input.emailType,
+      reason: claim.reason,
+      providerMessageId: claim.providerMessageId || undefined
+    });
+
+    return {
+      sent: false as const,
+      skipped: true as const,
+      reason: claim.reason,
+      deliveryId: claim.deliveryId,
+      messageId: claim.providerMessageId || undefined
+    };
+  }
+
+  console.log('EMAIL_SEND_STARTED', {
+    eventKey,
+    automationId,
+    recipient: maskEmail(recipient),
+    emailType: input.emailType,
+    attempt: claim.attemptCount
+  });
+
+  try {
+    const result = await input.send();
+    if (!result.messageId) {
+      throw new Error('Gmail send returned no message ID.');
+    }
+
+    await markEmailDeliverySent({
+      deliveryId: claim.deliveryId,
+      providerMessageId: result.messageId
+    });
+
+    console.log('EMAIL_SEND_SUCCESS', {
+      eventKey,
+      automationId,
+      recipient: maskEmail(recipient),
+      emailType: input.emailType,
+      messageId: result.messageId
+    });
+
+    return {
+      sent: true as const,
+      skipped: false as const,
+      deliveryId: claim.deliveryId,
+      messageId: result.messageId
+    };
+  } catch (error) {
+    const classification = await markEmailDeliveryFailed({
+      deliveryId: claim.deliveryId,
+      error
+    });
+
+    console.error('EMAIL_SEND_FAILED', {
+      eventKey,
+      automationId,
+      recipient: maskEmail(recipient),
+      emailType: input.emailType,
+      classification,
+      error: error instanceof Error ? error.message : String(error)
+    });
+
+    throw error;
+  }
+}
+
+function flattenPlannedRows(items: PlannedRow[]) {
+  return items.map((item) => ({
+    ...item.row,
+    reason: item.reason || '',
+    Remarks: item.row.Remarks || item.reason || ''
+  }));
 }
 
 export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLeadPlan> {
@@ -290,8 +535,8 @@ export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLea
   };
 
   const timeConflictGroups = findTimeConflictGroups(rows);
+  const conflictRowIds = new Set(timeConflictGroups.flatMap((group) => group.rowIds));
   if (timeConflictGroups.length > 0) {
-    const conflictRowIds = new Set(timeConflictGroups.flatMap((group) => group.rowIds));
     plan.timeConflictGroups = timeConflictGroups;
     plan.timeConflictRows = rows
       .filter((row) => conflictRowIds.has(row.id))
@@ -299,72 +544,28 @@ export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLea
         row: failureRow(row, TIME_CONFLICT_REMARK),
         reason: TIME_CONFLICT_REMARK
       }));
-    plan.invalidRows = plan.timeConflictRows;
-    plan.summary.invalid = plan.invalidRows.length;
+    plan.invalidRows.push(...plan.timeConflictRows);
     plan.summary.timeConflicts = plan.timeConflictRows.length;
-    plan.summary.actionable = 0;
-    return plan;
   }
 
   for (const row of rows) {
     const normalized = normalizeLeadStatus(row.lead_status);
 
+    if (conflictRowIds.has(row.id)) continue;
+
     if (!normalized) {
+      const reason = getInvalidLeadStatusReason(row);
       plan.invalidRows.push({
-        row: failureRow(row, 'Invalid lead_status value.'),
-        reason: 'Invalid lead_status value.'
+        row: failureRow(row, reason),
+        reason
       });
       continue;
     }
 
     if (normalized === LEAD_STATUS.DEMO_SCHEDULED) {
-      if (hasGoogleMeetLink(row['Meeting Details'])) {
-        plan.skippedRows.push({
-          row: {
-            ...row,
-            lead_status: LEAD_STATUS.DEMO_SCHEDULED,
-            Remarks: row.Remarks || 'Already has Google Meet link'
-          },
-          reason: 'Already has Google Meet link'
-        });
-        continue;
-      }
-
       const validationError = validateDemoScheduledRow(row);
       if (validationError) {
         plan.invalidRows.push({ row: failureRow(row, validationError), reason: validationError });
-        continue;
-      }
-
-      if (await hasEmailBeenSent(row, EMAIL_LOG_TYPES.DEMO_SCHEDULED)) {
-        const dbLink = await findScheduledMeetLinkFromDb(row);
-        plan.skippedRows.push({
-          row: {
-            ...row,
-            'Meeting Details': dbLink || row['Meeting Details'] || '',
-            lead_status: LEAD_STATUS.DEMO_SCHEDULED,
-            Remarks: 'Already sent, skipped duplicate'
-          },
-          reason: 'Already sent, skipped duplicate'
-        });
-        continue;
-      }
-
-      const existingDbRecord = await findLeadSchedule(row);
-      if (
-        (existingDbRecord?.status === LEAD_STATUS.DEMO_SCHEDULED ||
-          existingDbRecord?.status === 'Scheduled') &&
-        existingDbRecord.meetingLink
-      ) {
-        plan.skippedRows.push({
-          row: {
-            ...row,
-            'Meeting Details': existingDbRecord.meetingLink,
-            lead_status: LEAD_STATUS.DEMO_SCHEDULED,
-            Remarks: 'Already scheduled from database'
-          },
-          reason: 'Already scheduled from database'
-        });
         continue;
       }
 
@@ -373,22 +574,22 @@ export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLea
       continue;
     }
 
-    if (normalized === LEAD_STATUS.DEMO_DONE) {
-      const validationError = validateDemoDoneRow(row);
+    if (normalized === LEAD_STATUS.RESCHEDULE) {
+      const validationError = validateDemoScheduledRow(row);
       if (validationError) {
         plan.invalidRows.push({ row: failureRow(row, validationError), reason: validationError });
         continue;
       }
 
-      if (await hasEmailBeenSent(row, EMAIL_LOG_TYPES.DEMO_DONE_THANK_YOU)) {
-        plan.skippedRows.push({
-          row: {
-            ...row,
-            lead_status: LEAD_STATUS.DEMO_DONE,
-            Remarks: 'Already sent, skipped duplicate'
-          },
-          reason: 'Already sent, skipped duplicate'
-        });
+      plan.rescheduleRows.push({ ...row, lead_status: LEAD_STATUS.RESCHEDULE });
+      if (row.email) plan.meetingRecipients.push(String(row.email));
+      continue;
+    }
+
+    if (normalized === LEAD_STATUS.DEMO_DONE) {
+      const validationError = validateDemoDoneRow(row);
+      if (validationError) {
+        plan.invalidRows.push({ row: failureRow(row, validationError), reason: validationError });
         continue;
       }
 
@@ -413,14 +614,15 @@ export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLea
   }
 
   plan.summary.demoScheduled = plan.demoScheduledRows.length;
+  plan.summary.reschedule = plan.rescheduleRows.length;
   plan.summary.demoDone = plan.demoDoneRows.length;
   plan.summary.statusOnly = plan.statusOnlyRows.length;
   plan.summary.invalid = plan.invalidRows.length;
   plan.summary.skipped = plan.skippedRows.length;
   plan.summary.actionable =
-    plan.summary.demoScheduled + plan.summary.demoDone + plan.summary.statusOnly;
+    plan.summary.demoScheduled + plan.summary.reschedule + plan.summary.demoDone + plan.summary.statusOnly;
   plan.estimatedTime = estimateProcessingTime(
-    plan.summary.demoScheduled,
+    plan.summary.demoScheduled + plan.summary.reschedule,
     plan.summary.demoDone,
     plan.summary.statusOnly
   );
@@ -435,24 +637,18 @@ export async function processLeadsByStatus(
   const plan = await buildProcessLeadPlan(rows);
   const resultsById = new Map<string, ExcelRow>();
   const sheetUpdates: Array<{ rowNumber: number; values: Record<string, any> }> = [];
+  let sheetSyncError: string | undefined;
   const summary: ProcessLeadsResult['summary'] = {
     total: rows.length,
     demoScheduled: 0,
     reschedule: 0,
     demoDone: 0,
     statusOnly: 0,
+    invalid: plan.invalidRows.length,
     failed: plan.invalidRows.length,
     skipped: plan.skippedRows.length,
     timeConflicts: plan.summary.timeConflicts
   };
-
-  if (plan.summary.timeConflicts > 0) {
-    const conflictRowsById = new Map(plan.timeConflictRows.map((item) => [item.row.id, item.row]));
-    return {
-      rows: rows.map((row) => conflictRowsById.get(row.id) || row),
-      summary
-    };
-  }
 
   for (const item of plan.invalidRows) {
     resultsById.set(item.row.id, item.row);
@@ -487,6 +683,7 @@ export async function processLeadsByStatus(
         lead_status: processedRow.lead_status || LEAD_STATUS.DEMO_SCHEDULED,
         Remarks: processedRow.Remarks || ''
       });
+      await saveSheetLeadState(processedRow, { lastAction: 'DEMO_SCHEDULED', lastActionStatus: 'success' });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Scheduling failed.';
       const failedRow = failureRow(row, message);
@@ -496,9 +693,86 @@ export async function processLeadsByStatus(
         lead_status: failedRow.lead_status || LEAD_STATUS.DEMO_SCHEDULED,
         Remarks: message
       });
+      await saveSheetLeadState(failedRow, { lastAction: 'DEMO_SCHEDULED', lastActionStatus: 'failed', lastError: message });
     }
 
     if (index < plan.demoScheduledRows.length - 1 || plan.demoDoneRows.length > 0) {
+      await delay(PROCESS_DELAY_MS);
+    }
+  }
+
+  for (let index = 0; index < plan.rescheduleRows.length; index++) {
+    const row = plan.rescheduleRows[index];
+    const currentMeetingDate = normalizeLeadDate(row['Date of Demo']);
+    const currentMeetingTime = normalizeLeadTime(row['Time of Demo']);
+    try {
+      const sheetState = await getSheetLeadState(row);
+      const sameMeetingAsLastReschedule =
+        normalizeLeadStatus(row.lead_status) === LEAD_STATUS.RESCHEDULE &&
+        sheetState?.lastLeadStatus === LEAD_STATUS.RESCHEDULE &&
+        (sheetState?.lastAction === RESCHEDULE_ACTION ||
+          sheetState?.lastAction === EMAIL_LOG_TYPES.DEMO_RESCHEDULED) &&
+        sheetState.lastActionStatus === 'success' &&
+        sheetState.lastMeetingDate === currentMeetingDate &&
+        sheetState.lastMeetingTime === currentMeetingTime;
+
+      if (sameMeetingAsLastReschedule) {
+        const skippedRow: ExcelRow = {
+          ...row,
+          'Meeting Details': sheetState.lastMeetingLink || row['Meeting Details'] || '',
+          lead_status: LEAD_STATUS.DEMO_SCHEDULED,
+          Remarks: 'This reschedule was already processed'
+        };
+        resultsById.set(row.id, skippedRow);
+        summary.skipped++;
+        collectSheetUpdate(sheetUpdates, skippedRow, {
+          'Meeting Details': skippedRow['Meeting Details'] || '',
+          lead_status: LEAD_STATUS.DEMO_SCHEDULED,
+          Remarks: skippedRow.Remarks || ''
+        });
+        continue;
+      }
+
+      const result = await rescheduleDemoForRow(row, context, { skipSheetSync: true });
+      const processedRow = result.row;
+      resultsById.set(row.id, processedRow);
+      if (result.skipped) summary.skipped++;
+      else summary.reschedule++;
+      collectSheetUpdate(sheetUpdates, processedRow, {
+        'Meeting Details': processedRow['Meeting Details'] || '',
+        lead_status: LEAD_STATUS.DEMO_SCHEDULED,
+        Remarks: processedRow.Remarks || ''
+      });
+      await saveSheetLeadState(processedRow, {
+        lastLeadStatus: LEAD_STATUS.RESCHEDULE,
+        lastMeetingDate: currentMeetingDate || null,
+        lastMeetingTime: currentMeetingTime || null,
+        lastMeetingLink: String(processedRow['Meeting Details'] || '') || null,
+        lastAction: RESCHEDULE_ACTION,
+        lastActionStatus: result.skipped ? 'skipped' : 'success',
+        lastError: null
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Reschedule failed.';
+      const failedRow = failureRow(row, message);
+      resultsById.set(row.id, failedRow);
+      summary.failed++;
+      collectSheetUpdate(sheetUpdates, failedRow, {
+        lead_status: LEAD_STATUS.RESCHEDULE,
+        Remarks: message
+      });
+      await saveSheetLeadState(failedRow, {
+        lastLeadStatus: LEAD_STATUS.RESCHEDULE,
+        lastMeetingDate: currentMeetingDate || null,
+        lastMeetingTime: currentMeetingTime || null,
+        lastMeetingLink: String(row['Meeting Details'] || '') || null,
+        lastAction: RESCHEDULE_ACTION,
+        lastActionStatus: 'failed',
+        lastError: message
+      });
+    }
+
+    if (index < plan.rescheduleRows.length - 1 || plan.demoDoneRows.length > 0) {
       await delay(PROCESS_DELAY_MS);
     }
   }
@@ -514,6 +788,10 @@ export async function processLeadsByStatus(
         lead_status: result.row.lead_status || LEAD_STATUS.DEMO_DONE,
         Remarks: result.row.Remarks || result.message || ''
       });
+      await saveSheetLeadState(result.row, {
+        lastAction: 'DEMO_DONE_THANK_YOU',
+        lastActionStatus: result.skipped ? 'skipped' : 'success'
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Thank-you email failed.';
       const failedRow = failureRow(row, message);
@@ -523,6 +801,7 @@ export async function processLeadsByStatus(
         lead_status: failedRow.lead_status || LEAD_STATUS.DEMO_DONE,
         Remarks: message
       });
+      await saveSheetLeadState(failedRow, { lastAction: 'DEMO_DONE_THANK_YOU', lastActionStatus: 'failed', lastError: message });
     }
 
     if (index < plan.demoDoneRows.length - 1) {
@@ -532,18 +811,31 @@ export async function processLeadsByStatus(
 
   for (const row of plan.statusOnlyRows) {
     try {
-      const updatedRow = await updateLeadStatusOnly(
-        row,
-        String(row.lead_status || ''),
-        context,
-        row.Remarks,
-        { skipSheetSync: true }
-      );
+      const result =
+        normalizeLeadStatus(row.lead_status) === LEAD_STATUS.NO_RESPONSE
+          ? await sendNoResponseForRow(row, context, { skipSheetSync: true })
+          : {
+              row: await updateLeadStatusOnly(
+                row,
+                String(row.lead_status || ''),
+                context,
+                row.Remarks,
+                { skipSheetSync: true }
+              ),
+              skipped: false
+            };
+      const updatedRow = result.row;
       resultsById.set(row.id, updatedRow);
       summary.statusOnly++;
       collectSheetUpdate(sheetUpdates, updatedRow, {
+        'Meeting Details': updatedRow['Meeting Details'] || '',
         lead_status: updatedRow.lead_status || '',
         Remarks: updatedRow.Remarks || ''
+      });
+      await saveSheetLeadState(updatedRow, {
+        lastMeetingLink: String(updatedRow['Meeting Details'] || '') || null,
+        lastAction: normalizeLeadStatus(row.lead_status) === LEAD_STATUS.NO_RESPONSE ? 'NO_RESPONSE' : 'STATUS_ONLY',
+        lastActionStatus: result.skipped ? 'skipped' : 'success'
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Status update failed.';
@@ -554,6 +846,7 @@ export async function processLeadsByStatus(
         lead_status: failedRow.lead_status || '',
         Remarks: message
       });
+      await saveSheetLeadState(failedRow, { lastAction: 'STATUS_ONLY', lastActionStatus: 'failed', lastError: message });
     }
   }
 
@@ -563,17 +856,48 @@ export async function processLeadsByStatus(
     context.sheetName &&
     context.headers?.length
   ) {
-    await updateGoogleSheetRowsBatch(
-      context.spreadsheetId,
-      context.sheetName,
-      context.headers,
-      sheetUpdates
-    );
+    try {
+      await updateGoogleSheetRowsBatch(
+        context.spreadsheetId,
+        context.sheetName,
+        context.headers,
+        sheetUpdates
+      );
+      const syncedDeliveryIds = new Set<string>();
+      for (const row of resultsById.values()) {
+        const deliveryId = String(row.__emailDeliveryId || '');
+        if (deliveryId) syncedDeliveryIds.add(deliveryId);
+      }
+      for (const deliveryId of syncedDeliveryIds) {
+        await markEmailSheetSynced(deliveryId);
+      }
+    } catch (err) {
+      const friendly = friendlySheetsError(err);
+      sheetSyncError = friendly.message;
+      console.error('GOOGLE_SHEET_SYNC_AFTER_PROCESS_FAILED', {
+        spreadsheetId: context.spreadsheetId,
+        sheetName: context.sheetName,
+        status: friendly.status,
+        message: friendly.message
+      });
+    }
   }
 
   return {
     rows: rows.map((row) => resultsById.get(row.id) || row),
-    summary
+    sheetSyncError,
+    summary: {
+      ...summary,
+      invalid: summary.failed
+    },
+    groups: {
+      demoScheduledRows: plan.demoScheduledRows,
+      rescheduleRows: plan.rescheduleRows,
+      demoDoneRows: plan.demoDoneRows,
+      statusOnlyRows: plan.statusOnlyRows,
+      invalidRows: flattenPlannedRows(plan.invalidRows),
+      skippedRows: flattenPlannedRows(plan.skippedRows)
+    }
   };
 }
 
@@ -615,12 +939,32 @@ export async function sendThankYouForRow(
   const email = String(row.email || '').trim();
   if (!email) throw new Error('Email is missing.');
   if (!isValidEmail(email)) throw new Error('Email is invalid.');
+  await assertManualCloseAllowed(row);
 
-  if (await hasEmailBeenSent(row, EMAIL_LOG_TYPES.DEMO_DONE_THANK_YOU)) {
+  const template = buildThankYouEmail({ fullName: row.full_name });
+  const emailResult = await sendIdempotentEmail({
+    row,
+    context,
+    emailType: EMAIL_TYPES.DEMO_DONE,
+    subject: template.subject,
+    text: template.text,
+    html: template.html,
+    send: () => sendThankYouEmail(row)
+  });
+
+  if (emailResult.skipped) {
+    const message =
+      emailResult.reason === 'ALREADY_SENT'
+        ? 'Thank-you email already sent'
+        : emailResult.reason === 'ALREADY_PROCESSING'
+          ? 'Email is being processed'
+          : emailResult.reason === 'UNKNOWN_RESULT'
+            ? 'Email result requires review'
+            : 'Email failed: review delivery status';
     const updatedRow: ExcelRow = {
       ...row,
       lead_status: LEAD_STATUS.DEMO_DONE,
-      Remarks: 'Thank-you email already sent'
+      Remarks: message
     };
     if (!options.skipSheetSync) {
       await syncSheetRow(row, context, {
@@ -628,11 +972,11 @@ export async function sendThankYouForRow(
         Remarks: updatedRow.Remarks || ''
       });
     }
-    return { row: updatedRow, skipped: true, message: 'Thank-you email already sent' };
+    if (emailResult.reason === 'ALREADY_SENT') {
+      await closeActiveDemoForRow(row, LEAD_STATUS.DEMO_DONE);
+    }
+    return { row: updatedRow, skipped: true, message };
   }
-
-  const inviteResult = await sendThankYouEmail(row);
-  await logEmailSent(row, EMAIL_LOG_TYPES.DEMO_DONE_THANK_YOU, { messageId: inviteResult.messageId });
 
   const keys = { email, dateOfDemo: String(row['Date of Demo'] || ''), timeOfDemo: String(row['Time of Demo'] || '') };
   if (keys.email && keys.dateOfDemo && keys.timeOfDemo) {
@@ -640,7 +984,7 @@ export async function sendThankYouForRow(
       row,
       {
         meetingLink: String(row['Meeting Details'] || ''),
-        gmailMessageId: inviteResult.messageId,
+        gmailMessageId: emailResult.messageId,
         remarks: 'Thank-you email sent',
         status: LEAD_STATUS.DEMO_DONE
       },
@@ -651,7 +995,8 @@ export async function sendThankYouForRow(
   const updatedRow: ExcelRow = {
     ...row,
     lead_status: LEAD_STATUS.DEMO_DONE,
-    Remarks: 'Thank-you email sent'
+    Remarks: 'Thank-you email sent',
+    __emailDeliveryId: emailResult.deliveryId
   };
 
   if (!options.skipSheetSync) {
@@ -661,7 +1006,216 @@ export async function sendThankYouForRow(
     });
   }
 
+  await closeActiveDemoForRow(row, LEAD_STATUS.DEMO_DONE, {
+    emailSentAt: emailResult.sent ? new Date().toISOString() : undefined
+  });
+
   return { row: updatedRow, skipped: false, message: 'Thank-you email sent' };
+}
+
+export async function sendNoResponseForRow(
+  row: ExcelRow,
+  context: SheetContext,
+  options: WorkflowOptions = {}
+) {
+  const email = String(row.email || '').trim();
+  if (!email) throw new Error('Email is missing.');
+  if (!isValidEmail(email)) throw new Error('Email is invalid.');
+  await assertManualCloseAllowed(row);
+
+  const template = buildNoResponseEmail({ fullName: row.full_name });
+  const emailResult = await sendIdempotentEmail({
+    row,
+    context,
+    emailType: EMAIL_TYPES.NO_RESPONSE,
+    subject: template.subject,
+    text: template.text,
+    html: template.html,
+    send: () => sendNoResponseEmail(row)
+  });
+
+  if (emailResult.skipped) {
+    const message =
+      emailResult.reason === 'ALREADY_SENT'
+        ? 'No Response email already sent'
+        : emailResult.reason === 'ALREADY_PROCESSING'
+          ? 'Email is being processed'
+          : emailResult.reason === 'UNKNOWN_RESULT'
+            ? 'Email result requires review'
+            : 'Email failed: review delivery status';
+    const updatedRow: ExcelRow = {
+      ...row,
+      lead_status: LEAD_STATUS.NO_RESPONSE,
+      'Meeting Details': '',
+      Remarks: message
+    };
+    if (!options.skipSheetSync) {
+      await syncSheetRow(row, context, {
+        'Meeting Details': '',
+        lead_status: LEAD_STATUS.NO_RESPONSE,
+        Remarks: updatedRow.Remarks || ''
+      }, true);
+    }
+    if (emailResult.reason === 'ALREADY_SENT') {
+      await closeActiveDemoForRow(row, LEAD_STATUS.NO_RESPONSE);
+    }
+    return { row: updatedRow, skipped: true, message };
+  }
+
+  await closeActiveDemoForRow(row, LEAD_STATUS.NO_RESPONSE, {
+    emailSentAt: new Date().toISOString()
+  });
+
+  const updatedRow: ExcelRow = {
+    ...row,
+    lead_status: LEAD_STATUS.NO_RESPONSE,
+    'Meeting Details': '',
+    Remarks: 'No Response email sent',
+    __emailDeliveryId: emailResult.deliveryId
+  };
+
+  if (!options.skipSheetSync) {
+    await syncSheetRow(row, context, {
+      'Meeting Details': '',
+      lead_status: LEAD_STATUS.NO_RESPONSE,
+      Remarks: 'No Response email sent'
+    }, true);
+  }
+
+  return { row: updatedRow, skipped: false, message: 'No Response email sent' };
+}
+
+export async function rescheduleDemoForRow(
+  row: ExcelRow,
+  context: SheetContext,
+  options: WorkflowOptions = {}
+) {
+  const email = String(row.email || '').trim();
+  if (!email) throw new Error('Email is missing.');
+  if (!isValidEmail(email)) throw new Error('Email is invalid.');
+
+  const active = await getActiveDemoForRow(row);
+  if (!active?.state.activeDemoSessionId || !active.history) {
+    throw new Error('No active demo session exists.');
+  }
+  if (!active.state.meetingLink || !active.state.calendarEventId) {
+    throw new Error('An active meeting is required to reschedule.');
+  }
+  if (active.history.status !== LEAD_STATUS.DEMO_SCHEDULED) {
+    throw new Error('Only a scheduled active demo can be rescheduled.');
+  }
+
+  const oldDate = active.state.demoDate || active.history.displayDate || undefined;
+  const oldTime = active.state.demoTime || active.history.displayTime || undefined;
+  const calendarResult = await updateCalendarMeeting(row, active.state.calendarEventId);
+  const meetLink = calendarResult.meetLink || active.state.meetingLink;
+  const calendarEventId = calendarResult.eventId || active.state.calendarEventId;
+
+  const updatedRow: ExcelRow = {
+    ...row,
+    'Meeting Details': meetLink,
+    lead_status: LEAD_STATUS.DEMO_SCHEDULED,
+    Remarks: 'Rescheduled. Meeting updated and email sent.'
+  };
+
+  await rescheduleActiveDemoForRow(updatedRow, {
+    meetingLink: meetLink,
+    calendarEventId
+  });
+
+  await saveLeadScheduleSuccess(
+    updatedRow,
+    {
+      meetingLink: meetLink,
+      calendarEventId,
+      remarks: 'Rescheduled. Email pending.',
+      status: LEAD_STATUS.DEMO_SCHEDULED
+    },
+    {
+      sourceType: context.sourceType || row.__sourceType,
+      sourceId: context.spreadsheetId || row.__spreadsheetId
+    }
+  );
+
+  invalidateScheduledReminder(row, 'Reminder invalidated by reschedule');
+  addScheduledReminder(updatedRow, meetLink, calendarResult.startTime);
+
+  const template = buildRescheduleEmail({
+    fullName: row.full_name,
+    date: String(row['Date of Demo'] || ''),
+    time: String(row['Time of Demo'] || ''),
+    meetLink,
+    oldDate,
+    oldTime
+  });
+  let emailResult: Awaited<ReturnType<typeof sendIdempotentEmail>> | null = null;
+  let emailError = '';
+  try {
+    emailResult = await sendIdempotentEmail({
+      row: updatedRow,
+      context,
+      emailType: EMAIL_TYPES.DEMO_RESCHEDULED,
+      date: row['Date of Demo'],
+      time: row['Time of Demo'],
+      subject: template.subject,
+      text: template.text,
+      html: template.html,
+      send: () =>
+        sendGmailRescheduleInvite(updatedRow, meetLink, {
+          date: oldDate,
+          time: oldTime
+        })
+    });
+  } catch (error) {
+    emailError = error instanceof Error ? error.message : String(error);
+  }
+
+  const remarks = emailError
+    ? `Rescheduled. Meeting updated, but email failed: ${emailError}`
+    : emailResult?.sent
+      ? 'Rescheduled. Meeting updated and email sent.'
+      : emailResult?.reason === 'ALREADY_SENT'
+        ? 'Reschedule email already sent'
+        : emailResult?.reason === 'ALREADY_PROCESSING'
+          ? 'Reschedule email is being processed'
+          : emailResult?.reason === 'UNKNOWN_RESULT'
+            ? 'Reschedule email result requires review'
+            : 'Reschedule email failed: review delivery status';
+
+  const finalRow: ExcelRow = {
+    ...updatedRow,
+    Remarks: remarks,
+    __emailDeliveryId: emailResult?.deliveryId
+  };
+
+  await saveLeadScheduleSuccess(
+    finalRow,
+    {
+      meetingLink: meetLink,
+      calendarEventId,
+      gmailMessageId: emailResult?.messageId || undefined,
+      remarks,
+      status: LEAD_STATUS.DEMO_SCHEDULED
+    },
+    {
+      sourceType: context.sourceType || row.__sourceType,
+      sourceId: context.spreadsheetId || row.__spreadsheetId
+    }
+  );
+
+  if (!options.skipSheetSync) {
+    await syncSheetRow(row, context, {
+      'Meeting Details': meetLink,
+      lead_status: LEAD_STATUS.DEMO_SCHEDULED,
+      Remarks: remarks
+    }, true);
+  }
+
+  return {
+    row: finalRow,
+    skipped: !!emailResult?.skipped,
+    message: remarks
+  };
 }
 
 export async function updateLeadStatusOnly(
@@ -707,6 +1261,11 @@ export async function processScheduleRows(
   options?: {
     onRowProcessed?: (row: ExcelRow, index: number) => Promise<void>;
     sheetContext?: SheetContext;
+    forceNewSchedule?: boolean;
+    emailLogType?: (typeof EMAIL_LOG_TYPES)[keyof typeof EMAIL_LOG_TYPES];
+    successRemarks?: string;
+    previousMeetingDate?: string | null;
+    previousMeetingTime?: string | null;
   }
 ) {
   const results: ExcelRow[] = [];
@@ -718,20 +1277,7 @@ export async function processScheduleRows(
   };
 
   const timeConflictGroups = findTimeConflictGroups(rows);
-  if (timeConflictGroups.length > 0) {
-    const conflictRowIds = new Set(timeConflictGroups.flatMap((group) => group.rowIds));
-    const conflictRows = rows.map((row) =>
-      conflictRowIds.has(row.id) ? failureRow(row, TIME_CONFLICT_REMARK) : row
-    );
-    return {
-      rows: conflictRows,
-      summary: {
-        ...summary,
-        failed: conflictRows.filter((row) => row.__schedulerStatus === 'Failed').length,
-        timeConflicts: conflictRowIds.size
-      }
-    };
-  }
+  const conflictRowIds = new Set(timeConflictGroups.flatMap((group) => group.rowIds));
 
   const validateScheduleDateTime = (dateValue: unknown, timeValue: unknown) => {
     const startTime = parseExcelDateTime(dateValue, timeValue);
@@ -750,40 +1296,22 @@ export async function processScheduleRows(
       console.log(`Result: ${result}`);
     };
 
-    const existingMeetLink = hasGoogleMeetLink(row['Meeting Details'])
+    const forceNewSchedule = !!options?.forceNewSchedule;
+    if (conflictRowIds.has(row.id)) {
+      const updatedRow = failureRow(row, TIME_CONFLICT_REMARK);
+      await saveLeadScheduleFailure(updatedRow, TIME_CONFLICT_REMARK);
+      results.push(updatedRow);
+      summary.failed++;
+      summary.timeConflicts = (summary.timeConflicts || 0) + 1;
+      logResult('Failed');
+      await options?.onRowProcessed?.(updatedRow, index);
+      if (index < rows.length - 1) await delay(1000);
+      continue;
+    }
+
+    const existingMeetLink = !forceNewSchedule && hasGoogleMeetLink(row['Meeting Details'])
       ? String(row['Meeting Details'])
       : '';
-
-    if (hasGoogleMeetLink(existingMeetLink)) {
-      const updatedRow: ExcelRow = {
-        ...row,
-        'Meeting Details': existingMeetLink,
-        lead_status: LEAD_STATUS.DEMO_SCHEDULED,
-        Remarks: row.Remarks || 'Already has Google Meet link'
-      };
-      results.push(updatedRow);
-      summary.skipped++;
-      logResult('Skipped');
-      await options?.onRowProcessed?.(updatedRow, index);
-      if (index < rows.length - 1) await delay(1000);
-      continue;
-    }
-
-    if (await hasEmailBeenSent(row, EMAIL_LOG_TYPES.DEMO_SCHEDULED)) {
-      const dbLink = await findScheduledMeetLinkFromDb(row);
-      const updatedRow: ExcelRow = {
-        ...row,
-        'Meeting Details': dbLink || row['Meeting Details'] || '',
-        lead_status: LEAD_STATUS.DEMO_SCHEDULED,
-        Remarks: 'Meeting email already sent'
-      };
-      results.push(updatedRow);
-      summary.skipped++;
-      logResult('Skipped');
-      await options?.onRowProcessed?.(updatedRow, index);
-      if (index < rows.length - 1) await delay(1000);
-      continue;
-    }
 
     if (!isDemoScheduledStatus(row.lead_status)) {
       results.push(row);
@@ -823,17 +1351,61 @@ export async function processScheduleRows(
       continue;
     }
 
-    const existingDbRecord = await findLeadSchedule(row);
-    if (
-      (existingDbRecord?.status === LEAD_STATUS.DEMO_SCHEDULED ||
-        existingDbRecord?.status === 'Scheduled') &&
-      existingDbRecord.meetingLink
-    ) {
+    const sheetContext = options?.sheetContext || {
+      sourceType: row.__sourceType || 'excel',
+      spreadsheetId: row.__spreadsheetId,
+      sheetName: row.__sheetName,
+      headers: row.__originalColumns
+    };
+    const eventState = await getEmailEventState({
+      row,
+      context: sheetContext,
+      emailType: EMAIL_TYPES.DEMO_SCHEDULED,
+      date: row['Date of Demo'],
+      time: row['Time of Demo']
+    });
+    if (eventState.delivery?.status === 'SENT') {
+      const dbLink = await findScheduledMeetLinkFromDb(row);
       const updatedRow: ExcelRow = {
         ...row,
-        'Meeting Details': existingDbRecord.meetingLink,
+        'Meeting Details': dbLink || row['Meeting Details'] || '',
         lead_status: LEAD_STATUS.DEMO_SCHEDULED,
-        Remarks: 'Already scheduled from database'
+        Remarks: 'Already sent, skipped duplicate'
+      };
+      console.log('EMAIL_DECISION', {
+        decision: 'SKIP_ALREADY_SENT',
+        eventKey: eventState.eventKey,
+        automationId: eventState.automationId,
+        recipient: maskEmail(String(row.email || '')),
+        emailType: EMAIL_TYPES.DEMO_SCHEDULED
+      });
+      results.push(updatedRow);
+      summary.skipped++;
+      logResult('Skipped');
+      await options?.onRowProcessed?.(updatedRow, index);
+      if (index < rows.length - 1) await delay(1000);
+      continue;
+    }
+
+    if (eventState.delivery?.status === 'PROCESSING') {
+      const updatedRow: ExcelRow = {
+        ...row,
+        lead_status: LEAD_STATUS.DEMO_SCHEDULED,
+        Remarks: 'Email is being processed'
+      };
+      results.push(updatedRow);
+      summary.skipped++;
+      logResult('Skipped');
+      await options?.onRowProcessed?.(updatedRow, index);
+      if (index < rows.length - 1) await delay(1000);
+      continue;
+    }
+
+    if (eventState.delivery?.status === 'UNKNOWN') {
+      const updatedRow: ExcelRow = {
+        ...row,
+        lead_status: LEAD_STATUS.DEMO_SCHEDULED,
+        Remarks: 'Email result requires review'
       };
       results.push(updatedRow);
       summary.skipped++;
@@ -844,38 +1416,134 @@ export async function processScheduleRows(
     }
 
     try {
-      const scheduleResult = await scheduleMeeting(row);
-      const meetLink = scheduleResult.meetLink;
+      const activeDemo = await assertCanCreateOrReuseActiveDemo(row);
+      let meetLink = existingMeetLink;
+      let calendarEventId = activeDemo?.state.calendarEventId || '';
+      let startTime = parseExcelDateTime(row['Date of Demo'], row['Time of Demo']).getTime();
 
-      let inviteSent = true;
-      let inviteError = '';
-      let gmailMessageId = '';
-      try {
-        const inviteResult = await sendGmailInvite(row, meetLink);
-        gmailMessageId = inviteResult.messageId;
-        await logEmailSent(row, EMAIL_LOG_TYPES.DEMO_SCHEDULED, { messageId: gmailMessageId });
-      } catch (err: unknown) {
-        inviteSent = false;
-        inviteError = err instanceof Error ? err.message : 'Gmail invitation failed.';
-        await logEmailSent(row, EMAIL_LOG_TYPES.DEMO_SCHEDULED, { error: inviteError });
+      if (activeDemo?.state.meetingLink && activeDemo.state.calendarEventId) {
+        meetLink = activeDemo.state.meetingLink;
+        calendarEventId = activeDemo.state.calendarEventId;
+        if (activeDemo.state.demoStartUtc) {
+          const parsedStart = Date.parse(activeDemo.state.demoStartUtc);
+          if (Number.isFinite(parsedStart)) startTime = parsedStart;
+        }
+        console.log('CALENDAR_EVENT_SKIPPED_ACTIVE_DEMO', {
+          recipient: maskEmail(String(row.email || '')),
+          emailType: EMAIL_TYPES.DEMO_SCHEDULED
+        });
+      } else if (hasGoogleMeetLink(meetLink)) {
+        console.log('CALENDAR_EVENT_SKIPPED_EXISTING_MEET_LINK', {
+          recipient: maskEmail(String(row.email || '')),
+          emailType: EMAIL_TYPES.DEMO_SCHEDULED
+        });
+      } else {
+        const dbLink = await findScheduledMeetLinkFromDb(row);
+        if (hasGoogleMeetLink(dbLink)) {
+          meetLink = dbLink;
+          console.log('CALENDAR_EVENT_SKIPPED_DB_MEET_LINK', {
+            recipient: maskEmail(String(row.email || '')),
+            emailType: EMAIL_TYPES.DEMO_SCHEDULED
+          });
+        } else {
+          if (isCalendarBlocked()) {
+            throw new Error(calendarBlockedMessage());
+          }
+
+          const scheduleResult = await scheduleMeeting(row);
+          meetLink = scheduleResult.meetLink;
+          calendarEventId = scheduleResult.eventId;
+          startTime = scheduleResult.startTime;
+
+          await saveLeadScheduleSuccess(
+            { ...row, 'Meeting Details': meetLink },
+            {
+              meetingLink: meetLink,
+              calendarEventId,
+              remarks: 'Meeting link created; email pending',
+              status: 'Email Pending'
+            },
+            {
+              sourceType: options?.sheetContext?.sourceType || row.__sourceType,
+              sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId
+            }
+          );
+
+          await ensureScheduledDemoHistory(
+            { ...row, 'Meeting Details': meetLink },
+            {
+              meetingLink: meetLink,
+              calendarEventId
+            },
+            {
+              sourceType: options?.sheetContext?.sourceType || row.__sourceType,
+              sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId
+            }
+          );
+        }
       }
 
-      const remarks = inviteSent
-        ? 'Meeting scheduled and email sent'
-        : `Meet link created, but email failed: ${inviteError}`;
+      if (!calendarEventId) {
+        throw new Error('An active Google Calendar event is required for Demo Scheduled.');
+      }
+
+      const isRescheduleEmail = options?.emailLogType === EMAIL_LOG_TYPES.DEMO_RESCHEDULED;
+      const template = isRescheduleEmail
+        ? buildRescheduleEmail({
+            fullName: row.full_name,
+            date: String(row['Date of Demo'] || ''),
+            time: String(row['Time of Demo'] || ''),
+            meetLink,
+            oldDate: options?.previousMeetingDate || undefined,
+            oldTime: options?.previousMeetingTime || undefined
+          })
+        : buildMeetingInviteEmail({
+            fullName: row.full_name,
+            date: String(row['Date of Demo'] || ''),
+            time: String(row['Time of Demo'] || ''),
+            meetLink
+          });
+      const emailResult = await sendIdempotentEmail({
+        row,
+        context: sheetContext,
+        emailType: EMAIL_TYPES.DEMO_SCHEDULED,
+        date: row['Date of Demo'],
+        time: row['Time of Demo'],
+        subject: template.subject,
+        text: template.text,
+        html: template.html,
+        send: () =>
+          isRescheduleEmail
+            ? sendGmailRescheduleInvite(row, meetLink, {
+                date: options?.previousMeetingDate || undefined,
+                time: options?.previousMeetingTime || undefined
+              })
+            : sendGmailInvite(row, meetLink)
+      });
+      const gmailMessageId = emailResult.messageId || '';
+      const remarks = emailResult.sent
+        ? options?.successRemarks || 'Meeting scheduled and email sent'
+        : emailResult.reason === 'ALREADY_SENT'
+          ? 'Already sent, skipped duplicate'
+          : emailResult.reason === 'ALREADY_PROCESSING'
+            ? 'Email is being processed'
+            : emailResult.reason === 'UNKNOWN_RESULT'
+              ? 'Email result requires review'
+              : 'Email failed: review delivery status';
 
       const updatedRow: ExcelRow = {
         ...row,
         'Meeting Details': meetLink,
         lead_status: LEAD_STATUS.DEMO_SCHEDULED,
-        Remarks: remarks
+        Remarks: remarks,
+        __emailDeliveryId: emailResult.deliveryId
       };
 
       await saveLeadScheduleSuccess(
         updatedRow,
         {
           meetingLink: meetLink,
-          calendarEventId: scheduleResult.eventId,
+          calendarEventId: calendarEventId || undefined,
           gmailMessageId,
           remarks,
           status: LEAD_STATUS.DEMO_SCHEDULED
@@ -886,7 +1554,23 @@ export async function processScheduleRows(
         }
       );
 
-      addScheduledReminder(updatedRow, meetLink, scheduleResult.startTime);
+      await ensureScheduledDemoHistory(
+        updatedRow,
+        {
+          meetingLink: meetLink,
+          calendarEventId,
+          scheduledEmailSentAt: emailResult.sent ? new Date().toISOString() : undefined
+        },
+        {
+          sourceType: options?.sheetContext?.sourceType || row.__sourceType,
+          sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId
+        }
+      );
+      if (emailResult.sent) {
+        await markScheduledEmailSent(updatedRow);
+      }
+
+      addScheduledReminder(updatedRow, meetLink, startTime);
       results.push(updatedRow);
       summary.scheduled++;
       logResult('Scheduled');
@@ -894,8 +1578,23 @@ export async function processScheduleRows(
     } catch (err: unknown) {
       const failureMessage =
         err instanceof Error ? err.message : 'Scheduling failed: Google API transaction did not complete.';
-      const updatedRow: ExcelRow = { ...row, __schedulerStatus: 'Failed', Remarks: failureMessage };
-      await saveLeadScheduleFailure(updatedRow, failureMessage);
+      if (isCalendarQuotaBlocked(failureMessage)) {
+        markCalendarBlocked();
+      }
+      const dbLink = await findScheduledMeetLinkFromDb(row);
+      const preservedMeetLink = existingMeetLink || dbLink || String(row['Meeting Details'] || '');
+      const updatedRow: ExcelRow = {
+        ...row,
+        'Meeting Details': preservedMeetLink,
+        __schedulerStatus: 'Failed',
+        Remarks: failureMessage
+      };
+      await saveLeadScheduleFailure(updatedRow, failureMessage, {
+        sourceType: options?.sheetContext?.sourceType || row.__sourceType,
+        sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
+        status: scheduleFailureStatus(failureMessage),
+        meetingLink: preservedMeetLink
+      });
       results.push(updatedRow);
       summary.failed++;
       logResult('Failed');

@@ -37,11 +37,11 @@ npx prisma generate
 
 Required OAuth scopes:
 
-- `https://www.googleapis.com/auth/calendar`
+- `https://www.googleapis.com/auth/calendar.events`
 - `https://www.googleapis.com/auth/gmail.send`
 - `https://www.googleapis.com/auth/spreadsheets`
 
-**Important:** After adding the Google Sheets scope, reconnect Google in the app or regenerate your refresh token so the saved token includes spreadsheet access.
+**Important:** After adding or changing OAuth scopes, reconnect Google in the app or regenerate your refresh token so the saved token includes Calendar, Gmail, and Sheets access.
 
 **Production security:** Do not commit `.env`, `data/google_tokens.json`, refresh tokens, client secrets, or local database files. If any Google client secret or refresh token was exposed during local testing, rotate it before production use.
 

@@ -104,23 +104,48 @@ export function findTimeConflicts(rows: ExcelRow[]) {
 export const canScheduleDemo = (row: ExcelRow) =>
   normalizeStatus(row.lead_status) === 'demo scheduled' && !hasMeetLink(row['Meeting Details']);
 
+export const hasMeetingStarted = (row: ExcelRow) => {
+  const date = row['Date of Demo'];
+  const time = row['Time of Demo'];
+  if (!date || !time) return false;
+  const parsed = Date.parse(`${String(date)} ${String(time)}`);
+  return Number.isFinite(parsed) && parsed <= Date.now();
+};
+
 export const canSendThankYou = (row: ExcelRow) =>
-  normalizeStatus(row.lead_status) === 'demo done';
+  normalizeStatus(row.lead_status) === 'demo done' &&
+  hasMeetLink(row['Meeting Details']) &&
+  hasMeetingStarted(row);
 
 export const canRescheduleDemo = (row: ExcelRow) =>
-  normalizeStatus(row.lead_status) === 'reschedule';
+  normalizeStatus(row.lead_status) === 'reschedule' && hasMeetLink(row['Meeting Details']);
+
+export const isActiveDemoRow = (row: ExcelRow) =>
+  getLeadStatus(row) === LEAD_STATUS.DEMO_SCHEDULED && hasMeetLink(row['Meeting Details']);
+
+export const canStartReschedule = (row: ExcelRow) => isActiveDemoRow(row);
+
+export const canMarkDemoOutcome = (row: ExcelRow) => isActiveDemoRow(row) && hasMeetingStarted(row);
+
+export const canScheduleNewDemo = (row: ExcelRow) =>
+  (getLeadStatus(row) === LEAD_STATUS.DEMO_DONE || getLeadStatus(row) === LEAD_STATUS.NO_RESPONSE) &&
+  !hasMeetLink(row['Meeting Details']);
 
 export const isStatusOnly = (row: ExcelRow) =>
   [
-    'no response',
     'follow up',
     'to be called',
     'not required',
     'repeated'
   ].includes(normalizeStatus(row.lead_status));
 
+export const canMarkNoResponse = (row: ExcelRow) =>
+  normalizeStatus(row.lead_status) === 'no response' &&
+  hasMeetLink(row['Meeting Details']) &&
+  hasMeetingStarted(row);
+
 export const canProcessLead = (row: ExcelRow) =>
-  canScheduleDemo(row) || canSendThankYou(row) || canRescheduleDemo(row) || isStatusOnly(row);
+  canScheduleDemo(row) || canSendThankYou(row) || canRescheduleDemo(row) || canMarkNoResponse(row) || isStatusOnly(row);
 
 export const isDemoScheduledComplete = (row: ExcelRow) =>
   getLeadStatus(row) === LEAD_STATUS.DEMO_SCHEDULED && hasMeetLink(row['Meeting Details']);

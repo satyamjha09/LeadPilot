@@ -35,10 +35,12 @@ type ProcessPreview = {
   summary: {
     total: number;
     demoScheduled: number;
+    reschedule: number;
     demoDone: number;
     statusOnly: number;
     invalid: number;
     skipped: number;
+    timeConflicts: number;
     actionable: number;
   };
   estimatedTime: {
@@ -107,6 +109,7 @@ export default function App() {
   const [statusRevertMap, setStatusRevertMap] = useState<Record<string, LeadStatusLabel | 'Failed' | ''>>({});
 
   const [isProcessing, setIsProcessing] = useState(false);
+  const isSyncingRef = useRef(false);
   const [processingProgress, setProcessingProgress] = useState<{
     current: number;
     total: number;
@@ -253,17 +256,60 @@ export default function App() {
   };
 
   const handleGoogleSheetDataParsed = async (parsedRows: ExcelRow[], sheetSource: SheetSource) => {
-    const reconciledRows = await reconcileRows(parsedRows);
     setSource(sheetSource);
-    setRows(reconciledRows);
+    setRows(parsedRows);
     const initiallySelected = new Set<string>();
-    reconciledRows.forEach((row) => {
+    parsedRows.forEach((row) => {
       if (canProcessLead(row)) initiallySelected.add(row.id);
     });
     setSelectedRowIds(initiallySelected);
     setActiveView('dashboard');
     const sheetName = sheetSource.type === 'google-sheet' ? sheetSource.sheetName : 'sheet';
-    toast.success(`Imported ${reconciledRows.length} rows from "${sheetName}"`);
+    toast.success(`Imported ${parsedRows.length} rows from "${sheetName}"`);
+  };
+
+  const applyProcessSummary = (rawSummary: any, fallbackTotal: number): ScheduleSummary => ({
+    totalRows: rawSummary?.total ?? fallbackTotal,
+    total: rawSummary?.total ?? fallbackTotal,
+    scheduled: rawSummary?.demoScheduled ?? 0,
+    demoScheduled: rawSummary?.demoScheduled ?? 0,
+    reschedule: rawSummary?.reschedule ?? 0,
+    demoDone: rawSummary?.demoDone ?? 0,
+    statusOnly: rawSummary?.statusOnly ?? 0,
+    timeConflicts: rawSummary?.timeConflicts ?? 0,
+    failed: rawSummary?.failed ?? rawSummary?.invalid ?? 0,
+    skipped: rawSummary?.skipped ?? 0
+  });
+
+  const syncGoogleSheet = async (showToast = false) => {
+    if (source.type !== 'google-sheet' || isSyncingRef.current) return;
+    isSyncingRef.current = true;
+    setIsProcessing(true);
+    setProcessingProgress(null);
+    try {
+      const res = await fetch('/api/sheets/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          spreadsheetId: source.spreadsheetId,
+          sheetName: source.sheetName,
+          headers: source.headers
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Sync failed');
+      const updatedRows = Array.isArray(data.rows) ? data.rows : [];
+      setRows(updatedRows);
+      if (Array.isArray(data.headers)) setSource({ ...source, headers: data.headers });
+      setLastSummary(applyProcessSummary(data.summary, updatedRows.length));
+      setSelectedRowIds(new Set(updatedRows.filter((row) => canProcessLead(row)).map((row) => row.id)));
+      if (showToast) toast.success(data.skippedDueToLock ? 'Sync already running' : 'Google Sheet refreshed');
+    } catch (err: unknown) {
+      if (showToast) toast.error(err instanceof Error ? err.message : 'Sync failed');
+    } finally {
+      setIsProcessing(false);
+      isSyncingRef.current = false;
+    }
   };
 
   const openProcessPreflight = async (targetRows: ExcelRow[]) => {
@@ -333,18 +379,7 @@ export default function App() {
       if (!res.ok) throw new Error(data.error || 'Lead processing failed.');
 
       const updatedRows: ExcelRow[] = Array.isArray(data.rows) ? data.rows : [];
-      const processSummary = data.summary || {};
-      const summary: ScheduleSummary = {
-        totalRows: processSummary.total ?? processTargetRows.length,
-        total: processSummary.total ?? processTargetRows.length,
-        scheduled: processSummary.demoScheduled ?? 0,
-        demoScheduled: processSummary.demoScheduled ?? 0,
-        demoDone: processSummary.demoDone ?? 0,
-        statusOnly: processSummary.statusOnly ?? 0,
-        timeConflicts: processSummary.timeConflicts ?? 0,
-        failed: processSummary.failed ?? updatedRows.length,
-        skipped: processSummary.skipped ?? 0
-      };
+      const summary = applyProcessSummary(data.summary, processTargetRows.length);
 
       const updatedById = new Map(updatedRows.map((row) => [row.id, row]));
       setRows((current) => current.map((row) => updatedById.get(row.id) || row));
@@ -353,7 +388,11 @@ export default function App() {
       }
       setLastSummary(summary);
       setSelectedRowIds(new Set());
-      toast.success('Lead processing completed');
+      if (data.sheetSyncError) {
+        toast.warning(`Lead processing completed, but Sheet update failed: ${data.sheetSyncError}`);
+      } else {
+        toast.success('Lead processing completed');
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Lead processing failed';
       toast.error(message);
@@ -409,8 +448,12 @@ export default function App() {
       return;
     }
 
-    if (newStatus === LEAD_STATUS.DEMO_DONE) {
-      openProcessPreflight([{ ...row, lead_status: LEAD_STATUS.DEMO_DONE }]);
+    if (
+      newStatus === LEAD_STATUS.DEMO_DONE ||
+      newStatus === LEAD_STATUS.NO_RESPONSE ||
+      newStatus === LEAD_STATUS.RESCHEDULE
+    ) {
+      openProcessPreflight([{ ...row, lead_status: newStatus }]);
       return;
     }
 
@@ -561,6 +604,7 @@ export default function App() {
                   onSelectAllReady={selectAllProcessable}
                   onClearSelection={() => setSelectedRowIds(new Set())}
                   onProcess={() => openProcessPreflight(processTargetFromSelection)}
+                  onSyncNow={source.type === 'google-sheet' ? () => syncGoogleSheet(true) : undefined}
                   onExport={handleExportDetails}
                 />
                 <LeadsTable
@@ -608,7 +652,7 @@ export default function App() {
           <DialogHeader>
             <DialogTitle>Review processing plan</DialogTitle>
             <DialogDescription>
-              Emails will only be sent for Demo Scheduled and Demo Done rows.
+              Demo Scheduled, Reschedule, Demo Done, and No Response actions may send emails.
             </DialogDescription>
           </DialogHeader>
 
@@ -623,10 +667,12 @@ export default function App() {
                 </p>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   <PreviewStat label="Demo Scheduled emails" value={processPreview.summary.demoScheduled} />
+                  <PreviewStat label="Reschedule emails" value={processPreview.summary.reschedule} />
                   <PreviewStat label="Demo Done thank-you" value={processPreview.summary.demoDone} />
                   <PreviewStat label="Status-only updates" value={processPreview.summary.statusOnly} />
                   <PreviewStat label="Skipped" value={processPreview.summary.skipped} />
                   <PreviewStat label="Invalid" value={processPreview.summary.invalid} />
+                  <PreviewStat label="Time conflicts" value={processPreview.summary.timeConflicts} />
                   <PreviewStat label="Estimated time" value={processPreview.estimatedTime.label} />
                 </div>
 

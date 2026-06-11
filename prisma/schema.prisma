@@ -27,6 +27,66 @@ model LeadSchedule {
   @@unique([email, dateOfDemo, timeOfDemo])
 }
 
+model CustomerDemoState {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  fullName            String?
+  email               String   @unique
+  status              String
+  activeDemoSessionId String?
+  meetingLink         String?
+  calendarEventId     String?
+  demoStartUtc        String?
+  demoEndUtc          String?
+  demoDate            String?
+  demoTime            String?
+  timezone            String?
+  sourceType          String?
+  sourceId            String?
+  sheetRowNumber      Int?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  demoHistory DemoHistory[]
+
+  @@index([status])
+}
+
+model DemoHistory {
+  id                      String   @id @default(cuid())
+  sessionId               String   @unique
+  userId                  String
+  fullName                String?
+  email                   String
+  status                  String
+  scheduledStartUtc       String
+  scheduledEndUtc         String
+  displayDate             String
+  displayTime             String
+  timezone                String
+  meetingLink             String
+  calendarEventId         String
+  rescheduleCount         Int      @default(0)
+  scheduledEmailSentAt    String?
+  reminder24HourSentAt    String?
+  reminder1HourSentAt     String?
+  demoDoneEmailSentAt     String?
+  noResponseEmailSentAt   String?
+  cancellationEmailSentAt String?
+  scheduledAt             String
+  completedAt             String?
+  noResponseAt            String?
+  cancelledAt             String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  customer CustomerDemoState @relation(fields: [userId], references: [userId])
+
+  @@index([userId])
+  @@index([email])
+  @@index([status])
+}
+
 model EmailLog {
   id        String   @id @default(cuid())
   email     String
@@ -38,4 +98,45 @@ model EmailLog {
   createdAt DateTime @default(now())
 
   @@unique([email, rowKey, type])
+}
+
+model SheetLeadState {
+  id              String   @id @default(cuid())
+  sheetRowKey     String   @unique
+  spreadsheetId   String
+  sheetName       String
+  sheetRowNumber  Int
+  email           String?
+  lastLeadStatus  String?
+  lastMeetingDate String?
+  lastMeetingTime String?
+  lastMeetingLink String?
+  lastAction      String?
+  lastActionStatus String?
+  lastError       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model EmailDelivery {
+  id                String   @id @default(cuid())
+  eventKey          String   @unique
+  automationId      String
+  emailType         String
+  recipient         String
+  payloadHash       String
+  status            String   @default("PROCESSING")
+  attemptCount      Int      @default(1)
+  providerMessageId String?
+  sentAt            DateTime?
+  lockedAt          DateTime?
+  lockedBy          String?
+  lastError         String?
+  sheetSyncedAt     DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([automationId])
+  @@index([status])
+  @@index([updatedAt])
 }

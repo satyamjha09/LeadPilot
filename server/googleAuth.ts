@@ -4,6 +4,8 @@ import path from 'path';
 import { ExcelRow } from '../src/types';
 import {
   buildMeetingInviteEmail,
+  buildNoResponseEmail,
+  buildRescheduleEmail,
   buildRawEmail,
   buildReminderEmail,
   buildThankYouEmail
@@ -12,6 +14,11 @@ import {
 const TOKENS_PATH = path.join(process.cwd(), 'data', 'google_tokens.json');
 const AUTH_STATE_PATH = path.join(process.cwd(), 'data', 'auth_state.json');
 const GOOGLE_CALENDAR_TIME_ZONE = 'Asia/Kolkata';
+const GOOGLE_OAUTH_SCOPES = [
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/spreadsheets'
+];
 
 // Ensure data directory exists
 const dataDir = path.dirname(TOKENS_PATH);
@@ -237,7 +244,9 @@ function toCalendarDateTime(date: Date): string {
 
 function friendlyGoogleError(err: any, action: string): string {
   const status = err?.code || err?.response?.status;
+  const details = getGoogleErrorDetails(err);
   const detail = err?.response?.data?.error_description
+    || details.message
     || err?.response?.data?.error?.message
     || err?.errors?.[0]?.message
     || err?.message;
@@ -246,7 +255,11 @@ function friendlyGoogleError(err: any, action: string): string {
     return `${action} failed: Google authorization expired. Reconnect the Google account and try again.`;
   }
   if (status === 403) {
-    return `${action} failed: Google denied permission or quota. Check Calendar/Gmail API access for this account.`;
+    const reason = details.reason || details.status || 'permission_or_quota';
+    if (reason === 'quotaExceeded' || /quota|usage limits/i.test(detail || '')) {
+      return `${action} blocked: Google Calendar is temporarily restricted. Add a Meet link manually or retry later.`;
+    }
+    return `${action} failed: ${reason} - ${detail || 'Google denied permission or quota.'}`;
   }
   if (status === 429) {
     return `${action} failed: Google rate limit reached. Wait a minute and retry the failed rows.`;
@@ -256,6 +269,102 @@ function friendlyGoogleError(err: any, action: string): string {
   }
 
   return `${action} failed${detail ? `: ${detail}` : '.'}`;
+}
+
+function getGoogleErrorDetails(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return { message: String(error) };
+  }
+
+  const googleError = error as {
+    message?: string;
+    code?: number | string;
+    response?: {
+      status?: number;
+      data?: {
+        error?: {
+          code?: number;
+          message?: string;
+          status?: string;
+          errors?: Array<{
+            domain?: string;
+            reason?: string;
+            message?: string;
+          }>;
+        };
+      };
+    };
+  };
+
+  const apiError = googleError.response?.data?.error;
+  const firstError = apiError?.errors?.[0];
+
+  return {
+    httpStatus: googleError.response?.status,
+    code: apiError?.code ?? googleError.code,
+    status: apiError?.status,
+    reason: firstError?.reason,
+    domain: firstError?.domain,
+    message:
+      firstError?.message ??
+      apiError?.message ??
+      googleError.message ??
+      'Unknown Google API error'
+  };
+}
+
+async function withCalendarRetry<T>(action: () => Promise<T>, maxAttempts = 4): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await action();
+    } catch (error) {
+      lastError = error;
+      const details = getGoogleErrorDetails(error);
+      const retryableReasons = new Set(['rateLimitExceeded', 'userRateLimitExceeded']);
+      const retryable =
+        retryableReasons.has(details.reason || '') ||
+        details.httpStatus === 429 ||
+        (details.httpStatus !== undefined && details.httpStatus >= 500);
+
+      if (!retryable || attempt === maxAttempts) {
+        throw error;
+      }
+
+      const delayMs = Math.min(2 ** attempt * 1000, 32_000) + Math.floor(Math.random() * 1000);
+      console.warn('CALENDAR_EVENT_CREATE_RETRY', {
+        attempt,
+        delayMs,
+        reason: details.reason,
+        httpStatus: details.httpStatus,
+        message: details.message
+      });
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  throw lastError;
+}
+
+async function sendRawGmailMessage(raw: string) {
+  const oauth2Client = getOAuthClient();
+  const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+  const response = await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: { raw }
+  });
+
+  const messageId = response.data.id;
+  if (!messageId) {
+    throw new Error('Gmail accepted the request but returned no message ID.');
+  }
+
+  return {
+    messageId,
+    threadId: response.data.threadId || undefined
+  };
 }
 
 export async function scheduleMeeting(row: ExcelRow) {
@@ -269,24 +378,11 @@ export async function scheduleMeeting(row: ExcelRow) {
     const startTime = parseExcelDateTime(dateVal, timeVal);
     const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // 30 mins later
     
-    let adminEmail = '';
-    try {
-      const calendarRes = await calendar.calendars.get({ calendarId: 'primary' });
-      adminEmail = calendarRes.data.id || '';
-    } catch (err) {
-      console.warn('Could not fetch primary calendar ID:', err);
-    }
-
-    const attendees = [
-      { email: row.email }
-    ];
-    if (adminEmail && adminEmail.toLowerCase() !== row.email.toLowerCase()) {
-      attendees.push({ email: adminEmail });
-    }
+    const attendees = [{ email: row.email }];
 
     const event = {
-      summary: `Demo Meeting with ${row.full_name || 'Client'}`,
-      description: 'Demo meeting scheduled from Excel automation.',
+      summary: 'Smart TDS Demo - TallyKonnect',
+      description: 'Smart TDS demo scheduled by TallyKonnect. For support, contact info@tallykonnect.com.',
       start: {
         dateTime: toCalendarDateTime(startTime),
         timeZone: GOOGLE_CALENDAR_TIME_ZONE,
@@ -306,12 +402,14 @@ export async function scheduleMeeting(row: ExcelRow) {
       },
     };
 
-    const response = await calendar.events.insert({
-      calendarId: 'primary',
-      requestBody: event,
-      conferenceDataVersion: 1, // Required to trigger Google Meet generation
-      sendUpdates: 'all',
-    });
+    const response = await withCalendarRetry(() =>
+      calendar.events.insert({
+        calendarId: 'primary',
+        requestBody: event,
+        conferenceDataVersion: 1, // Required to trigger Google Meet generation
+        sendUpdates: 'all',
+      })
+    );
 
     const meetLink = response.data.hangoutLink || response.data.conferenceData?.entryPoints?.[0]?.uri;
     if (!meetLink) {
@@ -324,56 +422,91 @@ export async function scheduleMeeting(row: ExcelRow) {
       startTime: startTime.getTime()
     };
   } catch (err: any) {
+    const details = getGoogleErrorDetails(err);
+    console.error('CALENDAR_EVENT_CREATE_FAILED', details);
     throw new Error(friendlyGoogleError(err, 'Calendar event creation'));
+  }
+}
+
+export async function updateCalendarMeeting(row: ExcelRow, calendarEventId: string) {
+  if (!calendarEventId) {
+    throw new Error('Calendar event ID is required to reschedule this demo.');
+  }
+
+  try {
+    const oauth2Client = getOAuthClient();
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    const startTime = parseExcelDateTime(row['Date of Demo'], row['Time of Demo']);
+    const endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
+
+    const response = await withCalendarRetry(() =>
+      calendar.events.patch({
+        calendarId: 'primary',
+        eventId: calendarEventId,
+        requestBody: {
+          summary: 'Smart TDS Demo - TallyKonnect',
+          description: 'Smart TDS demo rescheduled by TallyKonnect. For support, contact info@tallykonnect.com.',
+          start: {
+            dateTime: toCalendarDateTime(startTime),
+            timeZone: GOOGLE_CALENDAR_TIME_ZONE,
+          },
+          end: {
+            dateTime: toCalendarDateTime(endTime),
+            timeZone: GOOGLE_CALENDAR_TIME_ZONE,
+          },
+          attendees: [{ email: row.email }]
+        },
+        sendUpdates: 'all',
+      })
+    );
+
+    return {
+      meetLink: response.data.hangoutLink || response.data.conferenceData?.entryPoints?.[0]?.uri || '',
+      eventId: response.data.id || calendarEventId,
+      startTime: startTime.getTime()
+    };
+  } catch (err: any) {
+    const details = getGoogleErrorDetails(err);
+    console.error('CALENDAR_EVENT_UPDATE_FAILED', details);
+    throw new Error(friendlyGoogleError(err, 'Calendar event update'));
   }
 }
 
 export async function sendThankYouEmail(row: ExcelRow) {
   try {
-    const oauth2Client = getOAuthClient();
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-
-    let adminEmail = '';
-    try {
-      const profile = await gmail.users.getProfile({ userId: 'me' });
-      adminEmail = profile.data.emailAddress || '';
-    } catch (err) {
-      console.warn('Failed to retrieve admin email profile:', err);
-    }
-
     const template = buildThankYouEmail({
       fullName: row.full_name
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
-      cc: adminEmail && adminEmail.toLowerCase() !== String(row.email).toLowerCase() ? adminEmail : undefined,
       ...template
     });
 
-    const response = await gmail.users.messages.send({
-      userId: 'me',
-      requestBody: { raw: encodedMessage }
-    });
-
-    return { messageId: response.data.id || '' };
+    return await sendRawGmailMessage(encodedMessage);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail thank-you email'));
   }
 }
 
+export async function sendNoResponseEmail(row: ExcelRow) {
+  try {
+    const template = buildNoResponseEmail({
+      fullName: row.full_name
+    });
+    const encodedMessage = buildRawEmail({
+      to: String(row.email || ''),
+      ...template
+    });
+
+    return await sendRawGmailMessage(encodedMessage);
+  } catch (err: any) {
+    throw new Error(friendlyGoogleError(err, 'Gmail No Response email'));
+  }
+}
+
 export async function sendGmailInvite(row: ExcelRow, meetLink: string) {
   try {
-    const oauth2Client = getOAuthClient();
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-
-    let adminEmail = '';
-    try {
-      const profile = await gmail.users.getProfile({ userId: 'me' });
-      adminEmail = profile.data.emailAddress || '';
-    } catch (err) {
-      console.warn('Failed to retrieve admin email profile:', err);
-    }
-
     const template = buildMeetingInviteEmail({
       fullName: row.full_name,
       date: String(row['Date of Demo'] || ''),
@@ -382,55 +515,57 @@ export async function sendGmailInvite(row: ExcelRow, meetLink: string) {
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
-      cc: adminEmail && adminEmail.toLowerCase() !== String(row.email).toLowerCase() ? adminEmail : undefined,
       ...template
     });
 
-    const response = await gmail.users.messages.send({
-      userId: 'me',
-      requestBody: {
-        raw: encodedMessage
-      }
-    });
-
-    return {
-      messageId: response.data.id || ''
-    };
+    return await sendRawGmailMessage(encodedMessage);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail invitation'));
   }
 }
 
-export async function sendGmailReminder(fullName: string, email: string, dateStr: string, timeStr: string, meetLink: string) {
-  const oauth2Client = getOAuthClient();
-  const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-
-  let adminEmail = '';
+export async function sendGmailRescheduleInvite(
+  row: ExcelRow,
+  meetLink: string,
+  previous?: { date?: string; time?: string }
+) {
   try {
-    const profile = await gmail.users.getProfile({ userId: 'me' });
-    adminEmail = profile.data.emailAddress || '';
-  } catch (err) {
-    console.warn('Failed to retrieve admin email profile for reminder:', err);
+    const template = buildRescheduleEmail({
+      fullName: row.full_name,
+      date: String(row['Date of Demo'] || ''),
+      time: String(row['Time of Demo'] || ''),
+      meetLink,
+      oldDate: previous?.date,
+      oldTime: previous?.time
+    });
+    const encodedMessage = buildRawEmail({
+      to: String(row.email || ''),
+      ...template
+    });
+
+    return await sendRawGmailMessage(encodedMessage);
+  } catch (err: any) {
+    throw new Error(friendlyGoogleError(err, 'Gmail reschedule invitation'));
   }
+}
 
-  const template = buildReminderEmail({
-    fullName,
-    date: dateStr,
-    time: timeStr,
-    meetLink
-  });
-  const encodedMessage = buildRawEmail({
-    to: email,
-    cc: adminEmail && adminEmail.toLowerCase() !== email.toLowerCase() ? adminEmail : undefined,
-    ...template
-  });
+export async function sendGmailReminder(fullName: string, email: string, dateStr: string, timeStr: string, meetLink: string) {
+  try {
+    const template = buildReminderEmail({
+      fullName,
+      date: dateStr,
+      time: timeStr,
+      meetLink
+    });
+    const encodedMessage = buildRawEmail({
+      to: email,
+      ...template
+    });
 
-  await gmail.users.messages.send({
-    userId: 'me',
-    requestBody: {
-      raw: encodedMessage
-    }
-  });
+    return await sendRawGmailMessage(encodedMessage);
+  } catch (err: any) {
+    throw new Error(friendlyGoogleError(err, 'Gmail reminder email'));
+  }
 }
 
 // Check tokens save status to determine authorization validity
@@ -461,11 +596,7 @@ export async function getAuthStatus() {
     const oauth2Client = new google.auth.OAuth2(clientId, 'SECRET_MASKED', redirectUri);
     authUrl = oauth2Client.generateAuthUrl({
       access_type: 'offline',
-      scope: [
-        'https://www.googleapis.com/auth/calendar',
-        'https://www.googleapis.com/auth/gmail.send',
-        'https://www.googleapis.com/auth/spreadsheets'
-      ],
+      scope: GOOGLE_OAUTH_SCOPES,
       prompt: 'consent'
     });
   }

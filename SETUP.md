@@ -32,7 +32,7 @@ npx prisma generate
 1. Create or open a project in the [Google Cloud Console](https://console.cloud.google.com/).
 2. Enable the **Google Calendar API**, **Gmail API**, and **Google Sheets API**.
 3. Go to **APIs & Services > Credentials** and configure your **OAuth Consent Screen** (User Type: External/Internal). Make sure to add scopes:
-   - `https://www.googleapis.com/auth/calendar`
+   - `https://www.googleapis.com/auth/calendar.events`
    - `https://www.googleapis.com/auth/gmail.send`
    - `https://www.googleapis.com/auth/spreadsheets`
 4. Create an **OAuth Client ID** (Application Type: Web Application).
@@ -40,7 +40,7 @@ npx prisma generate
    - `http://localhost:3000/api/auth/callback/google`
 6. Copy the resulting **Client ID** and **Client Secret** into your `.env` file!
 
-If you add the Sheets scope after already linking Google, click **Clear Session** in the app and link Google again, or regenerate `GOOGLE_REFRESH_TOKEN`. Old refresh tokens will not automatically receive the new Sheets permission.
+If you add or change OAuth scopes after already linking Google, click **Clear Session** in the app and link Google again, or regenerate `GOOGLE_REFRESH_TOKEN`. Old refresh tokens will not automatically receive new Calendar, Gmail, or Sheets permissions.
 
 ---
 

@@ -1,15 +1,18 @@
 import { ExcelRow } from '../src/types';
 import { prisma } from './db';
-import { getLeadUniqueKeys } from './scheduleDb';
+import { getLeadUniqueKeys, getSheetRowKey } from './scheduleDb';
 
 export const EMAIL_LOG_TYPES = {
   DEMO_SCHEDULED: 'DEMO_SCHEDULED',
+  DEMO_RESCHEDULED: 'DEMO_RESCHEDULED',
   DEMO_DONE_THANK_YOU: 'DEMO_DONE_THANK_YOU'
 } as const;
 
 export type EmailLogType = (typeof EMAIL_LOG_TYPES)[keyof typeof EMAIL_LOG_TYPES];
 
 export function getEmailRowKey(row: ExcelRow) {
+  const sheetRowKey = getSheetRowKey(row);
+  if (sheetRowKey) return sheetRowKey;
   const keys = getLeadUniqueKeys(row);
   return `${keys.email}|${keys.dateOfDemo}|${keys.timeOfDemo}`;
 }

@@ -17,11 +17,16 @@ import { ExcelRow } from '@/src/types';
 
 type EmailHistoryLog = {
   id: string;
+  source?: string;
   type: string;
   status: string;
+  recipient?: string | null;
   messageId?: string | null;
   error?: string | null;
+  sentAt?: string | null;
   createdAt: string;
+  updatedAt?: string;
+  attemptCount?: number;
 };
 
 interface RowDetailsDialogProps {
@@ -103,7 +108,7 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
           <div className="space-y-5 p-5">
             <section className="space-y-3">
               <SectionTitle>Meeting</SectionTitle>
-              <div className="grid gap-3 rounded-md border p-3">
+              <div className="grid gap-3 rounded-md border bg-card p-3">
                 <Detail label="Email" value={row.email} />
                 <Detail label="Date of Demo" value={row['Date of Demo']} />
                 <Detail label="Time of Demo" value={row['Time of Demo']} />
@@ -124,14 +129,14 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
                     )
                   }
                 />
-                <Detail label="lead_status" value={row.lead_status} />
+                <Detail label="Lead Status" value={row.lead_status} />
                 <Detail label="Remarks" value={row.Remarks || '-'} />
               </div>
             </section>
 
             <section className="space-y-3">
               <SectionTitle>Email History</SectionTitle>
-              <div className="rounded-md border">
+              <div className="rounded-md border bg-card">
                 {isLoadingLogs ? (
                   <HistoryEmpty icon={<Clock3 className="h-4 w-4" />} text="Loading email history..." />
                 ) : historyError ? (
@@ -144,20 +149,31 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
                       <div key={log.id} className="space-y-2 p-3">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2">
-                            {log.status === 'sent' ? (
+                            {isSentStatus(log.status) ? (
                               <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                             ) : (
                               <AlertCircle className="h-4 w-4 text-destructive" />
                             )}
                             <span className="font-medium">{formatLogType(log.type)}</span>
                           </div>
-                          <Badge variant={log.status === 'sent' ? 'outline' : 'destructive'}>
-                            {log.status}
+                          <Badge variant={isSentStatus(log.status) ? 'outline' : 'destructive'}>
+                            {formatStatus(log.status)}
                           </Badge>
                         </div>
-                        <p className="text-xs text-muted-foreground">{formatDateTime(log.createdAt)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDateTime(log.sentAt || log.updatedAt || log.createdAt)}
+                        </p>
+                        {log.recipient && (
+                          <p className="break-all text-xs text-muted-foreground">Recipient: {log.recipient}</p>
+                        )}
                         {log.messageId && (
-                          <p className="break-all text-xs text-muted-foreground">Message ID: {log.messageId}</p>
+                          <p className="break-all text-xs text-muted-foreground">Gmail message ID: {log.messageId}</p>
+                        )}
+                        {typeof log.attemptCount === 'number' && log.attemptCount > 1 && (
+                          <p className="text-xs text-muted-foreground">Attempts: {log.attemptCount}</p>
+                        )}
+                        {log.source && (
+                          <p className="text-xs text-muted-foreground">Source: {formatSource(log.source)}</p>
                         )}
                         {log.error && <p className="text-xs text-destructive">{log.error}</p>}
                       </div>
@@ -168,8 +184,8 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
             </section>
 
             <section className="space-y-3">
-              <SectionTitle>All Source Fields</SectionTitle>
-              <div className="rounded-md border">
+              <SectionTitle>Source Fields</SectionTitle>
+              <div className="rounded-md border bg-card">
                 {sourceFields.map((key, index) => (
                   <div key={key}>
                     <div className="grid grid-cols-3 gap-3 p-3 text-sm">
@@ -212,8 +228,25 @@ function HistoryEmpty({ icon, text }: { icon: ReactNode; text: string }) {
 
 function formatLogType(type: string) {
   if (type === 'DEMO_SCHEDULED') return 'Meeting invite';
+  if (type === 'DEMO_RESCHEDULED') return 'Reschedule email';
+  if (type === 'DEMO_DONE') return 'Thank-you email';
   if (type === 'DEMO_DONE_THANK_YOU') return 'Thank-you email';
+  if (type === 'NO_RESPONSE') return 'No Response email';
   return type.replace(/_/g, ' ').toLowerCase();
+}
+
+function isSentStatus(status: string) {
+  return status.toLowerCase() === 'sent';
+}
+
+function formatStatus(status: string) {
+  return status.replace(/_/g, ' ').toLowerCase();
+}
+
+function formatSource(source: string) {
+  if (source === 'EmailDelivery') return 'Delivery log';
+  if (source === 'EmailLog') return 'Legacy email log';
+  return source;
 }
 
 function formatDateTime(value: string) {

@@ -1,9 +1,17 @@
 import { useState, type ReactNode } from 'react';
-import { CalendarPlus, Copy, ExternalLink, Eye, Heart } from 'lucide-react';
+import { CalendarPlus, CheckCircle2, Copy, ExternalLink, Eye, RotateCw, UserX } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import {
   Table,
@@ -20,13 +28,14 @@ import RowDetailsDialog from '@/src/components/dashboard/RowDetailsDialog';
 import StatusBadge from '@/src/components/dashboard/StatusBadge';
 import { LEAD_STATUS, LeadStatusLabel } from '@/src/lib/leadStatus';
 import {
+  canMarkDemoOutcome,
   canProcessLead,
-  canRescheduleDemo,
-  canScheduleDemo,
-  canSendThankYou,
+  canScheduleNewDemo,
+  canStartReschedule,
   getLeadStatus,
   hasMeetLink,
-  isStatusOnly
+  hasMeetingStarted,
+  isActiveDemoRow,
 } from '@/src/lib/rowUtils';
 import { ExcelRow } from '@/src/types';
 import { cn } from '@/lib/utils';
@@ -38,7 +47,7 @@ interface LeadsTableProps {
   onToggleRow: (id: string) => void;
   onToggleAllVisible: () => void;
   onStatusChangeRequest: (row: ExcelRow, newStatus: LeadStatusLabel, previousStatus: LeadStatusLabel | 'Failed' | '') => void;
-  onProcessRow: (row: ExcelRow) => void;
+  onProcessRow?: (row: ExcelRow) => void;
   isProcessing?: boolean;
 }
 
@@ -53,6 +62,10 @@ export default function LeadsTable({
   isProcessing = false
 }: LeadsTableProps) {
   const [detailsRow, setDetailsRow] = useState<ExcelRow | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{
+    row: ExcelRow;
+    status: LeadStatusLabel;
+  } | null>(null);
 
   if (rows.length === 0) {
     return <EmptyState />;
@@ -70,6 +83,39 @@ export default function LeadsTable({
     } catch {
       toast.error(`Could not copy ${label.toLowerCase()}`);
     }
+  };
+
+  const requestStatusAction = (
+    row: ExcelRow,
+    nextStatus: LeadStatusLabel,
+    previousStatus: LeadStatusLabel | 'Failed' | ''
+  ) => {
+    if (
+      (nextStatus === LEAD_STATUS.DEMO_DONE || nextStatus === LEAD_STATUS.NO_RESPONSE) &&
+      !canMarkDemoOutcome(row)
+    ) {
+      toast.error('Attendance actions are available only after the active demo start time.');
+      return;
+    }
+
+    if (nextStatus === LEAD_STATUS.RESCHEDULE && !canStartReschedule(row)) {
+      toast.error('Reschedule requires an active scheduled demo with a Meet link.');
+      return;
+    }
+
+    if (nextStatus === LEAD_STATUS.DEMO_DONE || nextStatus === LEAD_STATUS.NO_RESPONSE) {
+      setConfirmAction({ row, status: nextStatus });
+      return;
+    }
+
+    onStatusChangeRequest(row, nextStatus, previousStatus);
+  };
+
+  const submitConfirmedAction = () => {
+    if (!confirmAction) return;
+    const previousStatus = getLeadStatus(confirmAction.row);
+    onStatusChangeRequest(confirmAction.row, confirmAction.status, previousStatus);
+    setConfirmAction(null);
   };
 
   return (
@@ -115,10 +161,12 @@ export default function LeadsTable({
                 ) : (
                   filteredRows.map((row) => {
                     const status = getLeadStatus(row);
-                    const displayStatus = (status || LEAD_STATUS.FOLLOW_UP) as LeadStatusLabel | 'Failed';
+                    const displayStatus = status as LeadStatusLabel | 'Failed' | '';
                     const meetDetails = String(row['Meeting Details'] || '');
                     const selectable = canProcessLead(row);
                     const rowHintClass = getRowHintClass(displayStatus);
+                    const activeDemo = isActiveDemoRow(row);
+                    const meetingStarted = hasMeetingStarted(row);
 
                     return (
                       <TableRow
@@ -191,9 +239,14 @@ export default function LeadsTable({
                               value={row.lead_status || ''}
                               disabled={isProcessing}
                               onValueChange={(newStatus) =>
-                                onStatusChangeRequest(row, newStatus, status)
+                                requestStatusAction(row, newStatus, status)
                               }
                             />
+                            {activeDemo && (
+                              <span className="text-xs text-muted-foreground">
+                                {meetingStarted ? 'Ready for attendance decision' : 'Attendance actions unlock after start'}
+                              </span>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell className="max-w-[220px] truncate" title={row.Remarks}>
@@ -201,52 +254,59 @@ export default function LeadsTable({
                         </TableCell>
                         <TableCell className="sticky right-0 z-10 bg-inherit text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)]">
                           <div className="flex justify-end gap-1 bg-inherit">
-                            {canScheduleDemo(row) && (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={isProcessing}
-                                onClick={() => onProcessRow(row)}
-                              >
-                                <CalendarPlus className="h-3.5 w-3.5" />
-                                Schedule Demo
-                              </Button>
+                            {activeDemo && (
+                              <>
+                                <IconTooltip label="Reschedule active demo">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label="Reschedule active demo"
+                                    disabled={isProcessing || !canStartReschedule(row)}
+                                    onClick={() => onStatusChangeRequest(row, LEAD_STATUS.RESCHEDULE, status)}
+                                  >
+                                    <RotateCw className="h-4 w-4" />
+                                  </Button>
+                                </IconTooltip>
+                                <IconTooltip label={meetingStarted ? 'Mark demo done' : 'Demo Done unlocks after start'}>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label="Mark demo done"
+                                    disabled={isProcessing || !canMarkDemoOutcome(row)}
+                                    onClick={() => setConfirmAction({ row, status: LEAD_STATUS.DEMO_DONE })}
+                                  >
+                                    <CheckCircle2 className="h-4 w-4" />
+                                  </Button>
+                                </IconTooltip>
+                                <IconTooltip label={meetingStarted ? 'Mark No Response' : 'No Response unlocks after start'}>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label="Mark No Response"
+                                    disabled={isProcessing || !canMarkDemoOutcome(row)}
+                                    onClick={() => setConfirmAction({ row, status: LEAD_STATUS.NO_RESPONSE })}
+                                  >
+                                    <UserX className="h-4 w-4" />
+                                  </Button>
+                                </IconTooltip>
+                              </>
                             )}
-                            {canSendThankYou(row) && (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={isProcessing}
-                                onClick={() => onProcessRow(row)}
-                              >
-                                <Heart className="h-3.5 w-3.5" />
-                                Thank You
-                              </Button>
-                            )}
-                            {canRescheduleDemo(row) && (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={isProcessing}
-                                onClick={() => onProcessRow(row)}
-                              >
-                                <CalendarPlus className="h-3.5 w-3.5" />
-                                Reschedule
-                              </Button>
-                            )}
-                            {isStatusOnly(row) && (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={isProcessing}
-                                onClick={() => onProcessRow(row)}
-                              >
-                                Update Status
-                              </Button>
+                            {canScheduleNewDemo(row) && (
+                              <IconTooltip label="Schedule a new demo">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label="Schedule a new demo"
+                                  disabled={isProcessing}
+                                  onClick={() => onStatusChangeRequest(row, LEAD_STATUS.DEMO_SCHEDULED, status)}
+                                >
+                                  <CalendarPlus className="h-4 w-4" />
+                                </Button>
+                              </IconTooltip>
                             )}
                             <IconTooltip label="View details">
                               <Button
@@ -277,6 +337,35 @@ export default function LeadsTable({
         open={!!detailsRow}
         onOpenChange={(open) => !open && setDetailsRow(null)}
       />
+
+      <Dialog open={!!confirmAction} onOpenChange={(open) => !open && setConfirmAction(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {confirmAction?.status === LEAD_STATUS.DEMO_DONE
+                ? 'Mark this demo as completed?'
+                : 'Mark this customer as No Response?'}
+            </DialogTitle>
+            <DialogDescription>
+              {confirmAction?.status === LEAD_STATUS.DEMO_DONE
+                ? 'This will mark the demo as done, send the thank-you email, close the active meeting, and clear the active meeting data.'
+                : 'This will close the active demo, clear the active meeting information, and send the We Missed You email.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border bg-muted/40 p-3 text-sm">
+            <div className="font-medium">{confirmAction?.row.full_name || 'Selected lead'}</div>
+            <div className="text-muted-foreground">{confirmAction?.row.email || 'No email'}</div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setConfirmAction(null)}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={submitConfirmedAction} disabled={isProcessing}>
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -1,4 +1,4 @@
-import { CalendarCheck2, CheckCircle2, Clock3, List, Phone, XCircle } from 'lucide-react';
+import { CalendarCheck2, CheckCircle2, Clock3, List, Phone, RotateCw, UserX, XCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 type Stats = {
@@ -8,29 +8,33 @@ type Stats = {
   readyToSchedule: number;
   failed: number;
   followUp: number;
+  noResponse: number;
+  reschedule: number;
 };
 
 const items = [
   { key: 'total', label: 'Total Leads', description: 'Imported rows', icon: List },
-  { key: 'readyToSchedule', label: 'Ready to Schedule', description: 'Can send meeting email', icon: Clock3 },
-  { key: 'demoScheduled', label: 'Demo Scheduled', description: 'Meeting email sent', icon: CalendarCheck2 },
-  { key: 'demoDone', label: 'Demo Done', description: 'Thank-you sent', icon: CheckCircle2 },
-  { key: 'followUp', label: 'Follow Up', description: 'No email', icon: Phone },
-  { key: 'failed', label: 'Needs Fix', description: 'Validation errors', icon: XCircle }
+  { key: 'readyToSchedule', label: 'Ready to Schedule', description: 'Valid demo rows', icon: Clock3 },
+  { key: 'demoScheduled', label: 'Demo Scheduled', description: 'Invite workflow done', icon: CalendarCheck2 },
+  { key: 'reschedule', label: 'Reschedule', description: 'Needs active demo update', icon: RotateCw },
+  { key: 'demoDone', label: 'Demo Done', description: 'Thank-you workflow done', icon: CheckCircle2 },
+  { key: 'noResponse', label: 'No Response', description: 'Closed missed demos', icon: UserX },
+  { key: 'followUp', label: 'Follow Up', description: 'Waiting for action', icon: Phone },
+  { key: 'failed', label: 'Needs Fix', description: 'Rows with clear errors', icon: XCircle }
 ] as const;
 
 export default function StatsCards({ stats }: { stats: Stats }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
       {items.map(({ key, label, description, icon: Icon }) => (
-        <Card key={key} className="shadow-sm">
+        <Card key={key} className="rounded-md shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
             <Icon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats[key]}</div>
-            <p className="text-xs text-muted-foreground mt-1">{description}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{description}</p>
           </CardContent>
         </Card>
       ))}

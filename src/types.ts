@@ -14,6 +14,12 @@ export interface ExcelRow {
   'Time of Demo'?: string | number;
   'Meeting Details'?: string;
   lead_status?: LeadStatusLabel | string;
+  automation_id?: string;
+  email_status?: string;
+  email_sent_at?: string;
+  gmail_message_id?: string;
+  email_last_error?: string;
+  email_retry_count?: number;
   __schedulerStatus?: 'Failed';
   Remarks?: string;
   [key: string]: unknown;
@@ -53,8 +59,11 @@ export interface ReminderConfig {
 export interface ScheduledReminder {
   id: string;
   rowId: string;
+  automationId?: string;
   fullName: string;
   email: string;
+  dateStr?: string;
+  timeStr?: string;
   dateTimeStr: string;
   meetLink: string;
   reminderSent: boolean;

@@ -1,46 +1,18 @@
-export const LEAD_STATUS = {
-  DEMO_SCHEDULED: 'Demo Scheduled',
-  DEMO_DONE: 'Demo Done',
-  NO_RESPONSE: 'No Response',
-  FOLLOW_UP: 'Follow Up',
-  TO_BE_CALLED: 'To be called',
-  NOT_REQUIRED: 'Not Required',
-  REPEATED: 'Repeated',
-  RESCHEDULE: 'Reschedule'
-} as const;
+export {
+  LEAD_STATUS,
+  LEAD_STATUS_OPTIONS,
+  getLeadStatusParse,
+  isValidLeadStatus,
+  normalizeHeader,
+  normalizeLeadStatus,
+  normalizeToken,
+  type LeadStatusLabel
+} from './leadStatusCore';
 
-export type LeadStatusLabel = (typeof LEAD_STATUS)[keyof typeof LEAD_STATUS];
-
-export const LEAD_STATUS_OPTIONS: LeadStatusLabel[] = [
-  LEAD_STATUS.DEMO_SCHEDULED,
-  LEAD_STATUS.DEMO_DONE,
-  LEAD_STATUS.NO_RESPONSE,
-  LEAD_STATUS.FOLLOW_UP,
-  LEAD_STATUS.TO_BE_CALLED,
-  LEAD_STATUS.NOT_REQUIRED,
-  LEAD_STATUS.REPEATED,
-  LEAD_STATUS.RESCHEDULE
-];
-
-const ALIASES: Record<string, LeadStatusLabel> = {
-  scheduled: LEAD_STATUS.DEMO_SCHEDULED,
-  pending: LEAD_STATUS.FOLLOW_UP,
-  skipped: LEAD_STATUS.FOLLOW_UP
-};
-
-export function normalizeLeadStatus(value: unknown): LeadStatusLabel | '' {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-
-  const exact = LEAD_STATUS_OPTIONS.find((s) => s.toLowerCase() === raw.toLowerCase());
-  if (exact) return exact;
-
-  const key = raw.toLowerCase().replace(/\s+/g, ' ');
-  return ALIASES[key] || '';
-}
+import { LEAD_STATUS, type LeadStatusLabel, normalizeLeadStatus } from './leadStatusCore';
 
 export function getRowLeadStatus(value: unknown): LeadStatusLabel | 'Failed' | '' {
-  if (String(value || '').toLowerCase() === 'failed') return 'Failed';
+  if (String(value || '').trim().toLowerCase() === 'failed') return 'Failed';
   return normalizeLeadStatus(value) || '';
 }
 

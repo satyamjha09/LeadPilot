@@ -1,4 +1,4 @@
-import { ClipboardCheck, Download, Search, XCircle } from 'lucide-react';
+import { ClipboardCheck, Download, RefreshCw, Search, XCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +25,7 @@ interface ActionToolbarProps {
   onSelectAllReady: () => void;
   onClearSelection: () => void;
   onProcess: () => void;
+  onSyncNow?: () => void;
   onExport: () => void;
 }
 
@@ -41,6 +42,7 @@ export default function ActionToolbar({
   onSelectAllReady,
   onClearSelection,
   onProcess,
+  onSyncNow,
   onExport
 }: ActionToolbarProps) {
   const isGoogleSheet = source.type === 'google-sheet';
@@ -101,6 +103,12 @@ export default function ActionToolbar({
             <Button type="button" variant="outline" size="sm" onClick={onExport}>
               <Download className="h-4 w-4" />
               Download Updated Excel
+            </Button>
+          )}
+          {isGoogleSheet && onSyncNow && (
+            <Button type="button" variant="outline" size="sm" onClick={onSyncNow} disabled={isProcessing}>
+              <RefreshCw className="h-4 w-4" />
+              Sync Now
             </Button>
           )}
           <Button

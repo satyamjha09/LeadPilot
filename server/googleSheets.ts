@@ -1,9 +1,10 @@
 import { google } from 'googleapis';
 import { ExcelRow } from '../src/types';
 import { getOAuthClient } from './googleAuth';
-import { LEAD_STATUS, isValidLeadStatus, normalizeLeadStatus } from './leadStatus';
+import { getLeadStatusParse, isValidLeadStatus, normalizeHeader } from './leadStatus';
+import { createNewAutomationId } from './emailIdentity';
 
-const REQUIRED_UPDATE_COLUMNS = ['Meeting Details', 'lead_status', 'Remarks'];
+const REQUIRED_UPDATE_COLUMNS = ['Meeting Details', 'lead_status', 'Remarks', 'automation_id'];
 const SHEET_BATCH_SIZE = 20;
 
 const FIELD_KEYS: Record<string, string[]> = {
@@ -12,8 +13,9 @@ const FIELD_KEYS: Record<string, string[]> = {
   'Date of Demo': ['Date of Demo', 'date_of_demo', 'Date', 'demo_date', 'Demo Date', 'schedule_date', 'Schedule Date', 'meeting_date', 'Meeting Date'],
   'Time of Demo': ['Time of Demo', 'time_of_demo', 'Time', 'demo_time', 'Demo Time', 'schedule_time', 'Schedule Time', 'meeting_time', 'Meeting Time'],
   'Meeting Details': ['Meeting Details', 'meeting_details', 'Meet Link', 'Google Meet', 'Google Meet Link', 'meeting_link'],
-  lead_status: ['lead_status', 'Lead Status', 'Status', 'status'],
-  Remarks: ['Remarks', 'remarks', 'Notes', 'notes', 'Error', 'error']
+  lead_status: ['lead_status', 'Lead Status', 'lead status', 'Lead_Status', 'Status', 'status'],
+  Remarks: ['Remarks', 'remarks', 'Notes', 'notes', 'Error', 'error'],
+  automation_id: ['automation_id', 'Automation ID', 'automation id', 'AutomationId']
 };
 
 export function extractSheetInfo(sheetUrl: string) {
@@ -71,7 +73,12 @@ export async function readSheetRows(spreadsheetId: string, sheetName: string) {
   });
 
   const values = response.data.values || [];
-  const headers = (values[0] || []).map(value => String(value || '').trim());
+  const headers = (values[0] || []).map(value =>
+    String(value || '')
+      .normalize('NFKC')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .trim()
+  );
   if (headers.length === 0 || headers.every(header => !header)) {
     throw new Error('The selected Google Sheet tab needs headers in row 1');
   }
@@ -92,42 +99,28 @@ export async function readSheetRows(spreadsheetId: string, sheetName: string) {
     const timeDemo = stringValue(findFlexibleValue(rawRow, FIELD_KEYS['Time of Demo']));
     const meetingDetails = stringValue(findFlexibleValue(rawRow, FIELD_KEYS['Meeting Details']));
     const rawLeadStatus = stringValue(findFlexibleValue(rawRow, FIELD_KEYS.lead_status));
-    let leadStatus = normalizeLeadStatus(rawLeadStatus) || rawLeadStatus;
+    const automationId = stringValue(findFlexibleValue(rawRow, FIELD_KEYS.automation_id));
+    const parsedLeadStatus = getLeadStatusParse(rawLeadStatus);
+    const leadStatus = parsedLeadStatus.normalized || parsedLeadStatus.raw;
     let remarks = stringValue(findFlexibleValue(rawRow, FIELD_KEYS.Remarks));
     let schedulerStatus: ExcelRow['__schedulerStatus'] = undefined;
 
-    if (!leadStatus) {
-      leadStatus = LEAD_STATUS.FOLLOW_UP;
+    if (parsedLeadStatus.isBlank) {
+      schedulerStatus = 'Failed';
+      remarks = 'lead_status is missing';
+    } else if (!parsedLeadStatus.isKnown) {
+      schedulerStatus = 'Failed';
+      remarks = `Invalid lead_status: ${parsedLeadStatus.raw}`;
     }
 
-    if (hasGoogleMeetLink(meetingDetails)) {
-      leadStatus = LEAD_STATUS.DEMO_SCHEDULED;
-      if (!remarks) remarks = 'Already has Google Meet link';
-    } else if (leadStatus === LEAD_STATUS.DEMO_SCHEDULED) {
-      if (!email) {
-        schedulerStatus = 'Failed';
-        remarks = 'Email is missing';
-      } else if (!isValidEmail(email)) {
-        schedulerStatus = 'Failed';
-        remarks = 'Email is invalid';
-      } else if (!dateDemo) {
-        schedulerStatus = 'Failed';
-        remarks = 'Date of Demo is missing';
-      } else if (!timeDemo) {
-        schedulerStatus = 'Failed';
-        remarks = 'Time of Demo is missing';
-      }
-    } else if (leadStatus === LEAD_STATUS.DEMO_DONE) {
-      if (!email) {
-        schedulerStatus = 'Failed';
-        remarks = 'Email is missing';
-      } else if (!isValidEmail(email)) {
-        schedulerStatus = 'Failed';
-        remarks = 'Email is invalid';
-      }
-    } else if (!isValidLeadStatus(leadStatus)) {
-      schedulerStatus = 'Failed';
-      remarks = 'Invalid lead_status value';
+    if (process.env.DEBUG_SHEET_ROWS === 'true') {
+      console.log('Google Sheet row status', {
+        sheetRowNumber,
+        headers,
+        rawStatusValue: rawLeadStatus,
+        normalizedStatus: parsedLeadStatus.normalized,
+        rawRow
+      });
     }
 
     return {
@@ -144,6 +137,7 @@ export async function readSheetRows(spreadsheetId: string, sheetName: string) {
       'Time of Demo': timeDemo,
       'Meeting Details': meetingDetails,
       lead_status: leadStatus as any,
+      automation_id: automationId,
       __schedulerStatus: schedulerStatus,
       Remarks: remarks
     } satisfies ExcelRow;
@@ -158,7 +152,8 @@ export async function ensureRequiredColumns(spreadsheetId: string, sheetName: st
   let changed = false;
 
   for (const requiredColumn of REQUIRED_UPDATE_COLUMNS) {
-    if (!updatedHeaders.some(header => header.trim().toLowerCase() === requiredColumn.toLowerCase())) {
+    const requiredKey = normalizeHeader(requiredColumn);
+    if (!updatedHeaders.some(header => normalizeHeader(header) === requiredKey)) {
       updatedHeaders.push(requiredColumn);
       changed = true;
     }
@@ -237,6 +232,43 @@ export async function updateGoogleSheetRowsBatch(
   }
 }
 
+export async function ensureSheetAutomationIds(
+  spreadsheetId: string,
+  sheetName: string,
+  headers: string[],
+  rows: ExcelRow[]
+) {
+  const updates: Array<{ rowNumber: number; values: Record<string, any> }> = [];
+
+  for (const row of rows) {
+    const existing = String(row.automation_id || '').trim();
+    if (existing) continue;
+
+    const automationId = createNewAutomationId();
+    row.automation_id = automationId;
+    updates.push({
+      rowNumber: Number(row.__sheetRowNumber || row.__sourceRowNumber),
+      values: { automation_id: automationId }
+    });
+  }
+
+  if (updates.length > 0) {
+    try {
+      await updateGoogleSheetRowsBatch(spreadsheetId, sheetName, headers, updates);
+    } catch (err) {
+      const friendly = friendlySheetsError(err);
+      console.warn('GOOGLE_SHEETS_AUTOMATION_ID_SYNC_SKIPPED', {
+        spreadsheetId,
+        sheetName,
+        status: friendly.status,
+        message: friendly.message
+      });
+    }
+  }
+
+  return rows;
+}
+
 async function retrySheetsBatchUpdate(operation: () => Promise<void>) {
   const waits = [2000, 4000, 8000];
 
@@ -247,6 +279,8 @@ async function retrySheetsBatchUpdate(operation: () => Promise<void>) {
     } catch (err: any) {
       const status = err?.code || err?.response?.status;
       if (status !== 429 || attempt === waits.length) {
+        logSheetsFailure(err);
+        err.__sheetsLogged = true;
         throw err;
       }
       await delay(waits[attempt]);
@@ -261,6 +295,7 @@ function delay(ms: number) {
 export function friendlySheetsError(err: any) {
   const status = err?.code || err?.response?.status;
   const detail = err?.response?.data?.error?.message || err?.message || '';
+  if (!err?.__sheetsLogged) logSheetsFailure(err);
 
   if (/Invalid Google Sheets URL/i.test(detail)) {
     return { status: 400, message: 'Invalid Google Sheets URL' };
@@ -268,7 +303,10 @@ export function friendlySheetsError(err: any) {
   if (status === 401 || /No access, refresh token/i.test(detail)) {
     return { status: 401, message: 'Google account is not connected' };
   }
-  if (status === 403 && /insufficient|scope|permission/i.test(detail)) {
+  if (status === 403 && /caller does not have permission/i.test(detail)) {
+    return { status: 403, message: 'Connected Google account does not have edit access to this sheet.' };
+  }
+  if (status === 403 && /insufficient|scope/i.test(detail)) {
     return { status: 403, message: 'Google Sheets permission missing. Reconnect Google with spreadsheets scope.' };
   }
   if (status === 403 || status === 404) {
@@ -278,10 +316,24 @@ export function friendlySheetsError(err: any) {
   return { status: 500, message: detail || 'Google Sheets request failed' };
 }
 
+function logSheetsFailure(err: any) {
+  if (!err) return;
+  const status = err?.code || err?.response?.status;
+  const details = err?.response?.data?.error || err?.response?.data || undefined;
+  console.error('GOOGLE_SHEETS_REQUEST_FAILED', {
+    status,
+    message: err?.message,
+    details
+  });
+}
+
 function findFlexibleValue(row: Record<string, any>, possibleKeys: string[]) {
+  const normalizedRow = new Map(
+    Object.keys(row).map((rowKey) => [normalizeHeader(rowKey), rowKey])
+  );
   for (const key of possibleKeys) {
     if (row[key] !== undefined) return row[key];
-    const matchedKey = Object.keys(row).find(rowKey => rowKey.trim().toLowerCase() === key.toLowerCase());
+    const matchedKey = normalizedRow.get(normalizeHeader(key));
     if (matchedKey) return row[matchedKey];
   }
   return '';
@@ -301,7 +353,8 @@ function isValidEmail(value: string) {
 
 function buildColumnIndexMap(headers: string[]) {
   return REQUIRED_UPDATE_COLUMNS.reduce<Record<string, number>>((acc, columnName) => {
-    const index = headers.findIndex(header => header.trim().toLowerCase() === columnName.toLowerCase());
+    const targetKey = normalizeHeader(columnName);
+    const index = headers.findIndex(header => normalizeHeader(header) === targetKey);
     acc[columnName] = index + 1;
     return acc;
   }, {});
