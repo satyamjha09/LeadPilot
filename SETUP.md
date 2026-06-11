@@ -17,16 +17,18 @@ GOOGLE_REDIRECT_URI="http://localhost:3000/api/auth/callback/google"
 # Optional: Pre-configured Refresh Token (if absent, link dynamically via UI button)
 GOOGLE_REFRESH_TOKEN=""
 
-# SQLite database for duplicate scheduling prevention
-DATABASE_URL="file:./dev.db"
+# PostgreSQL database for demo state, history, and duplicate prevention
+DATABASE_URL="postgresql://postgres:your_password@localhost:5432/tallykonnect_dev?schema=public"
 ```
 
 After first clone, run:
 
 ```bash
-npx prisma migrate dev --name init
+npx prisma migrate dev
 npx prisma generate
 ```
+
+Do not use `DATABASE_URL="file:./dev.db"` on Render. Render services can lose local filesystem state on restart/redeploy unless you attach a persistent disk, and this app requires persistent demo state for Demo Done / No Response. Use Render Postgres and set `DATABASE_URL` to the internal Postgres URL without quotes.
 
 ### 🛰️ How to obtain Google credentials
 1. Create or open a project in the [Google Cloud Console](https://console.cloud.google.com/).
@@ -57,6 +59,21 @@ npm run dev
 ```
 
 The application will bind to **`http://localhost:3000`**. Open that link in your browser to interact with the dashboard.
+
+### Render deployment
+
+Use these commands on Render:
+
+```bash
+# Build command
+npm install && npx prisma generate && npm run build
+
+# Pre-deploy command
+npx prisma migrate deploy
+
+# Start command
+npm start
+```
 
 ---
 

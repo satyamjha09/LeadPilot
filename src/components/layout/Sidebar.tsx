@@ -43,7 +43,7 @@ export default function Sidebar({ activeView, onNavigate, className }: SidebarPr
           <FileSpreadsheet className="h-5 w-5" />
         </div>
         <div>
-          <p className="text-sm font-semibold leading-tight">Excel Meet Scheduler</p>
+          <p className="text-sm font-semibold leading-tight">TallyKonnect</p>
           <p className="text-xs text-muted-foreground">Google Automation Tool</p>
         </div>
       </div>

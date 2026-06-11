@@ -63,19 +63,19 @@ export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailC
   const deliveryId = randomUUID();
   const now = new Date();
   const inserted = await prisma.$executeRaw`
-    INSERT OR IGNORE INTO EmailDelivery (
-      id,
-      eventKey,
-      automationId,
-      emailType,
-      recipient,
-      payloadHash,
-      status,
-      attemptCount,
-      lockedAt,
-      lockedBy,
-      createdAt,
-      updatedAt
+    INSERT INTO "EmailDelivery" (
+      "id",
+      "eventKey",
+      "automationId",
+      "emailType",
+      "recipient",
+      "payloadHash",
+      "status",
+      "attemptCount",
+      "lockedAt",
+      "lockedBy",
+      "createdAt",
+      "updatedAt"
     )
     VALUES (
       ${deliveryId},
@@ -91,6 +91,7 @@ export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailC
       ${now},
       ${now}
     )
+    ON CONFLICT ("eventKey") DO NOTHING
   `;
 
   if (inserted === 1) {

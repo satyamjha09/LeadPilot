@@ -379,6 +379,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         estimatedTime: plan.estimatedTime,
         meetingRecipients: plan.meetingRecipients.slice(0, 5),
         thankYouRecipients: plan.thankYouRecipients.slice(0, 5),
+        noResponseRecipients: plan.noResponseRecipients.slice(0, 5),
         groups: {
           demoScheduledRows: plan.demoScheduledRows,
           rescheduleRows: plan.rescheduleRows,
