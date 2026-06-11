@@ -54,7 +54,7 @@ export function normalizeMeetingTime(value: unknown) {
     return `${pad(Math.floor(totalMinutes / 60) % 24)}:${pad(totalMinutes % 60)}`;
   }
 
-  const raw = String(value || '').trim();
+  const raw = String(value || '').trim().replace(/:+/g, ':');
   if (!raw) return '';
 
   const match = raw.match(/^(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*(am|pm)?$/i);
@@ -105,10 +105,10 @@ export const canScheduleDemo = (row: ExcelRow) =>
   normalizeStatus(row.lead_status) === 'demo scheduled' && !hasMeetLink(row['Meeting Details']);
 
 export const hasMeetingStarted = (row: ExcelRow) => {
-  const date = row['Date of Demo'];
-  const time = row['Time of Demo'];
+  const date = normalizeMeetingDate(row['Date of Demo']);
+  const time = normalizeMeetingTime(row['Time of Demo']);
   if (!date || !time) return false;
-  const parsed = Date.parse(`${String(date)} ${String(time)}`);
+  const parsed = Date.parse(`${date} ${time}`);
   return Number.isFinite(parsed) && parsed <= Date.now();
 };
 

@@ -98,6 +98,7 @@ export type ProcessLeadPlan = {
   timeConflictGroups: TimeConflictGroup[];
   meetingRecipients: string[];
   thankYouRecipients: string[];
+  noResponseRecipients: string[];
   estimatedTime: {
     minMinutes: number;
     maxMinutes: number;
@@ -108,6 +109,7 @@ export type ProcessLeadPlan = {
     demoScheduled: number;
     reschedule: number;
     demoDone: number;
+    noResponse: number;
     statusOnly: number;
     invalid: number;
     skipped: number;
@@ -124,6 +126,7 @@ export type ProcessLeadsResult = {
     demoScheduled: number;
     reschedule: number;
     demoDone: number;
+    noResponse: number;
     statusOnly: number;
     invalid: number;
     failed: number;
@@ -520,12 +523,14 @@ export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLea
     timeConflictGroups: [],
     meetingRecipients: [],
     thankYouRecipients: [],
+    noResponseRecipients: [],
     estimatedTime: estimateProcessingTime(0, 0, 0),
     summary: {
       total: rows.length,
       demoScheduled: 0,
       reschedule: 0,
       demoDone: 0,
+      noResponse: 0,
       statusOnly: 0,
       invalid: 0,
       skipped: 0,
@@ -604,6 +609,9 @@ export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLea
         lead_status: normalized,
         Remarks: row.Remarks || ''
       });
+      if (normalized === LEAD_STATUS.NO_RESPONSE && row.email) {
+        plan.noResponseRecipients.push(String(row.email));
+      }
       continue;
     }
 
@@ -616,15 +624,22 @@ export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLea
   plan.summary.demoScheduled = plan.demoScheduledRows.length;
   plan.summary.reschedule = plan.rescheduleRows.length;
   plan.summary.demoDone = plan.demoDoneRows.length;
-  plan.summary.statusOnly = plan.statusOnlyRows.length;
+  plan.summary.noResponse = plan.statusOnlyRows.filter(
+    (row) => normalizeLeadStatus(row.lead_status) === LEAD_STATUS.NO_RESPONSE
+  ).length;
+  plan.summary.statusOnly = plan.statusOnlyRows.length - plan.summary.noResponse;
   plan.summary.invalid = plan.invalidRows.length;
   plan.summary.skipped = plan.skippedRows.length;
   plan.summary.actionable =
-    plan.summary.demoScheduled + plan.summary.reschedule + plan.summary.demoDone + plan.summary.statusOnly;
+    plan.summary.demoScheduled +
+    plan.summary.reschedule +
+    plan.summary.demoDone +
+    plan.summary.noResponse +
+    plan.summary.statusOnly;
   plan.estimatedTime = estimateProcessingTime(
     plan.summary.demoScheduled + plan.summary.reschedule,
     plan.summary.demoDone,
-    plan.summary.statusOnly
+    plan.summary.noResponse + plan.summary.statusOnly
   );
 
   return plan;
@@ -643,6 +658,7 @@ export async function processLeadsByStatus(
     demoScheduled: 0,
     reschedule: 0,
     demoDone: 0,
+    noResponse: 0,
     statusOnly: 0,
     invalid: plan.invalidRows.length,
     failed: plan.invalidRows.length,
@@ -811,8 +827,9 @@ export async function processLeadsByStatus(
 
   for (const row of plan.statusOnlyRows) {
     try {
+      const isNoResponse = normalizeLeadStatus(row.lead_status) === LEAD_STATUS.NO_RESPONSE;
       const result =
-        normalizeLeadStatus(row.lead_status) === LEAD_STATUS.NO_RESPONSE
+        isNoResponse
           ? await sendNoResponseForRow(row, context, { skipSheetSync: true })
           : {
               row: await updateLeadStatusOnly(
@@ -826,7 +843,8 @@ export async function processLeadsByStatus(
             };
       const updatedRow = result.row;
       resultsById.set(row.id, updatedRow);
-      summary.statusOnly++;
+      if (isNoResponse) summary.noResponse++;
+      else summary.statusOnly++;
       collectSheetUpdate(sheetUpdates, updatedRow, {
         'Meeting Details': updatedRow['Meeting Details'] || '',
         lead_status: updatedRow.lead_status || '',
@@ -834,7 +852,7 @@ export async function processLeadsByStatus(
       });
       await saveSheetLeadState(updatedRow, {
         lastMeetingLink: String(updatedRow['Meeting Details'] || '') || null,
-        lastAction: normalizeLeadStatus(row.lead_status) === LEAD_STATUS.NO_RESPONSE ? 'NO_RESPONSE' : 'STATUS_ONLY',
+        lastAction: isNoResponse ? 'NO_RESPONSE' : 'STATUS_ONLY',
         lastActionStatus: result.skipped ? 'skipped' : 'success'
       });
     } catch (err: unknown) {

@@ -17,15 +17,17 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/callback/google
 GOOGLE_REFRESH_TOKEN=
-DATABASE_URL="file:./dev.db"
+DATABASE_URL="postgresql://postgres:your_password@localhost:5432/tallykonnect_dev?schema=public"
 ```
 
 `GOOGLE_REFRESH_TOKEN` is optional. If you use it, **Clear Session** in the app disables that env token for the current local session until you link Google again.
 
+Do not use `file:./dev.db` for this app in production. The demo workflow needs persistent database state for active sessions, demo history, and idempotent email delivery.
+
 3. Initialize the database:
 
 ```bash
-npx prisma migrate dev --name init
+npx prisma migrate dev
 npx prisma generate
 ```
 
@@ -76,9 +78,30 @@ Supported URL formats include:
 - `https://docs.google.com/spreadsheets/d/{id}/edit?gid={gid}`
 - `https://docs.google.com/spreadsheets/d/{id}` (first tab)
 
-## Duplicate prevention (Prisma + SQLite)
+## Render + PostgreSQL
 
-The app stores each lead schedule in SQLite using a unique key:
+Use Render Postgres for production. In Render environment variables, set `DATABASE_URL` to the Render Postgres internal database URL without quotes:
+
+```text
+DATABASE_URL=postgresql://user:password@host:5432/dbname
+```
+
+Recommended Render commands:
+
+```bash
+# Build command
+npm install && npx prisma generate && npm run build
+
+# Pre-deploy command
+npx prisma migrate deploy
+
+# Start command
+npm start
+```
+
+## Duplicate prevention (Prisma + PostgreSQL)
+
+The app stores each lead schedule in PostgreSQL using a unique key:
 
 `email` + `dateOfDemo` + `timeOfDemo` (normalized, email lowercased)
 

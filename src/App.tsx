@@ -37,6 +37,7 @@ type ProcessPreview = {
     demoScheduled: number;
     reschedule: number;
     demoDone: number;
+    noResponse: number;
     statusOnly: number;
     invalid: number;
     skipped: number;
@@ -50,6 +51,7 @@ type ProcessPreview = {
   };
   meetingRecipients: string[];
   thankYouRecipients: string[];
+  noResponseRecipients: string[];
 };
 
 const loadStoredRows = (): ExcelRow[] => {
@@ -275,6 +277,7 @@ export default function App() {
     demoScheduled: rawSummary?.demoScheduled ?? 0,
     reschedule: rawSummary?.reschedule ?? 0,
     demoDone: rawSummary?.demoDone ?? 0,
+    noResponse: rawSummary?.noResponse ?? 0,
     statusOnly: rawSummary?.statusOnly ?? 0,
     timeConflicts: rawSummary?.timeConflicts ?? 0,
     failed: rawSummary?.failed ?? rawSummary?.invalid ?? 0,
@@ -669,6 +672,7 @@ export default function App() {
                   <PreviewStat label="Demo Scheduled emails" value={processPreview.summary.demoScheduled} />
                   <PreviewStat label="Reschedule emails" value={processPreview.summary.reschedule} />
                   <PreviewStat label="Demo Done thank-you" value={processPreview.summary.demoDone} />
+                  <PreviewStat label="No Response emails" value={processPreview.summary.noResponse ?? 0} />
                   <PreviewStat label="Status-only updates" value={processPreview.summary.statusOnly} />
                   <PreviewStat label="Skipped" value={processPreview.summary.skipped} />
                   <PreviewStat label="Invalid" value={processPreview.summary.invalid} />
@@ -685,6 +689,7 @@ export default function App() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <RecipientList title="Meeting email recipients" recipients={processPreview.meetingRecipients} />
                   <RecipientList title="Thank-you email recipients" recipients={processPreview.thankYouRecipients} />
+                  <RecipientList title="No Response email recipients" recipients={processPreview.noResponseRecipients ?? []} />
                 </div>
               </>
             )}

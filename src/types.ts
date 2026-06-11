@@ -34,6 +34,7 @@ export interface ScheduleSummary {
   demoScheduled?: number;
   reschedule?: number;
   demoDone?: number;
+  noResponse?: number;
   statusOnly?: number;
   timeConflicts?: number;
 }
