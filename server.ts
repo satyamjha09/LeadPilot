@@ -10,7 +10,7 @@ import { createSheetSyncService } from './server/services/sheetSyncService';
 
 dotenv.config();
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 
 async function configureFrontend(app: express.Express) {
   if (process.env.NODE_ENV !== 'production') {
