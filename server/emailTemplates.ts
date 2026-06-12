@@ -875,30 +875,44 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
         }
     </style>
 </head>
-<body>
-    <div class="email-container">
+<body style="margin:0; padding:0; background:#f5f5f5; font-family:Arial, Helvetica, sans-serif; color:#1a1a1a;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f5f5f5;">
+      <tr>
+        <td align="center" style="padding:20px 10px;">
+          <table class="email-container" role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px; background:#ffffff; border-radius:4px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.10);">
  
-        <!-- Header -->
-        <div class="header">
-            <div class="logo-space">
-                <img src="${logoUrl}" alt="TallyKonnect logo" width="50" style="display:block; width:50px; height:auto; border:0; outline:none;">
-            </div>
-            <div class="brand-name">TallyKonnect</div>
-        </div>
+            <!-- Header -->
+            <tr>
+              <td class="header" style="padding:25px 40px; background:#ffffff; border-bottom:1px solid #f0f0f0;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td width="65" valign="middle" style="width:65px;">
+                      <img src="${logoUrl}" alt="TallyKonnect logo" width="50" style="display:block; width:50px; height:auto; border:0; outline:none;">
+                    </td>
+                    <td valign="middle" style="font-size:18px; line-height:24px; font-weight:700; color:#004aad; letter-spacing:-0.5px;">
+                      TallyKonnect
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
  
-        <!-- Hero -->
-        <div class="hero">
+            <!-- Hero -->
+            <tr>
+              <td class="hero" style="padding:40px; color:#ffffff; background:#004aad; background-image:linear-gradient(135deg,#004aad 0%,#0066ff 100%);">
             <div class="hero-content">
                 <div class="hero-subtitle">🗓️ &nbsp;Demo Update</div>
-                <div class="hero-title">Your Demo Has Been<br>Rescheduled</div>
-                <div class="hero-description">
+                <div class="hero-title" style="font-size:32px; line-height:42px; font-weight:700; color:#ffffff; margin-bottom:8px;">Your Demo Has Been<br>Rescheduled</div>
+                <div class="hero-description" style="font-size:14px; line-height:22px; color:#edf4ff;">
                     We've updated your Smart TDS demo to a new time slot
                 </div>
             </div>
-        </div>
+              </td>
+            </tr>
  
         <!-- Body -->
-        <div class="body">
+            <tr>
+              <td class="body" style="padding:40px; background:#ffffff;">
             <div class="greeting">Hi ${customerName},</div>
  
             <div class="content-text">
@@ -945,15 +959,25 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
                 </div>
             </div>
  
-            <a href="${meetLink}" class="cta-button">Join Meeting Now</a>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin:24px 0;">
+                <tr>
+                    <td align="center" style="background:#004aad; border-radius:4px;">
+                        <a href="${meetLink}" style="display:block; padding:13px 20px; color:#ffffff; text-decoration:none; font-size:14px; line-height:20px; font-weight:700;">
+                            Join Meeting Now
+                        </a>
+                    </td>
+                </tr>
+            </table>
  
  
  
             <div class="divider"></div>
-        </div>
+              </td>
+            </tr>
  
         <!-- Footer -->
-        <div class="footer">
+            <tr>
+              <td class="footer" style="padding:30px 40px; background:#ffffff; border-top:1px solid #f0f0f0;">
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin-bottom:20px;">
                 <tr>
                     <td valign="top">
@@ -972,9 +996,13 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
             <div class="footer-bottom">
                 &copy; ${currentYear} TallyKonnect. All rights reserved.
             </div>
-        </div>
+              </td>
+            </tr>
  
-    </div>
+          </table>
+        </td>
+      </tr>
+    </table>
 </body>
 </html>
  `;
