@@ -1083,6 +1083,14 @@ export async function sendNoResponseForRow(
     if (emailResult.reason === 'ALREADY_SENT') {
       await closeActiveDemoForRow(row, LEAD_STATUS.NO_RESPONSE);
     }
+    await saveLeadStatusUpdate(
+      updatedRow,
+      {
+        status: LEAD_STATUS.NO_RESPONSE,
+        remarks: message
+      },
+      { sourceType: context.sourceType, sourceId: context.spreadsheetId }
+    );
     return { row: updatedRow, skipped: true, message };
   }
 
@@ -1105,6 +1113,15 @@ export async function sendNoResponseForRow(
       Remarks: 'No Response email sent'
     }, true);
   }
+
+  await saveLeadStatusUpdate(
+    updatedRow,
+    {
+      status: LEAD_STATUS.NO_RESPONSE,
+      remarks: 'No Response email sent'
+    },
+    { sourceType: context.sourceType, sourceId: context.spreadsheetId }
+  );
 
   return { row: updatedRow, skipped: false, message: 'No Response email sent' };
 }
