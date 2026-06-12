@@ -220,10 +220,10 @@ export function parseExcelDateTime(dateVal: any, timeVal: any): Date {
       mins = parsedDate.getUTCFullYear() <= 1900 ? parsedDate.getUTCMinutes() : parsedDate.getMinutes();
       timeParsed = true;
     }
-    const match = trimmed.match(/(\d+):(\d+)(?:\s*(am|pm|AM|PM))?/);
+    const match = trimmed.match(/^(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*(am|pm)?$/i);
     if (match && isNaN(parsedTime)) {
       hrs = parseInt(match[1]);
-      mins = parseInt(match[2]);
+      mins = parseInt(match[2] || '0');
       const ampm = match[3];
       if (ampm) {
         if ((ampm.toLowerCase() === 'pm') && hrs < 12) hrs += 12;
