@@ -180,7 +180,7 @@ function solutionCard(
 
               <tr>
                 <td valign="bottom" height="22" style="height:22px; vertical-align:bottom;">
-                  ${badge ? `<span style="display:inline-block; padding:3px 10px; background:#ebebeb; color:#999999; border-radius:20px; font-size:10px; line-height:14px; font-weight:600;">${escapeHtml(badge)}</span>` : '&nbsp;'}
+                  ${badge ? `<span style="display:inline-block; padding:3px 10px; background:#e02020; color:#ffffff; border-radius:20px; font-size:10px; line-height:14px; font-weight:700; letter-spacing:0.4px;">${escapeHtml(badge)}</span>` : '&nbsp;'}
                 </td>
               </tr>
             </table>
@@ -319,7 +319,7 @@ function buildTallyKonnectThankYouHtml(input: ThankYouEmailInput) {
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin-top:14px; background:#eef1fa; border-radius:12px;">
                   <tr>
                     <td width="66" valign="middle" style="width:66px; padding:16px 0 16px 18px;">
-                      <table role="presentation" width="46" height="46" cellpadding="0" cellspacing="0" border="0" style="width:46px; height:46px; background:#1535a0; border-radius:50%;">
+                      <table role="presentation" width="46" height="46" cellpadding="0" cellspacing="0" border="0" style="width:46px; height:46px; background:#2563eb; border-radius:50%;">
                         <tr>
                           <td align="center" valign="middle" style="font-size:21px; line-height:46px; color:#ffffff;">&#127911;</td>
                         </tr>
@@ -713,15 +713,13 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
             padding: 20px 24px;
             margin: 24px 0;
             border-radius: 0;
-            display: flex;
-            align-items: flex-start;
-            gap: 14px;
         }
  
         .notice-icon {
             font-size: 20px;
-            flex-shrink: 0;
-            margin-top: 2px;
+            line-height: 20px;
+            width: 34px;
+            vertical-align: top;
         }
  
         .notice-text {
@@ -735,9 +733,7 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
             font-weight: 700;
             color: #004aad;
         }
- 
- 
- 
+
         /* New meeting details */
         .meeting-section {
             background: #f8f9fb;
@@ -838,15 +834,6 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
             border-top: 1px solid #f0f0f0;
         }
  
-        .footer-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 20px;
-        }
- 
-        .footer-brand { flex: 1; }
- 
         .footer-brand-name {
             font-size: 16px;
             font-weight: 700;
@@ -858,12 +845,6 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
             font-size: 13px;
             color: #999;
             font-weight: 400;
-        }
- 
-        .footer-links {
-            display: flex;
-            gap: 24px;
-            justify-content: flex-end;
         }
  
         .footer-links a {
@@ -891,8 +872,6 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
             .header { padding: 20px; }
             .logo-space { width: 40px; height: 40px; }
             .brand-name { font-size: 16px; }
-            .old-new-wrap { flex-direction: column; }
-            .arrow-divider { padding-top: 0; transform: rotate(90deg); }
         }
     </style>
 </head>
@@ -928,10 +907,14 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
  
             <!-- Notice banner -->
             <div class="notice-box">
-                <div class="notice-icon">⚠️</div>
-                <div class="notice-text">
-                    <strong>Your demo time has changed.</strong> The previous slot is no longer valid. Please use the new date and time below to join your session.
-                </div>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                        <td class="notice-icon" width="34" valign="top">&#9888;&#65039;</td>
+                        <td class="notice-text" valign="top">
+                            <strong>Your demo time has changed.</strong> The previous slot is no longer valid. Please use the new date and time below to join your session.
+                        </td>
+                    </tr>
+                </table>
             </div>
  
  
@@ -971,17 +954,21 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
  
         <!-- Footer -->
         <div class="footer">
-            <div class="footer-top">
-                <div class="footer-brand">
-                    <div class="footer-brand-name">TallyKonnect</div>
-                    <div class="footer-tagline">Business Automation Made Simple</div>
-                </div>
-                <div class="footer-links">
-                    <a href="${WEBSITE_URL}">Website</a>
-                    <a href="mailto:${CONTACT_EMAIL}">Contact</a>
-                    <a href="${UNSUBSCRIBE_URL}">Unsubscribe</a>
-                </div>
-            </div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin-bottom:20px;">
+                <tr>
+                    <td valign="top">
+                        <div class="footer-brand-name">TallyKonnect</div>
+                        <div class="footer-tagline">Business Automation Made Simple</div>
+                    </td>
+                    <td class="footer-links" align="right" valign="top" style="font-size:13px; line-height:20px; white-space:nowrap;">
+                        <a href="${WEBSITE_URL}">Website</a>
+                        <span style="display:inline-block; width:24px;">&nbsp;</span>
+                        <a href="mailto:${CONTACT_EMAIL}">Contact</a>
+                        <span style="display:inline-block; width:24px;">&nbsp;</span>
+                        <a href="${UNSUBSCRIBE_URL}">Unsubscribe</a>
+                    </td>
+                </tr>
+            </table>
             <div class="footer-bottom">
                 &copy; ${currentYear} TallyKonnect. All rights reserved.
             </div>
