@@ -14,6 +14,7 @@ import {
 const TOKENS_PATH = path.join(process.cwd(), 'data', 'google_tokens.json');
 const AUTH_STATE_PATH = path.join(process.cwd(), 'data', 'auth_state.json');
 const GOOGLE_CALENDAR_TIME_ZONE = 'Asia/Kolkata';
+const GOOGLE_CALENDAR_TIME_ZONE_OFFSET_MINUTES = 5 * 60 + 30;
 const GOOGLE_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/gmail.send',
@@ -136,49 +137,63 @@ export function getOAuthClient() {
 
 // Robust excel date-time parsing helper
 export function parseExcelDateTime(dateVal: any, timeVal: any): Date {
-  let d = new Date();
+  let year = 0;
+  let month = 0;
+  let day = 0;
   let dateParsed = false;
   let timeParsed = false;
   
   // Parse Date
   if (typeof dateVal === 'number') {
     // Excel serial date format (days since 1900-01-01)
-    d = new Date((dateVal - 25569) * 86400 * 1000);
-    dateParsed = !isNaN(d.getTime());
+    const parsedDate = new Date((dateVal - 25569) * 86400 * 1000);
+    year = parsedDate.getUTCFullYear();
+    month = parsedDate.getUTCMonth() + 1;
+    day = parsedDate.getUTCDate();
+    dateParsed = !isNaN(parsedDate.getTime());
   } else if (dateVal instanceof Date) {
-    d = new Date(dateVal);
-    dateParsed = !isNaN(d.getTime());
+    year = dateVal.getUTCFullYear();
+    month = dateVal.getUTCMonth() + 1;
+    day = dateVal.getUTCDate();
+    dateParsed = !isNaN(dateVal.getTime());
   } else if (typeof dateVal === 'string') {
     const trimmed = dateVal.trim();
-    const parsed = Date.parse(trimmed);
-    if (!isNaN(parsed)) {
-      d = new Date(parsed);
-      dateParsed = true;
-    } else {
-      // Parse layout like DD/MM/YYYY or YYYY-MM-DD
-      const parts = trimmed.split(/[-/.]/);
-      if (parts.length === 3) {
-        if (parts[0].length === 4) {
-          // YYYY-MM-DD
-          d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
-          dateParsed = !isNaN(d.getTime());
-        } else {
-          // DD/MM/YYYY or MM/DD/YYYY
-          // Try standard DD-MM-YYYY or MM-DD-YYYY guessing
-          let p1 = parseInt(parts[0]);
-          let p2 = parseInt(parts[1]);
-          let p3 = parseInt(parts[2]);
-          if (p3 < 100) p3 += 2000; // handle YY format
+    const parts = trimmed.split(/[-/.]/);
+    if (parts.length === 3) {
+      if (parts[0].length === 4) {
+        // YYYY-MM-DD
+        year = parseInt(parts[0]);
+        month = parseInt(parts[1]);
+        day = parseInt(parts[2]);
+        dateParsed = true;
+      } else {
+        // DD/MM/YYYY or MM/DD/YYYY
+        let p1 = parseInt(parts[0]);
+        let p2 = parseInt(parts[1]);
+        let p3 = parseInt(parts[2]);
+        if (p3 < 100) p3 += 2000; // handle YY format
 
-          if (p1 > 12) {
-            // Must be DD/MM/YYYY
-            d = new Date(p3, p2 - 1, p1);
-          } else {
-            // Fallback: Assume MM/DD/YYYY
-            d = new Date(p3, p1 - 1, p2);
-          }
-          dateParsed = !isNaN(d.getTime());
+        if (p1 > 12) {
+          // Must be DD/MM/YYYY
+          year = p3;
+          month = p2;
+          day = p1;
+        } else {
+          // Fallback: Assume MM/DD/YYYY
+          year = p3;
+          month = p1;
+          day = p2;
         }
+        dateParsed = true;
+      }
+    } else {
+      const parsed = Date.parse(trimmed);
+      if (!isNaN(parsed)) {
+        const parsedDate = new Date(parsed);
+        year = parsedDate.getUTCFullYear();
+        month = parsedDate.getUTCMonth() + 1;
+        day = parsedDate.getUTCDate();
+        dateParsed = true;
       }
     }
   }
@@ -226,20 +241,18 @@ export function parseExcelDateTime(dateVal: any, timeVal: any): Date {
     throw new Error('Invalid Time of Demo. Use a real time such as 10:30 AM.');
   }
 
-  d.setHours(hrs);
-  d.setMinutes(mins);
-  d.setSeconds(0);
-  d.setMilliseconds(0);
-  return d;
+  const localTimestamp = Date.UTC(year, month - 1, day, hrs, mins, 0, 0);
+  return new Date(localTimestamp - GOOGLE_CALENDAR_TIME_ZONE_OFFSET_MINUTES * 60 * 1000);
 }
 
 function toCalendarDateTime(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, '0');
+  const localDate = new Date(date.getTime() + GOOGLE_CALENDAR_TIME_ZONE_OFFSET_MINUTES * 60 * 1000);
   return [
-    date.getFullYear(),
-    pad(date.getMonth() + 1),
-    pad(date.getDate())
-  ].join('-') + `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    localDate.getUTCFullYear(),
+    pad(localDate.getUTCMonth() + 1),
+    pad(localDate.getUTCDate())
+  ].join('-') + `T${pad(localDate.getUTCHours())}:${pad(localDate.getUTCMinutes())}:${pad(localDate.getUTCSeconds())}`;
 }
 
 function friendlyGoogleError(err: any, action: string): string {

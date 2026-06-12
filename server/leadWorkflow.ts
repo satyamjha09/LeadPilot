@@ -310,7 +310,13 @@ async function assertManualCloseAllowed(row: ExcelRow) {
   if (!active.state.meetingLink || !active.state.calendarEventId) {
     throw new Error('An active meeting is required to update this demo.');
   }
-  if (!hasMeetingStarted(active.state.demoStartUtc)) {
+  let rowStartUtc = '';
+  try {
+    rowStartUtc = parseExcelDateTime(row['Date of Demo'], row['Time of Demo']).toISOString();
+  } catch {
+    rowStartUtc = '';
+  }
+  if (!hasMeetingStarted(active.state.demoStartUtc) && !hasMeetingStarted(rowStartUtc)) {
     throw new Error('The scheduled meeting start time has not arrived yet.');
   }
   return active;
