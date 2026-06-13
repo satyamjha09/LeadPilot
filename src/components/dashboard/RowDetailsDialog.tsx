@@ -30,6 +30,17 @@ type EmailHistoryLog = {
   attemptCount?: number;
 };
 
+type SheetSyncJob = {
+  id: string;
+  status: string;
+  retryCount: number;
+  maxRetries: number;
+  nextRetryAt?: string | null;
+  lastError?: string | null;
+  updatedAt?: string;
+  createdAt: string;
+};
+
 interface RowDetailsDialogProps {
   row: ExcelRow | null;
   open: boolean;
@@ -41,6 +52,10 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [reviewActionId, setReviewActionId] = useState<string | null>(null);
+  const [sheetJobs, setSheetJobs] = useState<SheetSyncJob[]>([]);
+  const [isLoadingSheetJobs, setIsLoadingSheetJobs] = useState(false);
+  const [sheetJobError, setSheetJobError] = useState('');
+  const [sheetRetryId, setSheetRetryId] = useState<string | null>(null);
 
   const loadEmailHistory = useCallback(async () => {
     if (!row) return;
@@ -64,10 +79,33 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
     }
   }, [row]);
 
+  const loadSheetSyncJobs = useCallback(async () => {
+    if (!row) return;
+    setIsLoadingSheetJobs(true);
+    setSheetJobError('');
+
+    try {
+      const res = await fetch('/api/sheet-sync/jobs-for-row', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not load sheet sync jobs.');
+      setSheetJobs(Array.isArray(data.jobs) ? data.jobs.filter(Boolean) : []);
+    } catch (err: unknown) {
+      setSheetJobs([]);
+      setSheetJobError(err instanceof Error ? err.message : 'Could not load sheet sync jobs.');
+    } finally {
+      setIsLoadingSheetJobs(false);
+    }
+  }, [row]);
+
   useEffect(() => {
     if (!open || !row) return;
     loadEmailHistory();
-  }, [loadEmailHistory, open, row]);
+    loadSheetSyncJobs();
+  }, [loadEmailHistory, loadSheetSyncJobs, open, row]);
 
   const handleManualReview = async (log: EmailHistoryLog, action: 'mark-sent' | 'mark-failed' | 'retry') => {
     if (!isNeedsReviewStatus(log.status) || log.source !== 'EmailDelivery') return;
@@ -102,6 +140,28 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
       toast.error(err instanceof Error ? err.message : 'Email review action failed.');
     } finally {
       setReviewActionId(null);
+    }
+  };
+
+  const retrySheetSync = async (job: SheetSyncJob) => {
+    const confirmed = window.confirm('Retry this Google Sheet row update now?');
+    if (!confirmed) return;
+
+    setSheetRetryId(job.id);
+    try {
+      const res = await fetch(`/api/sheet-sync/jobs/${encodeURIComponent(job.id)}/retry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      const data = await res.json().catch(() => ({}));
+      await loadSheetSyncJobs();
+      if (!res.ok) throw new Error(data.error || 'Sheet sync retry failed.');
+      toast.success(data.skipped ? 'Sheet row is already synced.' : 'Sheet sync retry completed.');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Sheet sync retry failed.');
+    } finally {
+      setSheetRetryId(null);
     }
   };
 
@@ -268,6 +328,79 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
             </section>
 
             <section className="space-y-3">
+              <SectionTitle>Sheet Sync</SectionTitle>
+              <div className="rounded-md border bg-card">
+                {isLoadingSheetJobs ? (
+                  <HistoryEmpty icon={<Clock3 className="h-4 w-4" />} text="Loading sheet sync status..." />
+                ) : sheetJobError ? (
+                  <HistoryEmpty icon={<AlertCircle className="h-4 w-4" />} text={sheetJobError} />
+                ) : sheetJobs.length === 0 ? (
+                  <HistoryEmpty icon={<CheckCircle2 className="h-4 w-4" />} text="No pending sheet sync jobs for this row." />
+                ) : (
+                  <div className="divide-y">
+                    {sheetJobs.map((job) => {
+                      const failed = job.status === 'FAILED';
+                      const pending = job.status === 'PENDING';
+                      const synced = job.status === 'SYNCED';
+                      return (
+                        <div key={job.id} className="space-y-2 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              {synced ? (
+                                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                              ) : failed ? (
+                                <AlertCircle className="h-4 w-4 text-destructive" />
+                              ) : (
+                                <Clock3 className="h-4 w-4 text-sky-600" />
+                              )}
+                              <span className="font-medium">Google Sheet row update</span>
+                            </div>
+                            <Badge
+                              variant="outline"
+                              className={
+                                synced
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                  : failed
+                                    ? 'border-destructive/30 bg-destructive/10 text-destructive'
+                                    : 'border-sky-200 bg-sky-50 text-sky-800'
+                              }
+                            >
+                              {formatSheetSyncStatus(job.status)}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Updated: {formatDateTime(job.updatedAt || job.createdAt)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Attempts: {job.retryCount} / {job.maxRetries}
+                          </p>
+                          {job.nextRetryAt && !synced && (
+                            <p className="text-xs text-muted-foreground">
+                              Next retry: {formatDateTime(job.nextRetryAt)}
+                            </p>
+                          )}
+                          {job.lastError && <p className="text-xs text-destructive">{job.lastError}</p>}
+                          {(failed || pending) && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => retrySheetSync(job)}
+                              disabled={sheetRetryId !== null}
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                              Retry Sheet Sync
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="space-y-3">
               <SectionTitle>Source Fields</SectionTitle>
               <div className="rounded-md border bg-card">
                 {sourceFields.map((key, index) => (
@@ -336,6 +469,13 @@ function formatSource(source: string) {
   if (source === 'EmailDelivery') return 'Delivery log';
   if (source === 'EmailLog') return 'Legacy email log';
   return source;
+}
+
+function formatSheetSyncStatus(status: string) {
+  if (status === 'PENDING') return 'Sheet Sync Pending';
+  if (status === 'FAILED') return 'Sheet Sync Failed';
+  if (status === 'SYNCED') return 'Sheet Synced';
+  return status.replace(/_/g, ' ').toLowerCase();
 }
 
 function formatDateTime(value: string) {

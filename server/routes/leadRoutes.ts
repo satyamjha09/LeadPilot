@@ -19,9 +19,17 @@ import {
   updateGoogleSheetRow
 } from '../googleSheets';
 import { sendGmailTemplate } from '../googleAuth';
+import { updateGoogleSheetRowsResilient } from '../googleSheets';
 import { isValidLeadStatus, LEAD_STATUS, normalizeLeadStatus } from '../leadStatus';
 import { resetDemoTestData } from '../adminDb';
 import { applyDbTruthToRows, forceCloseActiveDemoForRow } from '../scheduleDb';
+import {
+  findSheetSyncJobById,
+  listSheetSyncJobsForRow,
+  markSheetSyncJobFailed,
+  markSheetSyncJobRetryNow,
+  markSheetSyncJobSucceeded
+} from '../sheetSyncQueue';
 import {
   buildProcessLeadPlan,
   processLeadsByStatus,
@@ -452,6 +460,67 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     }
   });
 
+  app.post('/api/sheet-sync/jobs-for-row', async (req, res) => {
+    try {
+      const { row } = req.body as { row?: ExcelRow };
+      if (!row) return res.status(400).json({ error: 'Row is required.' });
+      const spreadsheetId = String(row.__spreadsheetId || '');
+      const sheetName = String(row.__sheetName || '');
+      const rowNumber = Number(row.__sheetRowNumber || row.__sourceRowNumber);
+      if (!spreadsheetId || !sheetName || !rowNumber) {
+        return res.json({ jobs: [] });
+      }
+
+      const jobs = await listSheetSyncJobsForRow({ spreadsheetId, sheetName, rowNumber });
+      return res.json({ jobs: jobs.map(serializeSheetSyncJob) });
+    } catch (err: any) {
+      console.error('Sheet sync job lookup failed:', err);
+      return res.status(500).json({ error: err.message || 'Sheet sync job lookup failed' });
+    }
+  });
+
+  app.post('/api/sheet-sync/jobs/:jobId/retry', async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const job = await findSheetSyncJobById(jobId);
+      if (!job) return res.status(404).json({ error: 'Sheet sync job was not found.' });
+      if (job.status === 'SYNCED') {
+        return res.json({ success: true, job: serializeSheetSyncJob(job), skipped: true });
+      }
+
+      await markSheetSyncJobRetryNow(jobId);
+
+      try {
+        const headers = JSON.parse(job.headersJson) as string[];
+        const values = JSON.parse(job.valuesJson) as Record<string, any>;
+        const [result] = await updateGoogleSheetRowsResilient(
+          job.spreadsheetId,
+          job.sheetName,
+          headers,
+          [{ rowNumber: job.rowNumber, values, emailDeliveryId: job.emailDeliveryId || undefined }]
+        );
+
+        if (!result?.success) {
+          throw new Error(result?.error || 'Google Sheet row update failed');
+        }
+
+        await markSheetSyncJobSucceeded(jobId);
+        const updated = await findSheetSyncJobById(jobId);
+        return res.json({ success: true, job: serializeSheetSyncJob(updated) });
+      } catch (error) {
+        await markSheetSyncJobFailed(jobId, error);
+        const updated = await findSheetSyncJobById(jobId);
+        return res.status(502).json({
+          error: error instanceof Error ? error.message : 'Sheet sync retry failed',
+          job: serializeSheetSyncJob(updated)
+        });
+      }
+    } catch (err: any) {
+      console.error('Sheet sync retry failed:', err);
+      return res.status(500).json({ error: err.message || 'Sheet sync retry failed' });
+    }
+  });
+
   app.post('/api/leads/email-history', async (req, res) => {
     try {
       const { row } = req.body as { row?: ExcelRow };
@@ -652,5 +721,22 @@ function serializeDelivery(delivery: Awaited<ReturnType<typeof findEmailDelivery
     createdAt: delivery.createdAt,
     updatedAt: delivery.updatedAt,
     attemptCount: delivery.attemptCount
+  };
+}
+
+function serializeSheetSyncJob(job: Awaited<ReturnType<typeof findSheetSyncJobById>>) {
+  if (!job) return null;
+  return {
+    id: job.id,
+    spreadsheetId: job.spreadsheetId,
+    sheetName: job.sheetName,
+    rowNumber: job.rowNumber,
+    status: job.status,
+    retryCount: job.retryCount,
+    maxRetries: job.maxRetries,
+    nextRetryAt: job.nextRetryAt,
+    lastError: job.lastError,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt
   };
 }

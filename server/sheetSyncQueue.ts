@@ -101,6 +101,105 @@ export async function listDueSheetSyncJobs(limit = 10) {
   `;
 }
 
+export async function listSheetSyncJobsForRow(input: {
+  spreadsheetId: string;
+  sheetName: string;
+  rowNumber: number;
+}) {
+  return prisma.$queryRaw<
+    Array<{
+      id: string;
+      spreadsheetId: string;
+      sheetName: string;
+      rowNumber: number;
+      headersJson: string;
+      valuesJson: string;
+      emailDeliveryId: string | null;
+      status: string;
+      retryCount: number;
+      maxRetries: number;
+      nextRetryAt: Date | null;
+      lastError: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  >`
+    SELECT
+      "id",
+      "spreadsheetId",
+      "sheetName",
+      "rowNumber",
+      "headersJson",
+      "valuesJson",
+      "emailDeliveryId",
+      "status",
+      "retryCount",
+      "maxRetries",
+      "nextRetryAt",
+      "lastError",
+      "createdAt",
+      "updatedAt"
+    FROM "SheetSyncJob"
+    WHERE "spreadsheetId" = ${input.spreadsheetId}
+      AND "sheetName" = ${input.sheetName}
+      AND "rowNumber" = ${input.rowNumber}
+    ORDER BY "updatedAt" DESC
+  `;
+}
+
+export async function findSheetSyncJobById(jobId: string) {
+  const [job] = await prisma.$queryRaw<
+    Array<{
+      id: string;
+      spreadsheetId: string;
+      sheetName: string;
+      rowNumber: number;
+      headersJson: string;
+      valuesJson: string;
+      emailDeliveryId: string | null;
+      status: string;
+      retryCount: number;
+      maxRetries: number;
+      nextRetryAt: Date | null;
+      lastError: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  >`
+    SELECT
+      "id",
+      "spreadsheetId",
+      "sheetName",
+      "rowNumber",
+      "headersJson",
+      "valuesJson",
+      "emailDeliveryId",
+      "status",
+      "retryCount",
+      "maxRetries",
+      "nextRetryAt",
+      "lastError",
+      "createdAt",
+      "updatedAt"
+    FROM "SheetSyncJob"
+    WHERE "id" = ${jobId}
+    LIMIT 1
+  `;
+  return job || null;
+}
+
+export async function markSheetSyncJobRetryNow(jobId: string) {
+  await prisma.$executeRaw`
+    UPDATE "SheetSyncJob"
+    SET
+      "status" = 'PENDING',
+      "nextRetryAt" = ${new Date()},
+      "updatedAt" = ${new Date()}
+    WHERE "id" = ${jobId}
+      AND "status" IN ('PENDING', 'FAILED')
+  `;
+}
+
 export async function markSheetSyncJobSucceeded(jobId: string) {
   await prisma.$executeRaw`
     UPDATE "SheetSyncJob"
