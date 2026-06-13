@@ -8,7 +8,8 @@ export async function resetDemoTestData() {
       public."SheetLeadState",
       public."CustomerDemoState",
       public."DemoHistory",
-      public."EmailDelivery"
+      public."EmailDelivery",
+      public."SheetSyncJob"
     RESTART IDENTITY CASCADE
   `);
 }

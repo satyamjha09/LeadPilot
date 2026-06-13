@@ -99,7 +99,7 @@ export function createEmailEventKey(input: {
   time?: unknown;
   reminderWindow?: string;
 }) {
-  const stableLeadKey = clean(input.recipient).toLowerCase() || clean(input.automationId);
+  const stableLeadKey = clean(input.automationId) || clean(input.recipient).toLowerCase();
   let version: string;
 
   if (input.emailType === EMAIL_TYPES.DEMO_DONE || input.emailType === EMAIL_TYPES.NO_RESPONSE) {

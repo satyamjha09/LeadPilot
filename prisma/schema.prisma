@@ -9,6 +9,7 @@ datasource db {
 
 model LeadSchedule {
   id              String   @id @default(cuid())
+  automationId    String?
   fullName        String?
   email           String
   dateOfDemo      String
@@ -24,14 +25,16 @@ model LeadSchedule {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  @@unique([email, dateOfDemo, timeOfDemo])
+  @@unique([automationId, dateOfDemo, timeOfDemo])
+  @@index([email, dateOfDemo, timeOfDemo])
+  @@index([automationId])
 }
 
 model CustomerDemoState {
   id                  String   @id @default(cuid())
   userId              String   @unique
   fullName            String?
-  email               String   @unique
+  email               String
   status              String
   activeDemoSessionId String?
   meetingLink         String?
@@ -138,6 +141,9 @@ model EmailDelivery {
   lockedAt          DateTime?
   lockedBy          String?
   lastError         String?
+  sheetSyncStatus   String?
+  sheetSyncLastError String?
+  sheetSyncRetryAt  DateTime?
   sheetSyncedAt     DateTime?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -145,5 +151,29 @@ model EmailDelivery {
   @@index([automationId])
   @@index([status])
   @@index([nextRetryAt])
+  @@index([sheetSyncStatus])
+  @@index([sheetSyncRetryAt])
   @@index([updatedAt])
+}
+
+model SheetSyncJob {
+  id              String   @id @default(cuid())
+  jobKey          String   @unique
+  spreadsheetId   String
+  sheetName       String
+  rowNumber       Int
+  headersJson     String
+  valuesJson      String
+  emailDeliveryId String?
+  status          String   @default("PENDING")
+  retryCount      Int      @default(0)
+  maxRetries      Int      @default(3)
+  nextRetryAt     DateTime @default(now())
+  lastError       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+  @@index([nextRetryAt])
+  @@index([emailDeliveryId])
 }

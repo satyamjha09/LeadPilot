@@ -6,6 +6,9 @@ import { LEAD_STATUS, normalizeLeadStatus } from './leadStatus';
 import { normalizeDisplayDate, normalizeIsoDate } from '../src/lib/dateFormat';
 
 const DEFAULT_TIMEZONE = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Kolkata';
+const DEMO_EXPIRED_STATUS = 'Expired';
+const ACTIVE_DEMO_BLOCKING_WINDOW_MS = Number(process.env.ACTIVE_DEMO_BLOCKING_WINDOW_MS || 60 * 60 * 1000);
+const ACTIVE_DEMO_AUTO_EXPIRE_MS = Number(process.env.ACTIVE_DEMO_AUTO_EXPIRE_MS || 24 * 60 * 60 * 1000);
 
 export function normalizeLeadEmail(email: unknown) {
   return String(email || '').trim().toLowerCase();
@@ -21,10 +24,15 @@ export function normalizeLeadTime(timeValue: unknown) {
 
 export function getLeadUniqueKeys(row: ExcelRow) {
   return {
+    automationId: getLeadAutomationId(row),
     email: normalizeLeadEmail(row.email),
     dateOfDemo: normalizeLeadDate(row['Date of Demo']),
     timeOfDemo: normalizeLeadTime(row['Time of Demo'])
   };
+}
+
+export function getLeadAutomationId(row: ExcelRow) {
+  return String(row.automation_id || row.automationId || '').trim();
 }
 
 function getCompatibleLeadDates(row: ExcelRow) {
@@ -37,7 +45,7 @@ function getCompatibleLeadDates(row: ExcelRow) {
 }
 
 export function getLeadUserId(row: ExcelRow) {
-  return normalizeLeadEmail(row.email);
+  return getLeadAutomationId(row) || normalizeLeadEmail(row.email);
 }
 
 function nowIso() {
@@ -57,6 +65,7 @@ function isActiveDemo(state: {
   status?: string | null;
   meetingLink?: string | null;
   calendarEventId?: string | null;
+  demoStartUtc?: string | null;
   demoDate?: string | null;
   demoTime?: string | null;
 }) {
@@ -67,6 +76,86 @@ function isActiveDemo(state: {
     !!state.demoDate &&
     !!state.demoTime
   );
+}
+
+function demoStartTime(state: { demoStartUtc?: string | null }) {
+  const parsed = Date.parse(String(state.demoStartUtc || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isPastBlockingWindow(state: { demoStartUtc?: string | null }) {
+  const start = demoStartTime(state);
+  return !!start && Date.now() > start + ACTIVE_DEMO_BLOCKING_WINDOW_MS;
+}
+
+function isDemoExpired(state: { demoStartUtc?: string | null }) {
+  const start = demoStartTime(state);
+  return !!start && Date.now() > start + ACTIVE_DEMO_AUTO_EXPIRE_MS;
+}
+
+async function expireActiveDemoState(
+  state: {
+    userId: string;
+    email: string;
+    activeDemoSessionId?: string | null;
+    demoDate?: string | null;
+    demoTime?: string | null;
+  },
+  remarks: string
+) {
+  const timestamp = nowIso();
+
+  await prisma.$transaction(async (tx) => {
+    if (state.activeDemoSessionId) {
+      await tx.demoHistory.updateMany({
+        where: { sessionId: state.activeDemoSessionId, status: LEAD_STATUS.DEMO_SCHEDULED },
+        data: {
+          status: DEMO_EXPIRED_STATUS,
+          cancelledAt: timestamp
+        }
+      });
+    }
+
+    await tx.customerDemoState.update({
+      where: { userId: state.userId },
+      data: {
+        status: DEMO_EXPIRED_STATUS,
+        activeDemoSessionId: null,
+        meetingLink: null,
+        calendarEventId: null,
+        demoStartUtc: null,
+        demoEndUtc: null,
+        demoDate: null,
+        demoTime: null,
+        timezone: null
+      }
+    });
+
+    if (state.demoDate && state.demoTime) {
+      await (tx.leadSchedule as any).updateMany({
+        where: {
+          OR: [
+            {
+              automationId: state.userId,
+              dateOfDemo: { in: Array.from(new Set([normalizeLeadDate(state.demoDate), normalizeIsoDate(state.demoDate)].filter(Boolean))) },
+              timeOfDemo: state.demoTime
+            },
+            {
+              email: state.email,
+              dateOfDemo: { in: Array.from(new Set([normalizeLeadDate(state.demoDate), normalizeIsoDate(state.demoDate)].filter(Boolean))) },
+              timeOfDemo: state.demoTime
+            }
+          ]
+        },
+        data: {
+          status: LEAD_STATUS.FOLLOW_UP,
+          meetingLink: null,
+          calendarEventId: null,
+          remarks
+        }
+      });
+    }
+  });
 }
 
 export async function getCustomerDemoState(row: ExcelRow) {
@@ -81,6 +170,10 @@ export async function getCustomerDemoState(row: ExcelRow) {
 export async function getActiveDemoForRow(row: ExcelRow) {
   const state = await getCustomerDemoState(row);
   if (!state || !isActiveDemo(state) || !state.activeDemoSessionId) return null;
+  if (isDemoExpired(state)) {
+    await expireActiveDemoState(state, 'Active demo expired automatically after 24 hours.');
+    return null;
+  }
   const history = await prisma.demoHistory.findUnique({
     where: { sessionId: state.activeDemoSessionId }
   });
@@ -96,6 +189,13 @@ export async function assertCanCreateOrReuseActiveDemo(row: ExcelRow) {
     normalizeLeadTime(row['Time of Demo']) === active.state.demoTime;
 
   if (!sameSlot) {
+    if (isPastBlockingWindow(active.state)) {
+      await expireActiveDemoState(
+        active.state,
+        'Previous active demo expired because its active window passed.'
+      );
+      return null;
+    }
     throw new Error('This customer already has an active demo.');
   }
 
@@ -116,12 +216,14 @@ export async function ensureScheduledDemoHistory(
 
   const displayDate = normalizeLeadDate(row['Date of Demo']);
   const displayTime = normalizeLeadTime(row['Time of Demo']);
+  const email = normalizeLeadEmail(row.email);
   const { scheduledStartUtc, scheduledEndUtc } = getScheduledWindow(row);
   const timestamp = nowIso();
 
   return prisma.$transaction(async (tx) => {
     const existingState = await tx.customerDemoState.findUnique({ where: { userId } });
-    if (existingState && isActiveDemo(existingState)) {
+    let canReuseExistingActiveDemo = !!existingState && isActiveDemo(existingState);
+    if (existingState && canReuseExistingActiveDemo) {
       const sameSlot =
         normalizeLeadDate(existingState.demoDate) === displayDate &&
         existingState.demoTime === displayTime;
@@ -130,12 +232,61 @@ export async function ensureScheduledDemoHistory(
         existingState.calendarEventId === data.calendarEventId;
 
       if (!sameSlot && !sameMeeting) {
-        throw new Error('This customer already has an active demo.');
+        if (isPastBlockingWindow(existingState)) {
+          canReuseExistingActiveDemo = false;
+          if (existingState.activeDemoSessionId) {
+            await tx.demoHistory.updateMany({
+              where: { sessionId: existingState.activeDemoSessionId, status: LEAD_STATUS.DEMO_SCHEDULED },
+              data: {
+                status: DEMO_EXPIRED_STATUS,
+                cancelledAt: timestamp
+              }
+            });
+          }
+          await tx.customerDemoState.update({
+            where: { userId },
+            data: {
+              status: DEMO_EXPIRED_STATUS,
+              activeDemoSessionId: null,
+              meetingLink: null,
+              calendarEventId: null,
+              demoStartUtc: null,
+              demoEndUtc: null,
+              demoDate: null,
+              demoTime: null,
+              timezone: null
+            }
+          });
+          await (tx.leadSchedule as any).updateMany({
+            where: {
+              OR: [
+                {
+                  automationId: existingState.userId,
+                  dateOfDemo: { in: Array.from(new Set([normalizeLeadDate(existingState.demoDate), normalizeIsoDate(existingState.demoDate)].filter(Boolean))) },
+                  timeOfDemo: existingState.demoTime || ''
+                },
+                {
+                  email: existingState.email,
+                  dateOfDemo: { in: Array.from(new Set([normalizeLeadDate(existingState.demoDate), normalizeIsoDate(existingState.demoDate)].filter(Boolean))) },
+                  timeOfDemo: existingState.demoTime || ''
+                }
+              ]
+            },
+            data: {
+              status: LEAD_STATUS.FOLLOW_UP,
+              meetingLink: null,
+              calendarEventId: null,
+              remarks: 'Previous active demo expired because its active window passed.'
+            }
+          });
+        } else {
+          throw new Error('This customer already has an active demo.');
+        }
       }
     }
 
     const sessionId =
-      existingState?.activeDemoSessionId && isActiveDemo(existingState)
+      existingState?.activeDemoSessionId && canReuseExistingActiveDemo
         ? existingState.activeDemoSessionId
         : `demo_${randomUUID()}`;
 
@@ -144,7 +295,7 @@ export async function ensureScheduledDemoHistory(
       create: {
         userId,
         fullName: row.full_name || null,
-        email: userId,
+        email,
         status: LEAD_STATUS.DEMO_SCHEDULED,
         activeDemoSessionId: sessionId,
         meetingLink: data.meetingLink,
@@ -160,7 +311,7 @@ export async function ensureScheduledDemoHistory(
       },
       update: {
         fullName: row.full_name || null,
-        email: userId,
+        email,
         status: LEAD_STATUS.DEMO_SCHEDULED,
         activeDemoSessionId: sessionId,
         meetingLink: data.meetingLink,
@@ -182,7 +333,7 @@ export async function ensureScheduledDemoHistory(
         sessionId,
         userId,
         fullName: row.full_name || null,
-        email: userId,
+        email,
         status: LEAD_STATUS.DEMO_SCHEDULED,
         scheduledStartUtc,
         scheduledEndUtc,
@@ -197,7 +348,7 @@ export async function ensureScheduledDemoHistory(
       },
       update: {
         fullName: row.full_name || null,
-        email: userId,
+        email,
         status: LEAD_STATUS.DEMO_SCHEDULED,
         scheduledStartUtc,
         scheduledEndUtc,
@@ -212,6 +363,26 @@ export async function ensureScheduledDemoHistory(
 
     return { state, history };
   });
+}
+
+export async function forceCloseActiveDemoForRow(row: ExcelRow, remarks?: string) {
+  const userId = getLeadUserId(row);
+  if (!userId) throw new Error('Email is missing.');
+
+  const state = await prisma.customerDemoState.findUnique({ where: { userId } });
+  if (!state?.activeDemoSessionId || !isActiveDemo(state)) {
+    throw new Error('No active demo session exists.');
+  }
+
+  const message = remarks?.trim() || 'Previous active demo force closed by user.';
+  await expireActiveDemoState(state, message);
+
+  return {
+    ...row,
+    'Meeting Details': '',
+    lead_status: LEAD_STATUS.DEMO_SCHEDULED,
+    Remarks: `${message} You can schedule this lead again.`
+  } satisfies ExcelRow;
 }
 
 export async function markScheduledEmailSent(row: ExcelRow, sentAt = nowIso()) {
@@ -420,13 +591,69 @@ export async function findLeadSchedule(row: ExcelRow) {
     return null;
   }
 
-  return prisma.leadSchedule.findFirst({
-    where: {
-      email: keys.email,
-      dateOfDemo: { in: getCompatibleLeadDates(row) },
+  const dateMatches = getCompatibleLeadDates(row);
+  const orConditions: any[] = [];
+  if (keys.automationId) {
+    orConditions.push({
+      automationId: keys.automationId,
+      dateOfDemo: { in: dateMatches },
       timeOfDemo: keys.timeOfDemo
+    });
+  }
+  orConditions.push({
+    email: keys.email,
+    dateOfDemo: { in: dateMatches },
+    timeOfDemo: keys.timeOfDemo
+  });
+
+  return (prisma.leadSchedule as any).findFirst({
+    where: {
+      OR: orConditions
     },
     orderBy: { updatedAt: 'desc' }
+  });
+}
+
+async function saveLeadScheduleRow(
+  row: ExcelRow,
+  data: {
+    meetingLink?: string | null;
+    calendarEventId?: string | null;
+    gmailMessageId?: string | null;
+    status: string;
+    remarks?: string | null;
+  },
+  options?: { sourceType?: string; sourceId?: string }
+) {
+  const keys = getLeadUniqueKeys(row);
+  if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
+
+  const existing = await findLeadSchedule(row);
+  const writeData = {
+    automationId: keys.automationId || null,
+    fullName: row.full_name || null,
+    email: keys.email,
+    dateOfDemo: keys.dateOfDemo,
+    timeOfDemo: keys.timeOfDemo,
+    meetingLink: data.meetingLink ?? null,
+    calendarEventId: data.calendarEventId === undefined ? undefined : data.calendarEventId || null,
+    gmailMessageId: data.gmailMessageId === undefined ? undefined : data.gmailMessageId || null,
+    status: data.status,
+    remarks: data.remarks || null,
+    sourceType: options?.sourceType || row.__sourceType || null,
+    sourceId: options?.sourceId || row.__spreadsheetId || null,
+    sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
+  };
+
+  if (existing?.id) {
+    return (prisma.leadSchedule as any).update({
+      where: { id: existing.id },
+      data: writeData
+    });
+  }
+
+  return (prisma.leadSchedule as any).create({
+    data: writeData
   });
 }
 
@@ -460,16 +687,23 @@ export async function applyDbTruthToRow(row: ExcelRow): Promise<ExcelRow> {
         Remarks: isOutcomeRequest(requestedStatus)
           ? row.Remarks || ''
           : row.Remarks || 'Active demo from database',
-        automation_id: row.automation_id || active.state.activeDemoSessionId || undefined
+        automation_id: row.automation_id || (active.state.userId.includes('@') ? undefined : active.state.userId)
       };
     }
 
     if (requestedStatus === LEAD_STATUS.DEMO_SCHEDULED) {
+      if (isPastBlockingWindow(active.state)) {
+        await expireActiveDemoState(
+          active.state,
+          'Previous active demo expired because its active window passed.'
+        );
+      } else {
       return {
         ...row,
         __schedulerStatus: 'Failed',
         Remarks: 'This customer already has an active demo.'
       };
+      }
     }
   }
 
@@ -521,36 +755,17 @@ export async function saveLeadScheduleFailure(
   const status = options?.status || 'Failed';
   const meetingLink = (options?.meetingLink ?? String(row['Meeting Details'] || '')) || null;
 
-  return prisma.leadSchedule.upsert({
-    where: {
-      email_dateOfDemo_timeOfDemo: keys
-    },
-    create: {
-      fullName: row.full_name || null,
-      email: keys.email,
-      dateOfDemo: keys.dateOfDemo,
-      timeOfDemo: keys.timeOfDemo,
+  return saveLeadScheduleRow(
+    row,
+    {
       meetingLink,
       calendarEventId: options?.calendarEventId || null,
       gmailMessageId: options?.gmailMessageId || null,
       status,
-      remarks,
-      sourceType: options?.sourceType || row.__sourceType || null,
-      sourceId: options?.sourceId || row.__spreadsheetId || null,
-      sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
+      remarks
     },
-    update: {
-      fullName: row.full_name || null,
-      meetingLink,
-      calendarEventId: options?.calendarEventId || undefined,
-      gmailMessageId: options?.gmailMessageId || undefined,
-      status,
-      remarks,
-      sourceType: options?.sourceType || row.__sourceType || null,
-      sourceId: options?.sourceId || row.__spreadsheetId || null,
-      sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
-    }
-  });
+    options
+  );
 }
 
 export async function saveLeadScheduleSuccess(
@@ -567,36 +782,17 @@ export async function saveLeadScheduleSuccess(
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
 
-  return prisma.leadSchedule.upsert({
-    where: {
-      email_dateOfDemo_timeOfDemo: keys
-    },
-    create: {
-      fullName: row.full_name || null,
-      email: keys.email,
-      dateOfDemo: keys.dateOfDemo,
-      timeOfDemo: keys.timeOfDemo,
+  return saveLeadScheduleRow(
+    row,
+    {
       meetingLink: data.meetingLink,
       calendarEventId: data.calendarEventId || null,
       gmailMessageId: data.gmailMessageId || null,
       status: data.status || 'Demo Scheduled',
-      remarks: data.remarks,
-      sourceType: options?.sourceType || row.__sourceType || null,
-      sourceId: options?.sourceId || row.__spreadsheetId || null,
-      sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
+      remarks: data.remarks
     },
-    update: {
-      fullName: row.full_name || null,
-      meetingLink: data.meetingLink,
-      calendarEventId: data.calendarEventId === undefined ? undefined : data.calendarEventId || null,
-      gmailMessageId: data.gmailMessageId === undefined ? undefined : data.gmailMessageId || null,
-      status: data.status || 'Demo Scheduled',
-      remarks: data.remarks,
-      sourceType: options?.sourceType || row.__sourceType || null,
-      sourceId: options?.sourceId || row.__spreadsheetId || null,
-      sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
-    }
-  });
+    options
+  );
 }
 
 export async function saveLeadStatusUpdate(
@@ -610,32 +806,15 @@ export async function saveLeadStatusUpdate(
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
 
-  return prisma.leadSchedule.upsert({
-    where: {
-      email_dateOfDemo_timeOfDemo: keys
-    },
-    create: {
-      fullName: row.full_name || null,
-      email: keys.email,
-      dateOfDemo: keys.dateOfDemo,
-      timeOfDemo: keys.timeOfDemo,
+  return saveLeadScheduleRow(
+    row,
+    {
       meetingLink: row['Meeting Details'] || null,
       status: data.status,
-      remarks: data.remarks || null,
-      sourceType: options?.sourceType || row.__sourceType || null,
-      sourceId: options?.sourceId || row.__spreadsheetId || null,
-      sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
+      remarks: data.remarks || null
     },
-    update: {
-      fullName: row.full_name || null,
-      meetingLink: row['Meeting Details'] || null,
-      status: data.status,
-      remarks: data.remarks || null,
-      sourceType: options?.sourceType || row.__sourceType || null,
-      sourceId: options?.sourceId || row.__spreadsheetId || null,
-      sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
-    }
-  });
+    options
+  );
 }
 
 export async function findScheduledMeetLinkFromDb(row: ExcelRow) {

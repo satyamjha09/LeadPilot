@@ -8,7 +8,7 @@ import {
   sendThankYouEmail,
   updateCalendarMeeting
 } from './googleAuth';
-import { friendlySheetsError, updateGoogleSheetRow, updateGoogleSheetRowsBatch } from './googleSheets';
+import { friendlySheetsError, updateGoogleSheetRow, updateGoogleSheetRowsResilient, type GoogleSheetRowUpdate } from './googleSheets';
 import { EMAIL_LOG_TYPES } from './emailLog';
 import { LEAD_STATUS, isDemoScheduledStatus, normalizeLeadStatus } from './leadStatus';
 import {
@@ -33,9 +33,11 @@ import {
   claimEmailDelivery,
   findEmailDeliveryByEventKey,
   markEmailDeliveryFailed,
-  markEmailSheetSynced,
+  markEmailSheetSyncFailed,
+  markEmailSheetSyncSucceeded,
   markEmailDeliverySent
 } from './emailDelivery';
+import { enqueueSheetSyncJob } from './sheetSyncQueue';
 import {
   createEmailEventKey,
   createEmailPayloadHash,
@@ -312,7 +314,7 @@ function sheetRowNumber(row: ExcelRow) {
 }
 
 function collectSheetUpdate(
-  updates: Array<{ rowNumber: number; values: Record<string, any> }>,
+  updates: GoogleSheetRowUpdate[],
   row: ExcelRow,
   values: Record<string, any>
 ) {
@@ -320,6 +322,7 @@ function collectSheetUpdate(
   if (!rowNumber || rowNumber < 2) return;
   updates.push({
     rowNumber,
+    emailDeliveryId: String(row.__emailDeliveryId || '') || undefined,
     values: {
       ...values,
       ...(row.automation_id && values.automation_id === undefined ? { automation_id: row.automation_id } : {})
@@ -657,7 +660,7 @@ export async function processLeadsByStatus(
 ): Promise<ProcessLeadsResult> {
   const plan = await buildProcessLeadPlan(rows);
   const resultsById = new Map<string, ExcelRow>();
-  const sheetUpdates: Array<{ rowNumber: number; values: Record<string, any> }> = [];
+  const sheetUpdates: GoogleSheetRowUpdate[] = [];
   let sheetSyncError: string | undefined;
   const summary: ProcessLeadsResult['summary'] = {
     total: rows.length,
@@ -881,19 +884,36 @@ export async function processLeadsByStatus(
     context.headers?.length
   ) {
     try {
-      await updateGoogleSheetRowsBatch(
+      const sheetResults = await updateGoogleSheetRowsResilient(
         context.spreadsheetId,
         context.sheetName,
         context.headers,
         sheetUpdates
       );
-      const syncedDeliveryIds = new Set<string>();
-      for (const row of resultsById.values()) {
-        const deliveryId = String(row.__emailDeliveryId || '');
-        if (deliveryId) syncedDeliveryIds.add(deliveryId);
+
+      const failedResults = sheetResults.filter((result) => !result.success);
+      for (const result of sheetResults) {
+        if (result.success) {
+          if (result.emailDeliveryId) await markEmailSheetSyncSucceeded(result.emailDeliveryId);
+          continue;
+        }
+
+        await enqueueSheetSyncJob({
+          spreadsheetId: context.spreadsheetId,
+          sheetName: context.sheetName,
+          rowNumber: result.rowNumber,
+          headers: context.headers,
+          values: result.values,
+          emailDeliveryId: result.emailDeliveryId,
+          error: result.error
+        });
+        if (result.emailDeliveryId) {
+          await markEmailSheetSyncFailed(result.emailDeliveryId, result.error);
+        }
       }
-      for (const deliveryId of syncedDeliveryIds) {
-        await markEmailSheetSynced(deliveryId);
+
+      if (failedResults.length > 0) {
+        sheetSyncError = `${failedResults.length} Google Sheet row update(s) queued for retry.`;
       }
     } catch (err) {
       const friendly = friendlySheetsError(err);

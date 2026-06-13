@@ -8,6 +8,17 @@ import { normalizeDisplayDate } from '../src/lib/dateFormat';
 const REQUIRED_UPDATE_COLUMNS = ['Meeting Details', 'lead_status', 'Remarks', 'automation_id'];
 const SHEET_BATCH_SIZE = 20;
 
+export type GoogleSheetRowUpdate = {
+  rowNumber: number;
+  values: Record<string, any>;
+  emailDeliveryId?: string;
+};
+
+export type GoogleSheetRowUpdateResult = GoogleSheetRowUpdate & {
+  success: boolean;
+  error?: string;
+};
+
 const FIELD_KEYS: Record<string, string[]> = {
   full_name: ['full_name', 'Full Name', 'Name', 'client_name', 'Client Name', 'lead_name', 'Lead Name', 'Lead', 'Client'],
   email: ['email', 'Email', 'email_address', 'Email Address', 'mail', 'contact_email', 'Contact Email'],
@@ -191,13 +202,28 @@ export async function updateGoogleSheetRowsBatch(
   spreadsheetId: string,
   sheetName: string,
   headers: string[],
-  updates: Array<{ rowNumber: number; values: Record<string, any> }>
+  updates: GoogleSheetRowUpdate[]
 ) {
-  if (!updates.length) return;
+  const results = await updateGoogleSheetRowsResilient(spreadsheetId, sheetName, headers, updates, {
+    throwOnFailure: true
+  });
+  const firstFailure = results.find((result) => !result.success);
+  if (firstFailure) throw new Error(firstFailure.error || 'Google Sheet row update failed');
+}
+
+export async function updateGoogleSheetRowsResilient(
+  spreadsheetId: string,
+  sheetName: string,
+  headers: string[],
+  updates: GoogleSheetRowUpdate[],
+  options: { throwOnFailure?: boolean } = {}
+): Promise<GoogleSheetRowUpdateResult[]> {
+  if (!updates.length) return [];
 
   const sheets = getSheetsClient();
   const columnIndexMap = buildColumnIndexMap(headers);
   const validUpdates = updates.filter((update) => update.rowNumber >= 2);
+  const results: GoogleSheetRowUpdateResult[] = [];
 
   for (let start = 0; start < validUpdates.length; start += SHEET_BATCH_SIZE) {
     const chunk = validUpdates.slice(start, start + SHEET_BATCH_SIZE);
@@ -217,20 +243,68 @@ export async function updateGoogleSheetRowsBatch(
 
     if (data.length === 0) continue;
 
-    await retrySheetsBatchUpdate(async () => {
-      await sheets.spreadsheets.values.batchUpdate({
-        spreadsheetId,
-        requestBody: {
-          valueInputOption: 'USER_ENTERED',
-          data
-        }
+    try {
+      await retrySheetsBatchUpdate(async () => {
+        await sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            valueInputOption: 'USER_ENTERED',
+            data
+          }
+        });
       });
-    });
+      results.push(...chunk.map((update) => ({ ...update, success: true })));
+    } catch (batchError: any) {
+      console.warn('GOOGLE_SHEETS_BATCH_FAILED_FALLING_BACK_TO_ROWS', {
+        spreadsheetId,
+        sheetName,
+        rows: chunk.map((update) => update.rowNumber),
+        message: batchError?.message || String(batchError)
+      });
+
+      for (const update of chunk) {
+        const rowData = Object.entries(update.values)
+          .filter(([columnName]) => REQUIRED_UPDATE_COLUMNS.includes(columnName))
+          .map(([columnName, value]) => {
+            const columnNumber = columnIndexMap[columnName];
+            if (!columnNumber) return null;
+            return {
+              range: `${quoteSheetName(sheetName)}!${columnLetter(columnNumber)}${update.rowNumber}`,
+              values: [[value ?? '']]
+            };
+          })
+          .filter((item): item is { range: string; values: any[][] } => !!item);
+
+        if (rowData.length === 0) {
+          results.push({ ...update, success: true });
+          continue;
+        }
+
+        try {
+          await retrySheetsBatchUpdate(async () => {
+            await sheets.spreadsheets.values.batchUpdate({
+              spreadsheetId,
+              requestBody: {
+                valueInputOption: 'USER_ENTERED',
+                data: rowData
+              }
+            });
+          });
+          results.push({ ...update, success: true });
+        } catch (rowError: any) {
+          const friendly = friendlySheetsError(rowError);
+          results.push({ ...update, success: false, error: friendly.message });
+          if (options.throwOnFailure) throw rowError;
+        }
+      }
+    }
 
     if (start + SHEET_BATCH_SIZE < validUpdates.length) {
       await delay(2000);
     }
   }
+
+  return results;
 }
 
 export async function ensureSheetAutomationIds(

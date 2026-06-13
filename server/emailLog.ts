@@ -14,6 +14,7 @@ export function getEmailRowKey(row: ExcelRow) {
   const sheetRowKey = getSheetRowKey(row);
   if (sheetRowKey) return sheetRowKey;
   const keys = getLeadUniqueKeys(row);
+  if (keys.automationId) return keys.automationId;
   return `${keys.email}|${keys.dateOfDemo}|${keys.timeOfDemo}`;
 }
 

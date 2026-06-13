@@ -209,8 +209,40 @@ export async function markEmailDeliverySent(input: { deliveryId: string; provide
 export async function markEmailSheetSynced(deliveryId: string) {
   return prisma.emailDelivery.update({
     where: { id: deliveryId },
-    data: { sheetSyncedAt: new Date() }
+    data: {
+      sheetSyncedAt: new Date()
+    }
   });
+}
+
+export async function markEmailSheetSyncSucceeded(deliveryId: string) {
+  const synced = await prisma.emailDelivery.update({
+    where: { id: deliveryId },
+    data: {
+      sheetSyncedAt: new Date()
+    }
+  });
+  await prisma.$executeRaw`
+    UPDATE "EmailDelivery"
+    SET
+      "sheetSyncStatus" = 'SYNCED',
+      "sheetSyncLastError" = NULL,
+      "sheetSyncRetryAt" = NULL
+    WHERE "id" = ${deliveryId}
+  `;
+  return synced;
+}
+
+export async function markEmailSheetSyncFailed(deliveryId: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || 'Google Sheet sync failed');
+  await prisma.$executeRaw`
+    UPDATE "EmailDelivery"
+    SET
+      "sheetSyncStatus" = 'FAILED',
+      "sheetSyncLastError" = ${message.slice(0, 2000)},
+      "sheetSyncRetryAt" = ${new Date(Date.now() + 5 * 60 * 1000)}
+    WHERE "id" = ${deliveryId}
+  `;
 }
 
 function errorStatus(error: unknown) {

@@ -140,6 +140,10 @@ export function normalizeRows(rows: Record<string, any>[], options?: { idPrefix?
       findValueInRow(row, ['Meeting Details', 'meeting_details', 'Meet Link', 'meet_link', 'Google Meet', 'google_meet', 'Link', 'link']) || ''
     ).trim();
 
+    const automationId = String(
+      findValueInRow(row, ['automation_id', 'Automation ID', 'automation id', 'AutomationId']) || ''
+    ).trim();
+
     const rawLeadStatus = String(
       findValueInRow(row, ['lead_status', 'Lead Status', 'lead status', 'Lead_Status', 'Status', 'status']) || ''
     ).trim();
@@ -208,6 +212,7 @@ export function normalizeRows(rows: Record<string, any>[], options?: { idPrefix?
       'Time of Demo': timeDemo,
       'Meeting Details': meetDetails,
       lead_status: leadStatus as ExcelRow['lead_status'],
+      automation_id: automationId,
       __schedulerStatus: schedulerStatus,
       Remarks: remarks
     };

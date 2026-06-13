@@ -437,6 +437,34 @@ export default function App() {
     }
   };
 
+  const handleForceCloseActiveDemo = async (row: ExcelRow, remarks: string) => {
+    setIsProcessing(true);
+    try {
+      const res = await fetch('/api/active-demo/force-close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          row,
+          remarks,
+          ...sheetRequestMeta()
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Force close failed');
+      updateRowInState(data.row);
+      setSelectedRowIds((current) => {
+        const next = new Set(current);
+        if (canProcessLead(data.row)) next.add(data.row.id);
+        return next;
+      });
+      toast.success('Previous active demo closed. You can schedule again.');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Force close failed');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleStatusChangeRequest = (
     row: ExcelRow,
     newStatus: LeadStatusLabel,
@@ -618,6 +646,7 @@ export default function App() {
                   onToggleRow={toggleRow}
                   onToggleAllVisible={toggleAllVisible}
                   onStatusChangeRequest={handleStatusChangeRequest}
+                  onForceCloseActiveDemo={handleForceCloseActiveDemo}
                   onProcessRow={handleProcessRow}
                   isProcessing={isProcessing}
                 />
@@ -632,6 +661,7 @@ export default function App() {
                 onToggleRow={toggleRow}
                 onToggleAllVisible={toggleAllVisible}
                 onStatusChangeRequest={handleStatusChangeRequest}
+                onForceCloseActiveDemo={handleForceCloseActiveDemo}
                 onProcessRow={handleProcessRow}
                 isProcessing={isProcessing}
               />

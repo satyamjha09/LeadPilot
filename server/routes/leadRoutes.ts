@@ -3,10 +3,16 @@ import xlsx from 'xlsx';
 import { ExcelRow } from '../../src/types';
 import { listEmailDeliveriesForRow } from '../emailDelivery';
 import { listEmailLogsForRow } from '../emailLog';
-import { ensureRequiredColumns, extractSheetInfo, friendlySheetsError, getSheetTitleByGid } from '../googleSheets';
+import {
+  ensureRequiredColumns,
+  extractSheetInfo,
+  friendlySheetsError,
+  getSheetTitleByGid,
+  updateGoogleSheetRow
+} from '../googleSheets';
 import { isValidLeadStatus, LEAD_STATUS, normalizeLeadStatus } from '../leadStatus';
 import { resetDemoTestData } from '../adminDb';
-import { applyDbTruthToRows } from '../scheduleDb';
+import { applyDbTruthToRows, forceCloseActiveDemoForRow } from '../scheduleDb';
 import {
   buildProcessLeadPlan,
   processLeadsByStatus,
@@ -326,6 +332,37 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     } catch (err: any) {
       console.error('Lead status update failed:', err);
       return res.status(500).json({ error: err.message || 'Lead status update failed' });
+    }
+  });
+
+  app.post('/api/active-demo/force-close', async (req, res) => {
+    try {
+      const { row, remarks, sourceType, spreadsheetId, sheetName, headers } = req.body as {
+        row?: ExcelRow;
+        remarks?: string;
+        sourceType?: 'excel' | 'google-sheet';
+        spreadsheetId?: string;
+        sheetName?: string;
+        headers?: string[];
+      };
+
+      if (!row) {
+        return res.status(400).json({ error: 'Row is required.' });
+      }
+
+      const updatedRow = await forceCloseActiveDemoForRow(row, remarks);
+      if (sourceType === 'google-sheet' && spreadsheetId && sheetName && headers?.length && row.__sheetRowNumber) {
+        await updateGoogleSheetRow(spreadsheetId, sheetName, row.__sheetRowNumber, headers, {
+          'Meeting Details': '',
+          lead_status: String(updatedRow.lead_status || LEAD_STATUS.DEMO_SCHEDULED),
+          Remarks: String(updatedRow.Remarks || '')
+        });
+      }
+
+      return res.json({ success: true, row: updatedRow });
+    } catch (err: any) {
+      console.error('Force close active demo failed:', err);
+      return res.status(500).json({ error: err.message || 'Force close active demo failed' });
     }
   });
 

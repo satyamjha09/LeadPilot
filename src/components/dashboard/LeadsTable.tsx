@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { CalendarPlus, CheckCircle2, Copy, ExternalLink, Eye, RotateCw, UserX } from 'lucide-react';
+import { AlertTriangle, CalendarPlus, CheckCircle2, Copy, ExternalLink, Eye, RotateCw, UserX } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,6 +47,7 @@ interface LeadsTableProps {
   onToggleRow: (id: string) => void;
   onToggleAllVisible: () => void;
   onStatusChangeRequest: (row: ExcelRow, newStatus: LeadStatusLabel, previousStatus: LeadStatusLabel | 'Failed' | '') => void;
+  onForceCloseActiveDemo?: (row: ExcelRow, remarks: string) => void;
   onProcessRow?: (row: ExcelRow) => void;
   isProcessing?: boolean;
 }
@@ -58,6 +59,7 @@ export default function LeadsTable({
   onToggleRow,
   onToggleAllVisible,
   onStatusChangeRequest,
+  onForceCloseActiveDemo,
   onProcessRow,
   isProcessing = false
 }: LeadsTableProps) {
@@ -66,6 +68,8 @@ export default function LeadsTable({
     row: ExcelRow;
     status: LeadStatusLabel;
   } | null>(null);
+  const [forceCloseAction, setForceCloseAction] = useState<ExcelRow | null>(null);
+  const [forceCloseRemarks, setForceCloseRemarks] = useState('');
 
   if (rows.length === 0) {
     return <EmptyState />;
@@ -118,6 +122,13 @@ export default function LeadsTable({
     setConfirmAction(null);
   };
 
+  const submitForceClose = () => {
+    if (!forceCloseAction || !onForceCloseActiveDemo) return;
+    onForceCloseActiveDemo(forceCloseAction, forceCloseRemarks);
+    setForceCloseAction(null);
+    setForceCloseRemarks('');
+  };
+
   return (
     <>
       <Card className="tk-hover-card">
@@ -167,6 +178,9 @@ export default function LeadsTable({
                     const rowHintClass = getRowHintClass(displayStatus);
                     const activeDemo = isActiveDemoRow(row);
                     const meetingStarted = hasMeetingStarted(row);
+                    const canForceClose =
+                      !!onForceCloseActiveDemo &&
+                      /already has an active demo/i.test(String(row.Remarks || ''));
 
                     return (
                       <TableRow
@@ -308,6 +322,23 @@ export default function LeadsTable({
                                 </Button>
                               </IconTooltip>
                             )}
+                            {canForceClose && (
+                              <IconTooltip label="Force close previous active demo">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label="Force close previous active demo"
+                                  disabled={isProcessing}
+                                  onClick={() => {
+                                    setForceCloseAction(row);
+                                    setForceCloseRemarks('Previous active demo force closed by user.');
+                                  }}
+                                >
+                                  <AlertTriangle className="h-4 w-4 text-amber-600" />
+                                </Button>
+                              </IconTooltip>
+                            )}
                             <IconTooltip label="View details">
                               <Button
                                 type="button"
@@ -362,6 +393,56 @@ export default function LeadsTable({
             </Button>
             <Button type="button" onClick={submitConfirmedAction} disabled={isProcessing}>
               Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!forceCloseAction}
+        onOpenChange={(open) => {
+          if (!open) {
+            setForceCloseAction(null);
+            setForceCloseRemarks('');
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Force close previous demo?</DialogTitle>
+            <DialogDescription>
+              This clears the active demo session for this customer so the lead can be scheduled again.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-md border bg-muted/40 p-3 text-sm">
+              <div className="font-medium">{forceCloseAction?.full_name || 'Selected lead'}</div>
+              <div className="text-muted-foreground">{forceCloseAction?.email || 'No email'}</div>
+            </div>
+            <label className="block text-sm font-medium" htmlFor="force-close-remarks">
+              Remark
+            </label>
+            <textarea
+              id="force-close-remarks"
+              value={forceCloseRemarks}
+              onChange={(event) => setForceCloseRemarks(event.target.value)}
+              rows={3}
+              className="w-full resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setForceCloseAction(null);
+                setForceCloseRemarks('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={submitForceClose} disabled={isProcessing}>
+              Force close
             </Button>
           </DialogFooter>
         </DialogContent>
