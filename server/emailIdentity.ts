@@ -103,7 +103,10 @@ export function createEmailEventKey(input: {
   let version: string;
 
   if (input.emailType === EMAIL_TYPES.DEMO_DONE || input.emailType === EMAIL_TYPES.NO_RESPONSE) {
-    version = 'v1';
+    version = [
+      normalizeIdentityDate(input.date),
+      normalizeIdentityTime(input.time)
+    ].filter(Boolean).join(':');
   } else {
     version = [
       normalizeIdentityDate(input.date),

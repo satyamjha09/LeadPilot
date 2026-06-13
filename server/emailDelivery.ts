@@ -56,6 +56,61 @@ export async function listEmailDeliveriesForRow(row: ExcelRow, context: EmailIde
   }
 }
 
+export async function findEmailDeliveryById(deliveryId: string) {
+  const [delivery] = await prisma.$queryRaw<
+    Array<{
+      id: string;
+      eventKey: string;
+      automationId: string;
+      emailType: string;
+      recipient: string;
+      payloadHash: string;
+      status: string;
+      attemptCount: number;
+      retryCount: number;
+      maxRetries: number;
+      nextRetryAt: Date | null;
+      providerMessageId: string | null;
+      subject: string | null;
+      textBody: string | null;
+      htmlBody: string | null;
+      sentAt: Date | null;
+      lockedAt: Date | null;
+      lockedBy: string | null;
+      lastError: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  >`
+    SELECT
+      "id",
+      "eventKey",
+      "automationId",
+      "emailType",
+      "recipient",
+      "payloadHash",
+      "status",
+      "attemptCount",
+      "retryCount",
+      "maxRetries",
+      "nextRetryAt",
+      "providerMessageId",
+      "subject",
+      "textBody",
+      "htmlBody",
+      "sentAt",
+      "lockedAt",
+      "lockedBy",
+      "lastError",
+      "createdAt",
+      "updatedAt"
+    FROM "EmailDelivery"
+    WHERE "id" = ${deliveryId}
+    LIMIT 1
+  `;
+  return delivery || null;
+}
+
 export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailClaimResult> {
   const existingBeforeCreate = await prisma.emailDelivery.findUnique({
     where: { eventKey: input.eventKey }
@@ -204,6 +259,50 @@ export async function markEmailDeliverySent(input: { deliveryId: string; provide
     WHERE "id" = ${input.deliveryId}
   `;
   return sent;
+}
+
+export async function markUnknownEmailDeliveryManuallySent(input: {
+  deliveryId: string;
+  providerMessageId?: string;
+}) {
+  const now = new Date();
+  const messageId = input.providerMessageId?.trim() || null;
+  await prisma.$executeRaw`
+    UPDATE "EmailDelivery"
+    SET
+      "status" = ${EMAIL_DELIVERY_STATUS.SENT},
+      "providerMessageId" = COALESCE(${messageId}, "providerMessageId"),
+      "sentAt" = COALESCE("sentAt", ${now}),
+      "lockedAt" = NULL,
+      "lockedBy" = NULL,
+      "lastError" = NULL,
+      "nextRetryAt" = NULL,
+      "updatedAt" = ${now}
+    WHERE "id" = ${input.deliveryId}
+      AND "status" = ${EMAIL_DELIVERY_STATUS.UNKNOWN}
+  `;
+  return findEmailDeliveryById(input.deliveryId);
+}
+
+export async function markUnknownEmailDeliveryManuallyFailed(input: {
+  deliveryId: string;
+  reason?: string;
+}) {
+  const now = new Date();
+  const reason = (input.reason || 'Manually reviewed and marked failed.').slice(0, 2000);
+  await prisma.$executeRaw`
+    UPDATE "EmailDelivery"
+    SET
+      "status" = ${EMAIL_DELIVERY_STATUS.FAILED},
+      "lastError" = ${reason},
+      "lockedAt" = NULL,
+      "lockedBy" = NULL,
+      "nextRetryAt" = NULL,
+      "updatedAt" = ${now}
+    WHERE "id" = ${input.deliveryId}
+      AND "status" = ${EMAIL_DELIVERY_STATUS.UNKNOWN}
+  `;
+  return findEmailDeliveryById(input.deliveryId);
 }
 
 export async function markEmailSheetSynced(deliveryId: string) {
@@ -377,4 +476,23 @@ export async function claimEmailRetryById(deliveryId: string) {
   });
 
   return claimed.count === 1;
+}
+
+export async function claimUnknownEmailDeliveryForManualRetry(deliveryId: string) {
+  const now = new Date();
+  const claimed = await prisma.$executeRaw`
+    UPDATE "EmailDelivery"
+    SET
+      "status" = ${EMAIL_DELIVERY_STATUS.PROCESSING},
+      "attemptCount" = "attemptCount" + 1,
+      "lockedAt" = ${now},
+      "lockedBy" = ${INSTANCE_ID},
+      "lastError" = NULL,
+      "nextRetryAt" = NULL,
+      "updatedAt" = ${now}
+    WHERE "id" = ${deliveryId}
+      AND "status" = ${EMAIL_DELIVERY_STATUS.UNKNOWN}
+  `;
+
+  return claimed === 1;
 }

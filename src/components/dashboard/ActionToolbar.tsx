@@ -129,7 +129,7 @@ export default function ActionToolbar({
             disabled={!isAuthActive || isProcessing || selectedCount === 0}
           >
             <ClipboardCheck className="h-4 w-4" />
-            Review & Process
+            Run Automation
           </Button>
         </div>
         </div>

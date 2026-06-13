@@ -2,9 +2,9 @@ import type { Express } from 'express';
 import { getReminderConfig, getScheduledReminders, saveReminderConfig } from '../reminders';
 
 export function registerReminderRoutes(app: Express) {
-  app.get('/api/reminders/status', (req, res) => {
+  app.get('/api/reminders/status', async (req, res) => {
     try {
-      const reminders = getScheduledReminders();
+      const reminders = await getScheduledReminders();
       const config = getReminderConfig();
       return res.json({ reminders, config });
     } catch (err: any) {

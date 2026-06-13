@@ -6,6 +6,10 @@ export type { LeadStatusLabel };
 
 export type DashboardView =
   | 'dashboard'
+  | 'leads'
+  | 'automations'
+  | 'manual-review'
+  | 'email-logs'
   | 'import'
   | 'all'
   | 'pending'
@@ -132,6 +136,26 @@ export const canMarkNoResponse = (row: ExcelRow) =>
 export const canProcessLead = (row: ExcelRow) =>
   canScheduleDemo(row) || canSendThankYou(row) || canRescheduleDemo(row) || canMarkNoResponse(row) || isStatusOnly(row);
 
+export const needsManualReview = (row: ExcelRow) => {
+  const remarks = String(row.Remarks || '');
+  const emailStatus = String(row.email_status || row.__emailStatus || '').toLowerCase();
+  return (
+    getLeadStatus(row) === 'Failed' ||
+    emailStatus === 'unknown' ||
+    /manual review|needs review|unknown result|unclear|already has an active demo/i.test(remarks)
+  );
+};
+
+export const hasEmailActivity = (row: ExcelRow) => {
+  const remarks = String(row.Remarks || '');
+  return Boolean(
+    row.gmail_message_id ||
+      row.email_sent_at ||
+      row.email_status ||
+      /email|sent|gmail|thank-you|response|invite|retry|manual review/i.test(remarks)
+  );
+};
+
 export const isDemoScheduledComplete = (row: ExcelRow) =>
   getLeadStatus(row) === LEAD_STATUS.DEMO_SCHEDULED && hasMeetLink(row['Meeting Details']);
 
@@ -147,8 +171,14 @@ export const filterRowsByView = (
 ) => {
   let filtered = rows;
 
-  if (view === 'pending') {
+  if (view === 'automations' || view === 'pending') {
     filtered = filtered.filter((row) => canProcessLead(row));
+  }
+  if (view === 'manual-review') {
+    filtered = filtered.filter((row) => needsManualReview(row));
+  }
+  if (view === 'email-logs') {
+    filtered = filtered.filter((row) => hasEmailActivity(row));
   }
   if (view === 'scheduled') {
     filtered = filtered.filter((row) => getLeadStatus(row) === LEAD_STATUS.DEMO_SCHEDULED);

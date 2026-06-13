@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AlertCircle, CheckCircle2, Clock3, Mail } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { AlertCircle, AlertTriangle, CheckCircle2, Clock3, Mail, RotateCcw, ShieldCheck, XCircle } from 'lucide-react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -39,38 +40,70 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
   const [logs, setLogs] = useState<EmailHistoryLog[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [historyError, setHistoryError] = useState('');
+  const [reviewActionId, setReviewActionId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open || !row) return;
-
-    let cancelled = false;
+  const loadEmailHistory = useCallback(async () => {
+    if (!row) return;
     setIsLoadingLogs(true);
     setHistoryError('');
 
-    fetch('/api/leads/email-history', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ row })
-    })
-      .then(async (res) => {
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || 'Could not load email history.');
-        if (!cancelled) setLogs(Array.isArray(data.logs) ? data.logs : []);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setLogs([]);
-          setHistoryError(err instanceof Error ? err.message : 'Could not load email history.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoadingLogs(false);
+    try {
+      const res = await fetch('/api/leads/email-history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row })
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not load email history.');
+      setLogs(Array.isArray(data.logs) ? data.logs : []);
+    } catch (err: unknown) {
+      setLogs([]);
+      setHistoryError(err instanceof Error ? err.message : 'Could not load email history.');
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  }, [row]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [open, row]);
+  useEffect(() => {
+    if (!open || !row) return;
+    loadEmailHistory();
+  }, [loadEmailHistory, open, row]);
+
+  const handleManualReview = async (log: EmailHistoryLog, action: 'mark-sent' | 'mark-failed' | 'retry') => {
+    if (!isNeedsReviewStatus(log.status) || log.source !== 'EmailDelivery') return;
+
+    let body: Record<string, string> = {};
+    if (action === 'mark-sent') {
+      const providerMessageId = window.prompt('Optional: paste Gmail message ID if you found this email in Sent Mail.');
+      body = providerMessageId ? { providerMessageId } : {};
+    }
+    if (action === 'mark-failed') {
+      const reason = window.prompt('Add a short reason for marking this email failed.', 'Manually reviewed and not sent.');
+      if (reason === null) return;
+      body = { reason };
+    }
+    if (action === 'retry') {
+      const confirmed = window.confirm('Check Gmail Sent Mail first. Retry only if this email was not already sent.');
+      if (!confirmed) return;
+    }
+
+    setReviewActionId(`${log.id}:${action}`);
+    try {
+      const res = await fetch(`/api/email-deliveries/${encodeURIComponent(log.id)}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json().catch(() => ({}));
+      await loadEmailHistory();
+      if (!res.ok) throw new Error(data.error || 'Email review action failed.');
+      toast.success(action === 'retry' ? 'Email retry sent.' : 'Email review updated.');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Email review action failed.');
+    } finally {
+      setReviewActionId(null);
+    }
+  };
 
   const sourceFields = useMemo(() => {
     if (!row) return [];
@@ -145,18 +178,25 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
                   <HistoryEmpty icon={<Mail className="h-4 w-4" />} text="No email history recorded for this lead yet." />
                 ) : (
                   <div className="divide-y">
-                    {logs.map((log) => (
+                    {logs.map((log) => {
+                      const needsReview = isNeedsReviewStatus(log.status) && log.source === 'EmailDelivery';
+                      return (
                       <div key={log.id} className="space-y-2 p-3">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2">
                             {isSentStatus(log.status) ? (
                               <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                            ) : needsReview ? (
+                              <AlertTriangle className="h-4 w-4 text-amber-600" />
                             ) : (
                               <AlertCircle className="h-4 w-4 text-destructive" />
                             )}
                             <span className="font-medium">{formatLogType(log.type)}</span>
                           </div>
-                          <Badge variant={isSentStatus(log.status) ? 'outline' : 'destructive'}>
+                          <Badge
+                            variant={isSentStatus(log.status) || needsReview ? 'outline' : 'destructive'}
+                            className={needsReview ? 'border-amber-300 bg-amber-50 text-amber-700' : undefined}
+                          >
                             {formatStatus(log.status)}
                           </Badge>
                         </div>
@@ -176,8 +216,52 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
                           <p className="text-xs text-muted-foreground">Source: {formatSource(log.source)}</p>
                         )}
                         {log.error && <p className="text-xs text-destructive">{log.error}</p>}
+                        {needsReview && (
+                          <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+                            <div className="flex gap-2 text-xs text-amber-800">
+                              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                              <p>
+                                Gmail result is unclear. Check Sent Mail before retrying so the customer does not get a duplicate email.
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleManualReview(log, 'mark-sent')}
+                                disabled={reviewActionId !== null}
+                              >
+                                <ShieldCheck className="h-3.5 w-3.5" />
+                                Mark sent
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleManualReview(log, 'retry')}
+                                disabled={reviewActionId !== null}
+                              >
+                                <RotateCcw className="h-3.5 w-3.5" />
+                                Retry
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="border-destructive/30 text-destructive hover:bg-destructive/10"
+                                onClick={() => handleManualReview(log, 'mark-failed')}
+                                disabled={reviewActionId !== null}
+                              >
+                                <XCircle className="h-3.5 w-3.5" />
+                                Mark failed
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 )}
               </div>
@@ -239,7 +323,12 @@ function isSentStatus(status: string) {
   return status.toLowerCase() === 'sent';
 }
 
+function isNeedsReviewStatus(status: string) {
+  return status.toUpperCase() === 'UNKNOWN';
+}
+
 function formatStatus(status: string) {
+  if (isNeedsReviewStatus(status)) return 'needs review';
   return status.replace(/_/g, ' ').toLowerCase();
 }
 

@@ -1,7 +1,15 @@
 import type { Express } from 'express';
 import xlsx from 'xlsx';
 import { ExcelRow } from '../../src/types';
-import { listEmailDeliveriesForRow } from '../emailDelivery';
+import {
+  claimUnknownEmailDeliveryForManualRetry,
+  findEmailDeliveryById,
+  listEmailDeliveriesForRow,
+  markEmailDeliveryFailed,
+  markEmailDeliverySent,
+  markUnknownEmailDeliveryManuallyFailed,
+  markUnknownEmailDeliveryManuallySent
+} from '../emailDelivery';
 import { listEmailLogsForRow } from '../emailLog';
 import {
   ensureRequiredColumns,
@@ -10,6 +18,7 @@ import {
   getSheetTitleByGid,
   updateGoogleSheetRow
 } from '../googleSheets';
+import { sendGmailTemplate } from '../googleAuth';
 import { isValidLeadStatus, LEAD_STATUS, normalizeLeadStatus } from '../leadStatus';
 import { resetDemoTestData } from '../adminDb';
 import { applyDbTruthToRows, forceCloseActiveDemoForRow } from '../scheduleDb';
@@ -366,6 +375,83 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     }
   });
 
+  app.post('/api/email-deliveries/:deliveryId/mark-sent', async (req, res) => {
+    try {
+      const { deliveryId } = req.params;
+      const { providerMessageId } = req.body as { providerMessageId?: string };
+      const delivery = await findEmailDeliveryById(deliveryId);
+      if (!delivery) return res.status(404).json({ error: 'Email delivery was not found.' });
+      if (delivery.status !== 'UNKNOWN') {
+        return res.status(400).json({ error: 'Only Needs Review email deliveries can be manually marked sent.' });
+      }
+
+      const updated = await markUnknownEmailDeliveryManuallySent({ deliveryId, providerMessageId });
+      return res.json({ success: true, delivery: serializeDelivery(updated) });
+    } catch (err: any) {
+      console.error('Manual email sent review failed:', err);
+      return res.status(500).json({ error: err.message || 'Manual email review failed' });
+    }
+  });
+
+  app.post('/api/email-deliveries/:deliveryId/mark-failed', async (req, res) => {
+    try {
+      const { deliveryId } = req.params;
+      const { reason } = req.body as { reason?: string };
+      const delivery = await findEmailDeliveryById(deliveryId);
+      if (!delivery) return res.status(404).json({ error: 'Email delivery was not found.' });
+      if (delivery.status !== 'UNKNOWN') {
+        return res.status(400).json({ error: 'Only Needs Review email deliveries can be manually marked failed.' });
+      }
+
+      const updated = await markUnknownEmailDeliveryManuallyFailed({ deliveryId, reason });
+      return res.json({ success: true, delivery: serializeDelivery(updated) });
+    } catch (err: any) {
+      console.error('Manual email failed review failed:', err);
+      return res.status(500).json({ error: err.message || 'Manual email review failed' });
+    }
+  });
+
+  app.post('/api/email-deliveries/:deliveryId/retry', async (req, res) => {
+    try {
+      const { deliveryId } = req.params;
+      const delivery = await findEmailDeliveryById(deliveryId);
+      if (!delivery) return res.status(404).json({ error: 'Email delivery was not found.' });
+      if (delivery.status !== 'UNKNOWN') {
+        return res.status(400).json({ error: 'Only Needs Review email deliveries can be retried manually.' });
+      }
+      if (!delivery.subject || !delivery.textBody || !delivery.htmlBody) {
+        return res.status(400).json({ error: 'Stored email payload is missing, so this delivery cannot be retried.' });
+      }
+
+      const claimed = await claimUnknownEmailDeliveryForManualRetry(deliveryId);
+      if (!claimed) {
+        return res.status(409).json({ error: 'This email delivery was already reviewed or claimed.' });
+      }
+
+      try {
+        const result = await sendGmailTemplate(delivery.recipient, {
+          subject: delivery.subject,
+          text: delivery.textBody,
+          html: delivery.htmlBody
+        });
+        await markEmailDeliverySent({ deliveryId, providerMessageId: result.messageId });
+        const updated = await findEmailDeliveryById(deliveryId);
+        return res.json({ success: true, delivery: serializeDelivery(updated) });
+      } catch (error) {
+        const classification = await markEmailDeliveryFailed({ deliveryId, error });
+        const updated = await findEmailDeliveryById(deliveryId);
+        return res.status(502).json({
+          error: error instanceof Error ? error.message : 'Manual retry failed',
+          classification,
+          delivery: serializeDelivery(updated)
+        });
+      }
+    } catch (err: any) {
+      console.error('Manual email retry failed:', err);
+      return res.status(500).json({ error: err.message || 'Manual email retry failed' });
+    }
+  });
+
   app.post('/api/leads/email-history', async (req, res) => {
     try {
       const { row } = req.body as { row?: ExcelRow };
@@ -550,4 +636,21 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       return res.status(500).json({ error: `Export aborted: ${err.message}` });
     }
   });
+}
+
+function serializeDelivery(delivery: Awaited<ReturnType<typeof findEmailDeliveryById>>) {
+  if (!delivery) return null;
+  return {
+    id: delivery.id,
+    source: 'EmailDelivery',
+    type: delivery.emailType,
+    status: delivery.status,
+    recipient: delivery.recipient,
+    messageId: delivery.providerMessageId,
+    error: delivery.lastError,
+    sentAt: delivery.sentAt,
+    createdAt: delivery.createdAt,
+    updatedAt: delivery.updatedAt,
+    attemptCount: delivery.attemptCount
+  };
 }

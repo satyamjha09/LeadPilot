@@ -4,6 +4,7 @@ import { getLeadStatusParse, LEAD_STATUS, normalizeHeader, normalizeLeadStatus }
 import { findScheduledMeetLinkFromDb } from '../scheduleDb';
 import { hasGoogleMeetLink, isValidEmail } from '../leadWorkflow';
 import { normalizeDisplayDate } from '../../src/lib/dateFormat';
+import { createNewAutomationId } from '../emailIdentity';
 
 const validationRemark = (field: string) => `${field} is missing. Add it in the Excel row before scheduling.`;
 
@@ -111,6 +112,7 @@ export function buildExportRow(row: ExcelRow) {
     }
   }
 
+  exportRow.automation_id = row.automation_id || '';
   exportRow['Meeting Details'] = row['Meeting Details'] || '';
   exportRow.lead_status = row.lead_status || '';
   exportRow.Remarks = row.Remarks || '';
@@ -142,7 +144,7 @@ export function normalizeRows(rows: Record<string, any>[], options?: { idPrefix?
 
     const automationId = String(
       findValueInRow(row, ['automation_id', 'Automation ID', 'automation id', 'AutomationId']) || ''
-    ).trim();
+    ).trim() || createNewAutomationId();
 
     const rawLeadStatus = String(
       findValueInRow(row, ['lead_status', 'Lead Status', 'lead status', 'Lead_Status', 'Status', 'status']) || ''

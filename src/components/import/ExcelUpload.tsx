@@ -111,7 +111,8 @@ export default function ExcelUpload({
         'Time of Demo': '2:30 PM',
         'Meeting Details': '',
         lead_status: 'Demo Scheduled' as const,
-        Remarks: ''
+        Remarks: '',
+        automation_id: ''
       }
     ];
     const workbook = xlsx.utils.book_new();

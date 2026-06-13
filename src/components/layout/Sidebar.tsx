@@ -1,13 +1,12 @@
 import type { ComponentType } from 'react';
 import {
-  AlertCircle,
-  CalendarCheck2,
-  Clock3,
   FileSpreadsheet,
   LayoutDashboard,
   List,
+  Mail,
+  PlayCircle,
+  SearchCheck,
   Settings,
-  Upload
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -16,11 +15,10 @@ import { DashboardView } from '@/src/lib/rowUtils';
 
 const navItems: { id: DashboardView; label: string; icon: ComponentType<{ className?: string }> }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'import', label: 'Import Sheet', icon: Upload },
-  { id: 'all', label: 'All Leads', icon: List },
-  { id: 'pending', label: 'Pending', icon: Clock3 },
-  { id: 'scheduled', label: 'Scheduled', icon: CalendarCheck2 },
-  { id: 'failed', label: 'Failed', icon: AlertCircle },
+  { id: 'leads', label: 'Leads', icon: List },
+  { id: 'automations', label: 'Automations', icon: PlayCircle },
+  { id: 'manual-review', label: 'Manual Review', icon: SearchCheck },
+  { id: 'email-logs', label: 'Email Logs', icon: Mail },
   { id: 'settings', label: 'Settings', icon: Settings }
 ];
 
@@ -38,14 +36,19 @@ export default function Sidebar({ activeView, onNavigate, className }: SidebarPr
         className
       )}
     >
-      <div className="flex items-center gap-3 px-4 py-5">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-          <FileSpreadsheet className="h-5 w-5" />
+      <div className="px-4 py-5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 text-white shadow-[0_16px_30px_-20px_rgba(14,165,233,0.9)]">
+            <FileSpreadsheet className="h-5 w-5" />
+          </div>
+          <div>
+            <p className="text-sm font-bold leading-tight">TallyKonnect</p>
+            <p className="text-xs text-muted-foreground">Scheduler</p>
+          </div>
         </div>
-        <div>
-          <p className="text-sm font-semibold leading-tight">TallyKonnect</p>
-          <p className="text-xs text-muted-foreground">Google Automation Tool</p>
-        </div>
+        <p className="mt-4 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          Demo invites, reminders, thank-you emails, and sheet updates in one workspace.
+        </p>
       </div>
 
       <Separator />
@@ -69,7 +72,7 @@ export default function Sidebar({ activeView, onNavigate, className }: SidebarPr
       </nav>
 
       <div className="border-t p-4 text-xs text-muted-foreground">
-        Google Automation Tool
+        Internal team automation
       </div>
     </aside>
   );

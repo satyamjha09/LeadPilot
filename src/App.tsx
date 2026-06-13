@@ -31,6 +31,7 @@ import { ExcelRow, AuthStatus, ScheduleSummary, SheetSource } from '@/src/types'
 const ROWS_STORAGE_KEY = 'excel-meet-scheduler.rows';
 const SELECTED_STORAGE_KEY = 'excel-meet-scheduler.selectedRowIds';
 const SOURCE_STORAGE_KEY = 'excel-meet-scheduler.source';
+const AUTOMATION_STEPS = ['Validating lead', 'Creating calendar', 'Sending email', 'Updating sheet', 'Done'];
 
 type ProcessPreview = {
   summary: {
@@ -53,6 +54,19 @@ type ProcessPreview = {
   meetingRecipients: string[];
   thankYouRecipients: string[];
   noResponseRecipients: string[];
+};
+
+type ProcessingProgress = {
+  current: number;
+  total: number;
+  success: number;
+  failed: number;
+  skipped: number;
+  currentEmail?: string;
+  currentName?: string;
+  currentStep?: string;
+  stepIndex?: number;
+  steps?: string[];
 };
 
 const loadStoredRows = (): ExcelRow[] => {
@@ -113,14 +127,7 @@ export default function App() {
 
   const [isProcessing, setIsProcessing] = useState(false);
   const isSyncingRef = useRef(false);
-  const [processingProgress, setProcessingProgress] = useState<{
-    current: number;
-    total: number;
-    success: number;
-    failed: number;
-    skipped: number;
-    currentEmail?: string;
-  } | null>(null);
+  const [processingProgress, setProcessingProgress] = useState<ProcessingProgress | null>(null);
   const [isLoadingFile, setIsLoadingFile] = useState(false);
   const [lastSummary, setLastSummary] = useState<ScheduleSummary | null>(null);
 
@@ -364,14 +371,40 @@ export default function App() {
     setConfirmProcessOpen(false);
     setIsProcessing(true);
     setLastSummary(null);
+    const firstRow = processTargetRows[0];
     setProcessingProgress({
-      current: 0,
+      current: Math.min(1, processTargetRows.length),
       total: processTargetRows.length,
       success: 0,
       failed: 0,
-      skipped: 0
+      skipped: 0,
+      currentName: String(firstRow?.full_name || 'Preparing batch'),
+      currentEmail: firstRow?.email ? String(firstRow.email) : undefined,
+      currentStep: AUTOMATION_STEPS[0],
+      stepIndex: 0,
+      steps: AUTOMATION_STEPS
     });
     toast.info('Processing started...');
+    let tick = 0;
+    const progressTimer = window.setInterval(() => {
+      tick += 1;
+      setProcessingProgress((current) => {
+        if (!current) return current;
+        const rowIndex = Math.min(processTargetRows.length - 1, Math.floor(tick / AUTOMATION_STEPS.length));
+        const stepIndex = tick % AUTOMATION_STEPS.length;
+        const row = processTargetRows[rowIndex];
+        const simulatedDone = stepIndex === AUTOMATION_STEPS.length - 1 ? rowIndex + 1 : rowIndex;
+        return {
+          ...current,
+          current: Math.min(processTargetRows.length, rowIndex + 1),
+          currentName: String(row?.full_name || 'Processing lead'),
+          currentEmail: row?.email ? String(row.email) : undefined,
+          currentStep: AUTOMATION_STEPS[stepIndex],
+          stepIndex,
+          success: Math.min(processTargetRows.length, simulatedDone)
+        };
+      });
+    }, 1200);
 
     try {
       const res = await fetch('/api/process-leads', {
@@ -404,6 +437,7 @@ export default function App() {
         revertRowStatus(rowId, previous as LeadStatusLabel | 'Failed' | '')
       );
     } finally {
+      window.clearInterval(progressTimer);
       setIsProcessing(false);
       setProcessingProgress(null);
       setStatusRevertMap({});
@@ -570,8 +604,9 @@ export default function App() {
   };
 
   const isAuthActive = !!(authStatus && authStatus.authenticated);
-  const showLeadsSection = rows.length > 0 && activeView !== 'settings';
+  const showLeadsSection = rows.length > 0 && activeView !== 'settings' && activeView !== 'import';
   const showImport = activeView === 'dashboard' || activeView === 'import' || rows.length === 0;
+  const viewCopy = getViewCopy(activeView);
 
   return (
     <TooltipProvider>
@@ -579,23 +614,24 @@ export default function App() {
         authStatus={authStatus}
         onRefreshAuth={fetchAuthStatus}
         onClearAuth={() => setConfirmClearAuthOpen(true)}
+        source={source}
+        onSyncNow={source.type === 'google-sheet' ? () => syncGoogleSheet(true) : undefined}
+        isSyncing={isProcessing}
         activeView={activeView}
         onNavigate={setActiveView}
         isDark={isDark}
         onToggleTheme={() => setIsDark((prev) => !prev)}
       >
         <div className="space-y-2">
-          <p className="text-sm font-medium text-muted-foreground">Meeting Scheduler Dashboard</p>
-          <p className="text-sm text-muted-foreground max-w-3xl">
-            Import leads from Excel or Google Sheets, create Google Meet links, send Gmail invites, and update your sheet automatically.
-          </p>
+          <p className="text-sm font-semibold text-foreground">{viewCopy.title}</p>
+          <p className="max-w-3xl text-sm text-muted-foreground">{viewCopy.description}</p>
         </div>
 
         {activeView === 'settings' ? (
           <SettingsPanel />
         ) : (
           <>
-            {rows.length > 0 && ['dashboard', 'all', 'pending', 'scheduled', 'failed', 'import'].includes(activeView) && (
+            {rows.length > 0 && activeView !== 'import' && (
               <StatsCards stats={stats} />
             )}
 
@@ -849,6 +885,56 @@ function RecipientList({ title, recipients }: { title: string; recipients: strin
       )}
     </div>
   );
+}
+
+function getViewCopy(view: DashboardView) {
+  const copy: Record<DashboardView, { title: string; description: string }> = {
+    dashboard: {
+      title: 'Dashboard',
+      description: 'Import leads, review workload, and run demo scheduling automations from one place.'
+    },
+    leads: {
+      title: 'Leads',
+      description: 'Manage every lead, meeting slot, status badge, remark, and row-level action.'
+    },
+    automations: {
+      title: 'Automations',
+      description: 'Process selected leads through validation, calendar creation, email sending, and sheet updates.'
+    },
+    'manual-review': {
+      title: 'Manual Review',
+      description: 'Resolve unclear email results, active-demo conflicts, and rows that need a human decision.'
+    },
+    'email-logs': {
+      title: 'Email Logs',
+      description: 'Inspect leads with Gmail activity, retries, thank-you emails, no-response emails, and delivery state.'
+    },
+    import: {
+      title: 'Import Leads',
+      description: 'Bring in leads from Excel or Google Sheets before running automation.'
+    },
+    all: {
+      title: 'All Leads',
+      description: 'View every imported lead in the current workspace.'
+    },
+    pending: {
+      title: 'Pending Automation',
+      description: 'Rows that are ready for scheduling, follow-up email, or status processing.'
+    },
+    scheduled: {
+      title: 'Scheduled Demos',
+      description: 'Active demos with scheduled meeting slots.'
+    },
+    failed: {
+      title: 'Failed Rows',
+      description: 'Rows that failed automation and need correction.'
+    },
+    settings: {
+      title: 'Settings',
+      description: 'Manage admin tools, reminders, and test-data controls.'
+    }
+  };
+  return copy[view] || copy.dashboard;
 }
 
 function ClipboardCheckIcon() {

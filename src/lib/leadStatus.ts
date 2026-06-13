@@ -17,9 +17,9 @@ export function getRowLeadStatus(value: unknown): LeadStatusLabel | 'Failed' | '
 }
 
 export const LEAD_STATUS_BADGE_CLASS: Record<LeadStatusLabel | 'Failed', string> = {
-  [LEAD_STATUS.DEMO_DONE]: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300',
-  [LEAD_STATUS.DEMO_SCHEDULED]: 'border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-900/50 dark:bg-orange-950/40 dark:text-orange-300',
-  [LEAD_STATUS.NO_RESPONSE]: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800 dark:border-fuchsia-900/50 dark:bg-fuchsia-950/40 dark:text-fuchsia-300',
+  [LEAD_STATUS.DEMO_DONE]: 'border-teal-200 bg-teal-50 text-teal-800 dark:border-teal-900/50 dark:bg-teal-950/40 dark:text-teal-300',
+  [LEAD_STATUS.DEMO_SCHEDULED]: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300',
+  [LEAD_STATUS.NO_RESPONSE]: 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-300',
   [LEAD_STATUS.FOLLOW_UP]: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300',
   [LEAD_STATUS.TO_BE_CALLED]: 'border-border bg-muted text-muted-foreground',
   [LEAD_STATUS.NOT_REQUIRED]: 'border-destructive/30 bg-destructive/10 text-destructive',

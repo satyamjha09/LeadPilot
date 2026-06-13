@@ -2,13 +2,16 @@ import { ReactNode } from 'react';
 import Header from '@/src/components/layout/Header';
 import Sidebar from '@/src/components/layout/Sidebar';
 import { DashboardView } from '@/src/lib/rowUtils';
-import { AuthStatus } from '@/src/types';
+import { AuthStatus, SheetSource } from '@/src/types';
 
 interface AppShellProps {
   children: ReactNode;
   authStatus: AuthStatus | null;
   onRefreshAuth: () => void;
   onClearAuth: () => void;
+  source: SheetSource;
+  onSyncNow?: () => void;
+  isSyncing?: boolean;
   activeView: DashboardView;
   onNavigate: (view: DashboardView) => void;
   isDark: boolean;
@@ -20,6 +23,9 @@ export default function AppShell({
   authStatus,
   onRefreshAuth,
   onClearAuth,
+  source,
+  onSyncNow,
+  isSyncing,
   activeView,
   onNavigate,
   isDark,
@@ -38,6 +44,9 @@ export default function AppShell({
           authStatus={authStatus}
           onRefreshAuth={onRefreshAuth}
           onClearAuth={onClearAuth}
+          source={source}
+          onSyncNow={onSyncNow}
+          isSyncing={isSyncing}
           activeView={activeView}
           onNavigate={onNavigate}
           isDark={isDark}

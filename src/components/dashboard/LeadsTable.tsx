@@ -140,7 +140,7 @@ export default function LeadsTable({
         </CardHeader>
         <CardContent className="p-0">
           <ScrollArea className="w-full whitespace-nowrap">
-            <Table className="min-w-[1120px]">
+            <Table className="min-w-[1080px]">
               <TableHeader>
                 <TableRow className="sticky top-0 z-20 bg-card hover:bg-card">
                   <TableHead className="w-10 bg-card">
@@ -152,11 +152,10 @@ export default function LeadsTable({
                   </TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Time</TableHead>
+                  <TableHead>Demo Time</TableHead>
                   <TableHead>Meeting Details</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Remarks</TableHead>
+                  <TableHead>Remark</TableHead>
                   <TableHead className="sticky right-0 z-30 bg-card text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)]">
                     Actions
                   </TableHead>
@@ -165,7 +164,7 @@ export default function LeadsTable({
               <TableBody>
                 {filteredRows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
+                    <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
                       No leads match your search or filter.
                     </TableCell>
                   </TableRow>
@@ -173,6 +172,7 @@ export default function LeadsTable({
                   filteredRows.map((row) => {
                     const status = getLeadStatus(row);
                     const displayStatus = status as LeadStatusLabel | 'Failed' | '';
+                    const badgeStatus = getDashboardStatus(row, displayStatus);
                     const meetDetails = String(row['Meeting Details'] || '');
                     const selectable = canProcessLead(row);
                     const rowHintClass = getRowHintClass(displayStatus);
@@ -215,8 +215,12 @@ export default function LeadsTable({
                             )}
                           </div>
                         </TableCell>
-                        <TableCell>{String(row['Date of Demo'] || '-')}</TableCell>
-                        <TableCell>{String(row['Time of Demo'] || '-')}</TableCell>
+                        <TableCell>
+                          <div className="leading-tight">
+                            <div className="font-medium">{String(row['Time of Demo'] || '-')}</div>
+                            <div className="text-xs text-muted-foreground">{String(row['Date of Demo'] || '-')}</div>
+                          </div>
+                        </TableCell>
                         <TableCell>
                           {hasMeetLink(meetDetails) ? (
                             <div className="flex items-center gap-1.5">
@@ -248,7 +252,7 @@ export default function LeadsTable({
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col gap-2">
-                            <StatusBadge status={displayStatus} />
+                            <StatusBadge status={badgeStatus} />
                             <LeadStatusSelect
                               value={row.lead_status || ''}
                               disabled={isProcessing}
@@ -263,8 +267,10 @@ export default function LeadsTable({
                             )}
                           </div>
                         </TableCell>
-                        <TableCell className="max-w-[220px] truncate" title={row.Remarks}>
-                          {row.Remarks || '-'}
+                        <TableCell className="max-w-[280px]" title={String(row.Remarks || '')}>
+                          <div className="line-clamp-2 whitespace-normal text-sm text-muted-foreground">
+                            {formatRemark(row.Remarks)}
+                          </div>
                         </TableCell>
                         <TableCell className="sticky right-0 z-10 bg-inherit text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)]">
                           <div className="flex justify-end gap-1 bg-inherit">
@@ -454,12 +460,39 @@ export default function LeadsTable({
 function getRowHintClass(status: LeadStatusLabel | 'Failed' | '') {
   if (status === 'Failed') return 'bg-destructive/5 hover:bg-destructive/10';
   if (status === LEAD_STATUS.DEMO_SCHEDULED) {
-    return 'bg-orange-50/60 hover:bg-orange-50 dark:bg-orange-950/10 dark:hover:bg-orange-950/20';
+    return 'bg-emerald-50/50 hover:bg-emerald-50 dark:bg-emerald-950/10 dark:hover:bg-emerald-950/20';
   }
   if (status === LEAD_STATUS.DEMO_DONE) {
-    return 'bg-emerald-50/60 hover:bg-emerald-50 dark:bg-emerald-950/10 dark:hover:bg-emerald-950/20';
+    return 'bg-teal-50/50 hover:bg-teal-50 dark:bg-teal-950/10 dark:hover:bg-teal-950/20';
   }
   return '';
+}
+
+function getDashboardStatus(row: ExcelRow, status: LeadStatusLabel | 'Failed' | '') {
+  const remarks = String(row.Remarks || '');
+  const emailStatus = String(row.email_status || row.__emailStatus || '').toLowerCase();
+  const sheetStatus = String(row.__sheetSyncStatus || row.sheet_sync_status || '').toLowerCase();
+
+  if (status === 'Failed') return 'Failed';
+  if (/manual review|needs review|unknown result|unclear/i.test(remarks) || emailStatus === 'unknown') {
+    return 'Manual Review';
+  }
+  if (/sheet sync pending|sheet update pending|sheet sync retry/i.test(remarks) || /pending|failed/.test(sheetStatus)) {
+    return 'Sheet Sync Pending';
+  }
+  if (/retry pending|email pending|rate limit|429/i.test(remarks) || emailStatus === 'retry_pending') {
+    return 'Email Pending';
+  }
+  return status;
+}
+
+function formatRemark(value: unknown) {
+  const remark = String(value || '').trim();
+  if (!remark) return '-';
+  return remark
+    .replace(/^lead_status:\s*/i, '')
+    .replace(/^remarks:\s*/i, '')
+    .replace(/\s+/g, ' ');
 }
 
 function IconTooltip({ label, children }: { label: string; children: ReactNode }) {
