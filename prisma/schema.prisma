@@ -127,7 +127,13 @@ model EmailDelivery {
   payloadHash       String
   status            String   @default("PROCESSING")
   attemptCount      Int      @default(1)
+  retryCount        Int      @default(0)
+  maxRetries        Int      @default(3)
+  nextRetryAt       DateTime?
   providerMessageId String?
+  subject           String?
+  textBody          String?
+  htmlBody          String?
   sentAt            DateTime?
   lockedAt          DateTime?
   lockedBy          String?
@@ -138,5 +144,6 @@ model EmailDelivery {
 
   @@index([automationId])
   @@index([status])
+  @@index([nextRetryAt])
   @@index([updatedAt])
 }

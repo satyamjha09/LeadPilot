@@ -225,7 +225,10 @@ export async function checkAndSendReminders() {
             automationId,
             emailType: EMAIL_TYPES.REMINDER,
             recipient: reminder.email,
-            payloadHash
+            payloadHash,
+            subject: template.subject,
+            text: template.text,
+            html: template.html
           });
 
           if (claim.claimed === false) {

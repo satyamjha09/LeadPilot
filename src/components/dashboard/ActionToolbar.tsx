@@ -61,7 +61,20 @@ export default function ActionToolbar({
         </Alert>
       )}
 
-      <div className="flex flex-col gap-3 rounded-xl border bg-card p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+      <div className="tk-hover-card rounded-xl border bg-card p-4 shadow-sm">
+        <div className="mb-3 flex flex-col gap-1 border-b pb-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold">Lead workspace</p>
+            <p className="text-xs text-muted-foreground">Filter, select, and run only the rows that are ready.</p>
+          </div>
+          <div className="flex w-fit items-center gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">{selectedCount}</span> selected
+            <span className="h-3 w-px bg-border" />
+            <span className="font-medium text-foreground">{readyCount}</span> processable
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center">
           <div className="relative flex-1 sm:max-w-xs">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -88,10 +101,7 @@ export default function ActionToolbar({
           </Select>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground mr-1">
-            {selectedCount} selected | {readyCount} processable
-          </span>
+        <div className="flex flex-wrap items-center gap-2 xl:justify-end">
           <Button type="button" variant="outline" size="sm" onClick={onSelectAllReady}>
             Select processable
           </Button>
@@ -114,12 +124,14 @@ export default function ActionToolbar({
           <Button
             type="button"
             size="sm"
+            className="shadow-sm"
             onClick={onProcess}
             disabled={!isAuthActive || isProcessing || selectedCount === 0}
           >
             <ClipboardCheck className="h-4 w-4" />
             Review & Process
           </Button>
+        </div>
         </div>
       </div>
     </div>

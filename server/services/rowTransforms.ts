@@ -3,6 +3,7 @@ import { parseExcelDateTime } from '../googleAuth';
 import { getLeadStatusParse, LEAD_STATUS, normalizeHeader, normalizeLeadStatus } from '../leadStatus';
 import { findScheduledMeetLinkFromDb } from '../scheduleDb';
 import { hasGoogleMeetLink, isValidEmail } from '../leadWorkflow';
+import { normalizeDisplayDate } from '../../src/lib/dateFormat';
 
 const validationRemark = (field: string) => `${field} is missing. Add it in the Excel row before scheduling.`;
 
@@ -131,11 +132,7 @@ export function normalizeRows(rows: Record<string, any>[], options?: { idPrefix?
     ).trim();
 
     let dateDemo = findValueInRow(row, ['Date of Demo', 'date_of_demo', 'Date', 'demo_date', 'Demo Date', 'schedule_date', 'Schedule Date', 'meeting_date', 'Meeting Date']) || '';
-    if (dateDemo instanceof Date) {
-      dateDemo = dateDemo.toISOString().slice(0, 10);
-    } else if (typeof dateDemo === 'string') {
-      dateDemo = dateDemo.trim();
-    }
+    dateDemo = normalizeDisplayDate(dateDemo);
 
     const timeDemo = formatExcelTime(findValueInRow(row, ['Time of Demo', 'time_of_demo', 'Time', 'demo_time', 'Demo Time', 'schedule_time', 'Schedule Time', 'meeting_time', 'Meeting Time']) || '');
 

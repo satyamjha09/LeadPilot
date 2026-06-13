@@ -107,7 +107,7 @@ export default function ExcelUpload({
       {
         full_name: 'John Doe',
         email: 'john@example.com',
-        'Date of Demo': '2026-06-10',
+        'Date of Demo': '10-06-2026',
         'Time of Demo': '2:30 PM',
         'Meeting Details': '',
         lead_status: 'Demo Scheduled' as const,

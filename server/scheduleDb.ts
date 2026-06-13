@@ -2,7 +2,8 @@ import { ExcelRow } from '../src/types';
 import { randomUUID } from 'node:crypto';
 import { prisma } from './db';
 import { parseExcelDateTime } from './googleAuth';
-import { LEAD_STATUS } from './leadStatus';
+import { LEAD_STATUS, normalizeLeadStatus } from './leadStatus';
+import { normalizeDisplayDate, normalizeIsoDate } from '../src/lib/dateFormat';
 
 const DEFAULT_TIMEZONE = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Kolkata';
 
@@ -11,10 +12,7 @@ export function normalizeLeadEmail(email: unknown) {
 }
 
 export function normalizeLeadDate(dateValue: unknown) {
-  if (dateValue instanceof Date) {
-    return dateValue.toISOString().slice(0, 10);
-  }
-  return String(dateValue || '').trim();
+  return normalizeDisplayDate(dateValue);
 }
 
 export function normalizeLeadTime(timeValue: unknown) {
@@ -27,6 +25,15 @@ export function getLeadUniqueKeys(row: ExcelRow) {
     dateOfDemo: normalizeLeadDate(row['Date of Demo']),
     timeOfDemo: normalizeLeadTime(row['Time of Demo'])
   };
+}
+
+function getCompatibleLeadDates(row: ExcelRow) {
+  return Array.from(
+    new Set([
+      normalizeLeadDate(row['Date of Demo']),
+      normalizeIsoDate(row['Date of Demo'])
+    ].filter(Boolean))
+  );
 }
 
 export function getLeadUserId(row: ExcelRow) {
@@ -85,7 +92,7 @@ export async function assertCanCreateOrReuseActiveDemo(row: ExcelRow) {
   if (!active) return null;
 
   const sameSlot =
-    normalizeLeadDate(row['Date of Demo']) === active.state.demoDate &&
+    normalizeLeadDate(row['Date of Demo']) === normalizeLeadDate(active.state.demoDate) &&
     normalizeLeadTime(row['Time of Demo']) === active.state.demoTime;
 
   if (!sameSlot) {
@@ -115,7 +122,9 @@ export async function ensureScheduledDemoHistory(
   return prisma.$transaction(async (tx) => {
     const existingState = await tx.customerDemoState.findUnique({ where: { userId } });
     if (existingState && isActiveDemo(existingState)) {
-      const sameSlot = existingState.demoDate === displayDate && existingState.demoTime === displayTime;
+      const sameSlot =
+        normalizeLeadDate(existingState.demoDate) === displayDate &&
+        existingState.demoTime === displayTime;
       const sameMeeting =
         existingState.meetingLink === data.meetingLink &&
         existingState.calendarEventId === data.calendarEventId;
@@ -411,11 +420,86 @@ export async function findLeadSchedule(row: ExcelRow) {
     return null;
   }
 
-  return prisma.leadSchedule.findUnique({
+  return prisma.leadSchedule.findFirst({
     where: {
-      email_dateOfDemo_timeOfDemo: keys
-    }
+      email: keys.email,
+      dateOfDemo: { in: getCompatibleLeadDates(row) },
+      timeOfDemo: keys.timeOfDemo
+    },
+    orderBy: { updatedAt: 'desc' }
   });
+}
+
+function isOutcomeRequest(status: string) {
+  return (
+    status === LEAD_STATUS.RESCHEDULE ||
+    status === LEAD_STATUS.DEMO_DONE ||
+    status === LEAD_STATUS.NO_RESPONSE
+  );
+}
+
+function isTerminalStatus(status: string) {
+  return status === LEAD_STATUS.DEMO_DONE || status === LEAD_STATUS.NO_RESPONSE;
+}
+
+export async function applyDbTruthToRow(row: ExcelRow): Promise<ExcelRow> {
+  const requestedStatus = normalizeLeadStatus(row.lead_status);
+  const active = await getActiveDemoForRow(row);
+  const rowDate = normalizeLeadDate(row['Date of Demo']);
+  const rowTime = normalizeLeadTime(row['Time of Demo']);
+
+  if (active?.state) {
+    const sameSlot =
+      normalizeLeadDate(active.state.demoDate) === rowDate &&
+      active.state.demoTime === rowTime;
+    if (sameSlot) {
+      return {
+        ...row,
+        'Meeting Details': active.state.meetingLink || row['Meeting Details'] || '',
+        lead_status: isOutcomeRequest(requestedStatus) ? requestedStatus : LEAD_STATUS.DEMO_SCHEDULED,
+        Remarks: isOutcomeRequest(requestedStatus)
+          ? row.Remarks || ''
+          : row.Remarks || 'Active demo from database',
+        automation_id: row.automation_id || active.state.activeDemoSessionId || undefined
+      };
+    }
+
+    if (requestedStatus === LEAD_STATUS.DEMO_SCHEDULED) {
+      return {
+        ...row,
+        __schedulerStatus: 'Failed',
+        Remarks: 'This customer already has an active demo.'
+      };
+    }
+  }
+
+  const schedule = await findLeadSchedule(row);
+  if (!schedule) return row;
+
+  const dbStatus = normalizeLeadStatus(schedule.status) || schedule.status;
+  const terminalStatus = isTerminalStatus(dbStatus);
+  const shouldUseDbStatus =
+    terminalStatus ||
+    dbStatus === LEAD_STATUS.DEMO_SCHEDULED ||
+    dbStatus === 'Failed' ||
+    !isOutcomeRequest(requestedStatus);
+
+  return {
+    ...row,
+    full_name: row.full_name || schedule.fullName || '',
+    email: row.email || schedule.email,
+    'Date of Demo': normalizeLeadDate(schedule.dateOfDemo || row['Date of Demo']),
+    'Time of Demo': schedule.timeOfDemo || row['Time of Demo'],
+    'Meeting Details': schedule.meetingLink || '',
+    lead_status: shouldUseDbStatus ? dbStatus : requestedStatus,
+    Remarks: schedule.remarks || row.Remarks || '',
+    __dbFinalState: terminalStatus || row.__dbFinalState,
+    __schedulerStatus: dbStatus === 'Failed' ? 'Failed' : row.__schedulerStatus
+  };
+}
+
+export async function applyDbTruthToRows(rows: ExcelRow[]) {
+  return Promise.all(rows.map((row) => applyDbTruthToRow(row)));
 }
 
 export async function saveLeadScheduleFailure(

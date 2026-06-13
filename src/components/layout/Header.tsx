@@ -42,14 +42,14 @@ export default function Header({
   };
 
   return (
-    <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-      <div className="flex flex-col gap-4 px-4 py-4 lg:px-6">
+    <header className="sticky top-0 z-30 border-b border-sky-400/10 bg-[#101113] text-white shadow-[0_18px_45px_-35px_rgba(14,165,233,0.7)]">
+      <div className="flex flex-col gap-4 px-4 py-5 lg:px-6">
         <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
+          <div className="flex min-w-0 items-center gap-4">
             <Sheet>
               <SheetTrigger
                 render={
-                  <Button variant="outline" size="icon" aria-label="Open menu" className="lg:hidden" />
+                  <Button variant="outline" size="icon" aria-label="Open menu" className="border-white/15 bg-white/5 text-white hover:bg-white/10 lg:hidden" />
                 }
               >
                   <Menu className="h-4 w-4" />
@@ -58,19 +58,24 @@ export default function Header({
                 <Sidebar activeView={activeView} onNavigate={onNavigate} className="w-full border-0" />
               </SheetContent>
             </Sheet>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight sm:text-2xl">TallyKonnect Scheduler</h1>
-              <p className="max-w-2xl text-sm text-muted-foreground">
-                Manage demo invites, thank-you emails, reminders, and Google Sheet updates in one workspace.
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600 text-lg font-extrabold tracking-normal text-white shadow-[0_18px_34px_-22px_rgba(14,165,233,0.95)]">
+              TK
+            </div>
+            <div className="min-w-0">
+              <h1 className="bg-gradient-to-r from-sky-300 via-cyan-400 to-blue-500 bg-clip-text text-2xl font-extrabold tracking-normal text-transparent sm:text-4xl">
+                TallyKonnect Scheduler
+              </h1>
+              <p className="mt-1 max-w-3xl text-sm text-slate-300 sm:text-base">
+                Manage demo invites, thank-you emails, reminders, and Google Sheet updates
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button type="button" variant="outline" size="icon" onClick={onToggleTheme} aria-label="Toggle theme">
+            <Button type="button" variant="outline" size="icon" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={onToggleTheme} aria-label="Toggle theme">
               {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
-            <Button type="button" variant="outline" size="icon" onClick={onRefreshAuth} aria-label="Refresh auth">
+            <Button type="button" variant="outline" size="icon" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={onRefreshAuth} aria-label="Refresh auth">
               <RefreshCw className="h-4 w-4" />
             </Button>
 
@@ -80,7 +85,7 @@ export default function Header({
                   <ShieldCheck className="h-3.5 w-3.5" />
                   Google connected
                 </Badge>
-                <Button type="button" variant="outline" size="sm" onClick={onClearAuth}>
+                <Button type="button" variant="outline" size="sm" className="border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={onClearAuth}>
                   <LogOut className="h-4 w-4" />
                   Clear Session
                 </Button>

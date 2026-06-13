@@ -27,7 +27,7 @@ export default function StatsCards({ stats }: { stats: Stats }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
       {items.map(({ key, label, description, icon: Icon }) => (
-        <Card key={key} className="rounded-md shadow-sm">
+        <Card key={key} className="tk-hover-card rounded-md shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
             <Icon className="h-4 w-4 text-muted-foreground" />

@@ -10,6 +10,7 @@ import {
   buildReminderEmail,
   buildThankYouEmail
 } from './emailTemplates';
+import { parseDateParts } from '../src/lib/dateFormat';
 
 const TOKENS_PATH = path.join(process.cwd(), 'data', 'google_tokens.json');
 const AUTH_STATE_PATH = path.join(process.cwd(), 'data', 'auth_state.json');
@@ -137,66 +138,12 @@ export function getOAuthClient() {
 
 // Robust excel date-time parsing helper
 export function parseExcelDateTime(dateVal: any, timeVal: any): Date {
-  let year = 0;
-  let month = 0;
-  let day = 0;
-  let dateParsed = false;
+  const dateParts = parseDateParts(dateVal);
+  let year = dateParts?.year || 0;
+  let month = dateParts?.month || 0;
+  let day = dateParts?.day || 0;
+  let dateParsed = !!dateParts;
   let timeParsed = false;
-  
-  // Parse Date
-  if (typeof dateVal === 'number') {
-    // Excel serial date format (days since 1900-01-01)
-    const parsedDate = new Date((dateVal - 25569) * 86400 * 1000);
-    year = parsedDate.getUTCFullYear();
-    month = parsedDate.getUTCMonth() + 1;
-    day = parsedDate.getUTCDate();
-    dateParsed = !isNaN(parsedDate.getTime());
-  } else if (dateVal instanceof Date) {
-    year = dateVal.getUTCFullYear();
-    month = dateVal.getUTCMonth() + 1;
-    day = dateVal.getUTCDate();
-    dateParsed = !isNaN(dateVal.getTime());
-  } else if (typeof dateVal === 'string') {
-    const trimmed = dateVal.trim();
-    const parts = trimmed.split(/[-/.]/);
-    if (parts.length === 3) {
-      if (parts[0].length === 4) {
-        // YYYY-MM-DD
-        year = parseInt(parts[0]);
-        month = parseInt(parts[1]);
-        day = parseInt(parts[2]);
-        dateParsed = true;
-      } else {
-        // DD/MM/YYYY or MM/DD/YYYY
-        let p1 = parseInt(parts[0]);
-        let p2 = parseInt(parts[1]);
-        let p3 = parseInt(parts[2]);
-        if (p3 < 100) p3 += 2000; // handle YY format
-
-        if (p1 > 12) {
-          // Must be DD/MM/YYYY
-          year = p3;
-          month = p2;
-          day = p1;
-        } else {
-          // Fallback: Assume MM/DD/YYYY
-          year = p3;
-          month = p1;
-          day = p2;
-        }
-        dateParsed = true;
-      }
-    } else {
-      const parsed = Date.parse(trimmed);
-      if (!isNaN(parsed)) {
-        const parsedDate = new Date(parsed);
-        year = parsedDate.getUTCFullYear();
-        month = parsedDate.getUTCMonth() + 1;
-        day = parsedDate.getUTCDate();
-        dateParsed = true;
-      }
-    }
-  }
 
   // Parse Time
   let hrs = 9;
@@ -234,7 +181,7 @@ export function parseExcelDateTime(dateVal: any, timeVal: any): Date {
   }
 
   if (!dateParsed) {
-    throw new Error('Invalid Date of Demo. Use a real date such as 2026-06-10.');
+    throw new Error('Invalid Date of Demo. Use a real date such as 10-06-2026.');
   }
 
   if (!timeParsed) {
@@ -378,6 +325,22 @@ async function sendRawGmailMessage(raw: string) {
     messageId,
     threadId: response.data.threadId || undefined
   };
+}
+
+export async function sendGmailTemplate(
+  to: string,
+  template: { subject: string; text: string; html: string }
+) {
+  try {
+    const encodedMessage = buildRawEmail({
+      to,
+      ...template
+    });
+
+    return await sendRawGmailMessage(encodedMessage);
+  } catch (err: any) {
+    throw new Error(friendlyGoogleError(err, 'Gmail email retry'));
+  }
 }
 
 export async function scheduleMeeting(row: ExcelRow) {

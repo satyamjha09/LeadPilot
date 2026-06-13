@@ -21,6 +21,19 @@
   animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+.tk-hover-card {
+  transition:
+    box-shadow 180ms ease,
+    border-color 180ms ease,
+    transform 180ms ease;
+}
+
+.tk-hover-card:hover {
+  border-color: rgb(125 211 252 / 0.75);
+  box-shadow: 0 18px 42px -24px rgb(14 165 233 / 0.85);
+  transform: translateY(-1px);
+}
+
 /* Custom minimal scrollbar stylings */
 .scrollbar-thin::-webkit-scrollbar {
   height: 6px;

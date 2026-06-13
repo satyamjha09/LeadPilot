@@ -3,6 +3,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import { initReminderJob } from './server/reminders';
+import { initEmailRetryJob } from './server/emailRetryWorker';
 import { registerAuthRoutes } from './server/routes/authRoutes';
 import { registerLeadRoutes } from './server/routes/leadRoutes';
 import { registerReminderRoutes } from './server/routes/reminderRoutes';
@@ -39,6 +40,7 @@ async function startServer() {
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   initReminderJob();
+  initEmailRetryJob();
 
   registerLeadRoutes(app, { runSheetSync: sheetSyncService.runSheetSync });
   registerAuthRoutes(app);

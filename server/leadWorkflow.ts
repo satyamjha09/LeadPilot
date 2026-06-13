@@ -43,6 +43,7 @@ import {
   getAutomationId,
   type EmailType
 } from './emailIdentity';
+import { normalizeDisplayDate } from '../src/lib/dateFormat';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const PROCESS_DELAY_MS = 1000;
@@ -156,23 +157,7 @@ const pad = (value: number) => String(value).padStart(2, '0');
 const TIME_CONFLICT_REMARK = 'Time conflict: another lead has the same date and time';
 
 function normalizeMeetingDate(value: unknown) {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
-  }
-
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return new Date((value - 25569) * 86400 * 1000).toISOString().slice(0, 10);
-  }
-
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-
-  const parsed = Date.parse(raw);
-  if (!Number.isNaN(parsed)) {
-    return new Date(parsed).toISOString().slice(0, 10);
-  }
-
-  return raw.toLowerCase().replace(/\s+/g, ' ');
+  return normalizeDisplayDate(value);
 }
 
 function normalizeMeetingTime(value: unknown) {
@@ -435,7 +420,10 @@ async function sendIdempotentEmail(input: IdempotentEmailInput) {
     automationId,
     emailType: input.emailType,
     recipient,
-    payloadHash
+    payloadHash,
+    subject: input.subject,
+    text: input.text,
+    html: input.html
   });
 
   if (claim.claimed === false) {
@@ -563,6 +551,18 @@ export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLea
     const normalized = normalizeLeadStatus(row.lead_status);
 
     if (conflictRowIds.has(row.id)) continue;
+
+    if (row.__dbFinalState) {
+      const reason = `${normalized || 'Lead'} already finalized in database.`;
+      plan.skippedRows.push({
+        row: {
+          ...row,
+          Remarks: row.Remarks || reason
+        },
+        reason
+      });
+      continue;
+    }
 
     if (!normalized) {
       const reason = getInvalidLeadStatusReason(row);

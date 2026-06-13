@@ -5,6 +5,8 @@ import { listEmailDeliveriesForRow } from '../emailDelivery';
 import { listEmailLogsForRow } from '../emailLog';
 import { ensureRequiredColumns, extractSheetInfo, friendlySheetsError, getSheetTitleByGid } from '../googleSheets';
 import { isValidLeadStatus, LEAD_STATUS, normalizeLeadStatus } from '../leadStatus';
+import { resetDemoTestData } from '../adminDb';
+import { applyDbTruthToRows } from '../scheduleDb';
 import {
   buildProcessLeadPlan,
   processLeadsByStatus,
@@ -23,6 +25,16 @@ type SheetSyncRunner = (
 export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetSyncRunner }) {
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
+  });
+
+  app.post('/api/admin/reset-demo-test-data', async (req, res) => {
+    try {
+      await resetDemoTestData();
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('Database reset failed:', err);
+      return res.status(500).json({ error: err.message || 'Database reset failed' });
+    }
   });
 
   app.post('/api/preview', (req, res) => {
@@ -139,7 +151,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         __sheetName: sheetName,
         __originalColumns: headers
       }));
-      const result = await processLeadsByStatus(preparedRows, {
+      const dbRows = await applyDbTruthToRows(preparedRows);
+      const result = await processLeadsByStatus(dbRows, {
         sourceType: 'google-sheet',
         spreadsheetId,
         sheetName,
@@ -165,7 +178,17 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       };
       if (!row) return res.status(400).json({ error: 'Row is required.' });
 
-      const result = await sendThankYouForRow(row, {
+      const [dbRow] = await applyDbTruthToRows([row]);
+      if (dbRow.__dbFinalState) {
+        return res.json({
+          success: true,
+          row: dbRow,
+          skipped: true,
+          message: dbRow.Remarks || 'Lead already finalized in database.'
+        });
+      }
+
+      const result = await sendThankYouForRow(dbRow, {
         sourceType: sourceType || 'excel',
         spreadsheetId,
         sheetName,
@@ -214,8 +237,18 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       }> = [];
 
       for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
+        const [row] = await applyDbTruthToRows([rows[i]]);
         try {
+          if (row.__dbFinalState) {
+            results.push({
+              id: row.id,
+              success: true,
+              row,
+              skipped: true,
+              message: row.Remarks || 'Lead already finalized in database.'
+            });
+            continue;
+          }
           const result = await sendThankYouForRow(row, context);
           results.push({
             id: row.id,
@@ -360,7 +393,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         return res.status(400).json({ error: 'Valid rows list must be supplied.' });
       }
 
-      const plan = await buildProcessLeadPlan(rows);
+      const dbRows = await applyDbTruthToRows(rows);
+      const plan = await buildProcessLeadPlan(dbRows);
       const flattenPlannedRows = (items: any[]) =>
         items.map((item) => ({
           ...(item.row || item),
@@ -421,7 +455,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         headers = ensured.headers;
       }
 
-      const result = await processLeadsByStatus(rows, {
+      const dbRows = await applyDbTruthToRows(rows);
+      const result = await processLeadsByStatus(dbRows, {
         sourceType: sourceType || 'excel',
         spreadsheetId,
         sheetName,

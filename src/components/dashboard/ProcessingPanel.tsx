@@ -35,7 +35,7 @@ export default function ProcessingPanel({
         : 0;
 
     return (
-      <Card>
+      <Card className="tk-hover-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -76,7 +76,7 @@ export default function ProcessingPanel({
   const total = lastSummary.totalRows ?? lastSummary.total ?? 0;
 
   return (
-    <Card className="border-emerald-200/60 bg-emerald-50/30 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+    <Card className="tk-hover-card border-emerald-200/60 bg-emerald-50/30 dark:border-emerald-900/40 dark:bg-emerald-950/20">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <CheckCircle2 className="h-5 w-5 text-emerald-600" />
@@ -117,7 +117,7 @@ export default function ProcessingPanel({
 
 function SummaryItem({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg border bg-card p-3 text-center">
+    <div className="tk-hover-card rounded-lg border bg-card p-3 text-center">
       <div className="text-xl font-bold">{value}</div>
       <div className="text-xs text-muted-foreground">{label}</div>
     </div>

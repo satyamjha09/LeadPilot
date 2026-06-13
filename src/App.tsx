@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { AlertTriangle, CheckCircle2, Clock3, Mail, Send, Users } from 'lucide-react';
 import AppShell from '@/src/components/layout/AppShell';
 import StatsCards from '@/src/components/dashboard/StatsCards';
 import ImportPanel from '@/src/components/dashboard/ImportPanel';
@@ -651,51 +652,71 @@ export default function App() {
           }
         }}
       >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Review processing plan</DialogTitle>
-            <DialogDescription>
-              Demo Scheduled, Reschedule, Demo Done, and No Response actions may send emails.
-            </DialogDescription>
+        <DialogContent className="max-h-[88vh] overflow-hidden p-0 sm:max-w-3xl">
+          <DialogHeader className="border-b bg-muted/30 px-5 py-4 pr-12">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                <ClipboardCheckIcon />
+              </div>
+              <div className="min-w-0">
+                <DialogTitle className="text-lg">Review processing plan</DialogTitle>
+                <DialogDescription className="mt-1">
+                  Confirm email and sheet updates before the workflow starts.
+                </DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
 
-          <div className="space-y-4 text-sm">
+          <div className="max-h-[calc(88vh-9.5rem)] overflow-y-auto px-5 py-4 text-sm">
             {isPreflightLoading || !processPreview ? (
-              <p className="text-muted-foreground">Preparing processing summary...</p>
+              <div className="flex min-h-48 items-center justify-center rounded-lg border bg-card text-muted-foreground">
+                Preparing processing summary...
+              </div>
             ) : (
-              <>
-                <p>
-                  You are about to process <strong>{processPreview.summary.total}</strong> row(s) from{' '}
-                  <strong>{source.type === 'google-sheet' ? 'Google Sheet' : 'Excel'}</strong>.
-                </p>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <PreviewStat label="Demo Scheduled emails" value={processPreview.summary.demoScheduled} />
-                  <PreviewStat label="Reschedule emails" value={processPreview.summary.reschedule} />
-                  <PreviewStat label="Demo Done thank-you" value={processPreview.summary.demoDone} />
-                  <PreviewStat label="No Response emails" value={processPreview.summary.noResponse ?? 0} />
+              <div className="space-y-5">
+                <div className="tk-hover-card rounded-lg border bg-card p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Processing source</p>
+                      <p className="mt-1 text-base font-semibold">
+                        {processPreview.summary.total} row(s) from {source.type === 'google-sheet' ? 'Google Sheet' : 'Excel'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                      <Clock3 className="h-4 w-4" />
+                      Estimated time: <span className="font-medium text-foreground">{processPreview.estimatedTime.label}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <PreviewStat icon={<Mail className="h-4 w-4" />} label="Scheduled emails" value={processPreview.summary.demoScheduled} tone="blue" />
+                  <PreviewStat icon={<Send className="h-4 w-4" />} label="Reschedule emails" value={processPreview.summary.reschedule} tone="cyan" />
+                  <PreviewStat icon={<CheckCircle2 className="h-4 w-4" />} label="Thank-you emails" value={processPreview.summary.demoDone} tone="green" />
+                  <PreviewStat icon={<Users className="h-4 w-4" />} label="No Response emails" value={processPreview.summary.noResponse ?? 0} tone="amber" />
                   <PreviewStat label="Status-only updates" value={processPreview.summary.statusOnly} />
                   <PreviewStat label="Skipped" value={processPreview.summary.skipped} />
-                  <PreviewStat label="Invalid" value={processPreview.summary.invalid} />
-                  <PreviewStat label="Time conflicts" value={processPreview.summary.timeConflicts} />
-                  <PreviewStat label="Estimated time" value={processPreview.estimatedTime.label} />
+                  <PreviewStat label="Invalid" value={processPreview.summary.invalid} tone="red" />
+                  <PreviewStat label="Time conflicts" value={processPreview.summary.timeConflicts} tone="red" />
                 </div>
 
                 {processPreview.summary.actionable === 0 && (
-                  <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-destructive">
-                    No email or status updates are available for these rows.
-                  </p>
+                  <div className="flex gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-destructive">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <p>No email or status updates are available for these rows.</p>
+                  </div>
                 )}
 
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-3 lg:grid-cols-3">
                   <RecipientList title="Meeting email recipients" recipients={processPreview.meetingRecipients} />
                   <RecipientList title="Thank-you email recipients" recipients={processPreview.thankYouRecipients} />
                   <RecipientList title="No Response email recipients" recipients={processPreview.noResponseRecipients ?? []} />
                 </div>
-              </>
+              </div>
             )}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="mx-0 mb-0 rounded-none px-5 py-4">
             <Button
               type="button"
               variant="outline"
@@ -747,28 +768,59 @@ export default function App() {
   );
 }
 
-function PreviewStat({ label, value }: { label: string; value: number | string }) {
+function PreviewStat({
+  label,
+  value,
+  icon,
+  tone = 'neutral'
+}: {
+  label: string;
+  value: number | string;
+  icon?: React.ReactNode;
+  tone?: 'neutral' | 'blue' | 'cyan' | 'green' | 'amber' | 'red';
+}) {
+  const toneClass = {
+    neutral: 'bg-muted text-muted-foreground',
+    blue: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300',
+    cyan: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-300',
+    green: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
+    amber: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300',
+    red: 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300'
+  }[tone];
+
   return (
-    <div className="rounded-md border bg-card p-3">
-      <div className="text-base font-semibold">{value}</div>
-      <div className="text-xs text-muted-foreground">{label}</div>
+    <div className="tk-hover-card min-w-0 rounded-lg border bg-card p-3 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <div className="truncate text-xs font-medium text-muted-foreground">{label}</div>
+        {icon && <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${toneClass}`}>{icon}</div>}
+      </div>
+      <div className="mt-2 truncate text-xl font-semibold tracking-normal">{value}</div>
     </div>
   );
 }
 
 function RecipientList({ title, recipients }: { title: string; recipients: string[] }) {
   return (
-    <div className="rounded-md border p-3">
-      <p className="font-medium">{title}</p>
+    <div className="tk-hover-card min-w-0 rounded-lg border bg-card p-3 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <p className="truncate font-medium">{title}</p>
+        <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">{recipients.length}</span>
+      </div>
       {recipients.length > 0 ? (
-        <ul className="mt-2 list-disc pl-5 text-muted-foreground">
+        <ul className="mt-3 space-y-1 text-muted-foreground">
           {recipients.map((recipient) => (
-            <li key={recipient}>{recipient}</li>
+            <li key={recipient} className="truncate rounded-md bg-muted/50 px-2 py-1 text-xs" title={recipient}>
+              {recipient}
+            </li>
           ))}
         </ul>
       ) : (
-        <p className="mt-2 text-muted-foreground">None</p>
+        <p className="mt-3 rounded-md bg-muted/40 px-2 py-2 text-xs text-muted-foreground">None</p>
       )}
     </div>
   );
+}
+
+function ClipboardCheckIcon() {
+  return <CheckCircle2 className="h-5 w-5" />;
 }

@@ -25,7 +25,7 @@ export default function ImportPanel({
   defaultTab = 'excel'
 }: ImportPanelProps) {
   return (
-    <Card id="import-panel">
+    <Card id="import-panel" className="tk-hover-card">
       <CardHeader>
         <CardTitle className="text-lg">Import Leads</CardTitle>
         <CardDescription>

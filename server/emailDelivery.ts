@@ -20,6 +20,9 @@ export type EmailClaimInput = {
   emailType: EmailType;
   recipient: string;
   payloadHash: string;
+  subject?: string;
+  text?: string;
+  html?: string;
 };
 
 export type EmailClaimResult =
@@ -31,6 +34,7 @@ export type EmailClaimResult =
         | 'ALREADY_PROCESSING'
         | 'UNKNOWN_RESULT'
         | 'PERMANENT_FAILURE'
+        | 'RETRY_NOT_DUE'
         | 'CLAIMED_BY_ANOTHER_PROCESS';
       deliveryId: string;
       providerMessageId?: string | null;
@@ -72,6 +76,11 @@ export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailC
       "payloadHash",
       "status",
       "attemptCount",
+      "retryCount",
+      "maxRetries",
+      "subject",
+      "textBody",
+      "htmlBody",
       "lockedAt",
       "lockedBy",
       "createdAt",
@@ -86,6 +95,11 @@ export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailC
       ${input.payloadHash},
       ${EMAIL_DELIVERY_STATUS.PROCESSING},
       ${1},
+      ${0},
+      ${3},
+      ${input.subject || null},
+      ${input.text || null},
+      ${input.html || null},
       ${now},
       ${INSTANCE_ID},
       ${now},
@@ -142,6 +156,17 @@ async function resolveExistingDeliveryClaim(existing: Awaited<ReturnType<typeof 
     return { claimed: false, reason: 'PERMANENT_FAILURE', deliveryId: existing.id };
   }
 
+  if (existing.status === EMAIL_DELIVERY_STATUS.RETRY_PENDING) {
+    const [retryMeta] = await prisma.$queryRaw<Array<{ nextRetryAt: Date | null }>>`
+      SELECT "nextRetryAt" FROM "EmailDelivery" WHERE "id" = ${existing.id}
+    `;
+    if (retryMeta?.nextRetryAt && retryMeta.nextRetryAt.getTime() > Date.now()) {
+      return { claimed: false, reason: 'RETRY_NOT_DUE', deliveryId: existing.id };
+    }
+  } else {
+    return { claimed: false, reason: 'CLAIMED_BY_ANOTHER_PROCESS', deliveryId: existing.id };
+  }
+
   const claimed = await prisma.emailDelivery.updateMany({
     where: { id: existing.id, status: EMAIL_DELIVERY_STATUS.RETRY_PENDING },
     data: {
@@ -162,7 +187,7 @@ async function resolveExistingDeliveryClaim(existing: Awaited<ReturnType<typeof 
 }
 
 export async function markEmailDeliverySent(input: { deliveryId: string; providerMessageId: string }) {
-  return prisma.emailDelivery.update({
+  const sent = await prisma.emailDelivery.update({
     where: { id: input.deliveryId },
     data: {
       status: EMAIL_DELIVERY_STATUS.SENT,
@@ -173,6 +198,12 @@ export async function markEmailDeliverySent(input: { deliveryId: string; provide
       lastError: null
     }
   });
+  await prisma.$executeRaw`
+    UPDATE "EmailDelivery"
+    SET "nextRetryAt" = NULL
+    WHERE "id" = ${input.deliveryId}
+  `;
+  return sent;
 }
 
 export async function markEmailSheetSynced(deliveryId: string) {
@@ -192,19 +223,53 @@ function errorStatus(error: unknown) {
 
 export function classifyEmailFailure(error: unknown): 'RETRY_PENDING' | 'FAILED' | 'UNKNOWN' {
   const status = errorStatus(error);
+  const message = error instanceof Error ? error.message : String(error || '');
 
   if (status === 429 || (status && status >= 500)) return 'RETRY_PENDING';
   if (status === 400 || status === 401 || status === 403 || status === 404) return 'FAILED';
+  if (/timeout|timed out|network|econnreset|econnrefused|etimedout|socket hang up/i.test(message)) {
+    return 'RETRY_PENDING';
+  }
   return 'UNKNOWN';
+}
+
+const RETRY_DELAYS_MS = [5 * 60 * 1000, 15 * 60 * 1000, 60 * 60 * 1000];
+
+function nextRetryDelayMs(nextRetryCount: number) {
+  return RETRY_DELAYS_MS[Math.min(Math.max(nextRetryCount, 1), RETRY_DELAYS_MS.length) - 1];
 }
 
 export async function markEmailDeliveryFailed(input: { deliveryId: string; error: unknown }) {
   const classification = classifyEmailFailure(input.error);
   const message = input.error instanceof Error ? input.error.message : String(input.error);
+
+  if (classification === 'RETRY_PENDING') {
+    const [delivery] = await prisma.$queryRaw<Array<{ retryCount: number; maxRetries: number }>>`
+      SELECT "retryCount", "maxRetries" FROM "EmailDelivery" WHERE "id" = ${input.deliveryId}
+    `;
+    const nextRetryCount = (delivery?.retryCount ?? 0) + 1;
+    const maxRetries = delivery?.maxRetries ?? 3;
+
+    if (nextRetryCount <= maxRetries) {
+      const nextRetryAt = new Date(Date.now() + nextRetryDelayMs(nextRetryCount));
+      await prisma.$executeRaw`
+        UPDATE "EmailDelivery"
+        SET
+          "status" = ${EMAIL_DELIVERY_STATUS.RETRY_PENDING},
+          "retryCount" = ${nextRetryCount},
+          "nextRetryAt" = ${nextRetryAt},
+          "lastError" = ${message.slice(0, 2000)},
+          "lockedAt" = NULL,
+          "lockedBy" = NULL,
+          "updatedAt" = ${new Date()}
+        WHERE "id" = ${input.deliveryId}
+      `;
+      return classification;
+    }
+  }
+
   const status =
-    classification === 'RETRY_PENDING'
-      ? EMAIL_DELIVERY_STATUS.RETRY_PENDING
-      : classification === 'FAILED'
+    classification === 'FAILED' || classification === 'RETRY_PENDING'
         ? EMAIL_DELIVERY_STATUS.FAILED
         : EMAIL_DELIVERY_STATUS.UNKNOWN;
 
@@ -217,6 +282,67 @@ export async function markEmailDeliveryFailed(input: { deliveryId: string; error
       lockedBy: null
     }
   });
+  await prisma.$executeRaw`
+    UPDATE "EmailDelivery"
+    SET "nextRetryAt" = NULL
+    WHERE "id" = ${input.deliveryId}
+  `;
 
   return classification;
+}
+
+export async function listDueEmailRetries(limit = 10) {
+  return prisma.$queryRaw<
+    Array<{
+      id: string;
+      eventKey: string;
+      automationId: string;
+      emailType: string;
+      recipient: string;
+      payloadHash: string;
+      subject: string | null;
+      textBody: string | null;
+      htmlBody: string | null;
+      attemptCount: number;
+      retryCount: number;
+      maxRetries: number;
+      nextRetryAt: Date | null;
+    }>
+  >`
+    SELECT
+      "id",
+      "eventKey",
+      "automationId",
+      "emailType",
+      "recipient",
+      "payloadHash",
+      "subject",
+      "textBody",
+      "htmlBody",
+      "attemptCount",
+      "retryCount",
+      "maxRetries",
+      "nextRetryAt"
+    FROM "EmailDelivery"
+    WHERE "status" = ${EMAIL_DELIVERY_STATUS.RETRY_PENDING}
+      AND "nextRetryAt" IS NOT NULL
+      AND "nextRetryAt" <= NOW()
+    ORDER BY "nextRetryAt" ASC
+    LIMIT ${limit}
+  `;
+}
+
+export async function claimEmailRetryById(deliveryId: string) {
+  const claimed = await prisma.emailDelivery.updateMany({
+    where: { id: deliveryId, status: EMAIL_DELIVERY_STATUS.RETRY_PENDING },
+    data: {
+      status: EMAIL_DELIVERY_STATUS.PROCESSING,
+      attemptCount: { increment: 1 },
+      lockedAt: new Date(),
+      lockedBy: INSTANCE_ID,
+      lastError: null
+    }
+  });
+
+  return claimed.count === 1;
 }

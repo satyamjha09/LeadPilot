@@ -3,6 +3,7 @@ import { ExcelRow } from '../src/types';
 import { getOAuthClient } from './googleAuth';
 import { getLeadStatusParse, isValidLeadStatus, normalizeHeader } from './leadStatus';
 import { createNewAutomationId } from './emailIdentity';
+import { normalizeDisplayDate } from '../src/lib/dateFormat';
 
 const REQUIRED_UPDATE_COLUMNS = ['Meeting Details', 'lead_status', 'Remarks', 'automation_id'];
 const SHEET_BATCH_SIZE = 20;
@@ -95,7 +96,7 @@ export async function readSheetRows(spreadsheetId: string, sheetName: string) {
 
     const fullName = stringValue(findFlexibleValue(rawRow, FIELD_KEYS.full_name));
     const email = stringValue(findFlexibleValue(rawRow, FIELD_KEYS.email));
-    const dateDemo = stringValue(findFlexibleValue(rawRow, FIELD_KEYS['Date of Demo']));
+    const dateDemo = normalizeDisplayDate(findFlexibleValue(rawRow, FIELD_KEYS['Date of Demo']));
     const timeDemo = stringValue(findFlexibleValue(rawRow, FIELD_KEYS['Time of Demo']));
     const meetingDetails = stringValue(findFlexibleValue(rawRow, FIELD_KEYS['Meeting Details']));
     const rawLeadStatus = stringValue(findFlexibleValue(rawRow, FIELD_KEYS.lead_status));

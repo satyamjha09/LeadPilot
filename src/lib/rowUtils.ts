@@ -1,4 +1,5 @@
 import { ExcelRow } from '@/src/types';
+import { normalizeDisplayDate, normalizeIsoDate } from '@/src/lib/dateFormat';
 import { LEAD_STATUS, LeadStatusLabel, getRowLeadStatus, normalizeLeadStatus } from '@/src/lib/leadStatus';
 
 export type { LeadStatusLabel };
@@ -25,23 +26,7 @@ export const normalizeStatus = (status: unknown) =>
 const pad = (value: number) => String(value).padStart(2, '0');
 
 export function normalizeMeetingDate(value: unknown) {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
-  }
-
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return new Date((value - 25569) * 86400 * 1000).toISOString().slice(0, 10);
-  }
-
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-
-  const parsed = Date.parse(raw);
-  if (!Number.isNaN(parsed)) {
-    return new Date(parsed).toISOString().slice(0, 10);
-  }
-
-  return raw.toLowerCase().replace(/\s+/g, ' ');
+  return normalizeDisplayDate(value);
 }
 
 export function normalizeMeetingTime(value: unknown) {
@@ -105,7 +90,7 @@ export const canScheduleDemo = (row: ExcelRow) =>
   normalizeStatus(row.lead_status) === 'demo scheduled' && !hasMeetLink(row['Meeting Details']);
 
 export const hasMeetingStarted = (row: ExcelRow) => {
-  const date = normalizeMeetingDate(row['Date of Demo']);
+  const date = normalizeIsoDate(row['Date of Demo']);
   const time = normalizeMeetingTime(row['Time of Demo']);
   if (!date || !time) return false;
   const parsed = Date.parse(`${date} ${time}`);

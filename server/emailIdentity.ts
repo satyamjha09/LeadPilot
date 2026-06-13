@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { ExcelRow } from '../src/types';
+import { normalizeDisplayDate } from '../src/lib/dateFormat';
 
 export const EMAIL_TYPES = {
   DEMO_SCHEDULED: 'DEMO_SCHEDULED',
@@ -30,23 +31,7 @@ function pad(value: number) {
 }
 
 export function normalizeIdentityDate(value: unknown) {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
-  }
-
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return new Date((value - 25569) * 86400 * 1000).toISOString().slice(0, 10);
-  }
-
-  const raw = clean(value);
-  if (!raw) return '';
-
-  const parsed = Date.parse(raw);
-  if (!Number.isNaN(parsed)) {
-    return new Date(parsed).toISOString().slice(0, 10);
-  }
-
-  return raw.toLowerCase().replace(/\s+/g, ' ');
+  return normalizeDisplayDate(value);
 }
 
 export function normalizeIdentityTime(value: unknown) {

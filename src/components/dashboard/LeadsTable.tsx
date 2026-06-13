@@ -120,7 +120,7 @@ export default function LeadsTable({
 
   return (
     <>
-      <Card>
+      <Card className="tk-hover-card">
         <CardHeader>
           <CardTitle>Leads</CardTitle>
           <CardDescription>

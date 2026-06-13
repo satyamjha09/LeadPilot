@@ -26,7 +26,7 @@ export default function AppShell({
   onToggleTheme
 }: AppShellProps) {
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex min-h-screen bg-muted/30">
       <Sidebar
         activeView={activeView}
         onNavigate={onNavigate}

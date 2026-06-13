@@ -21,6 +21,7 @@ export interface ExcelRow {
   email_last_error?: string;
   email_retry_count?: number;
   __schedulerStatus?: 'Failed';
+  __dbFinalState?: boolean;
   Remarks?: string;
   [key: string]: unknown;
 }

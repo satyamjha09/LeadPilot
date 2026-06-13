@@ -1,6 +1,7 @@
 import { ExcelRow } from '../../src/types';
 import { ensureRequiredColumns, ensureSheetAutomationIds, readSheetRows } from '../googleSheets';
 import { buildProcessLeadPlan } from '../leadWorkflow';
+import { applyDbTruthToRows } from '../scheduleDb';
 
 export function createSheetSyncService() {
   const sheetProcessingLocks = new Set<string>();
@@ -10,6 +11,7 @@ export function createSheetSyncService() {
       const lockKey = `${spreadsheetId}|${sheetName}`;
       if (sheetProcessingLocks.has(lockKey)) {
         const freshRows = await readSheetRows(spreadsheetId, sheetName);
+        const dbRows = await applyDbTruthToRows(freshRows.rows);
         const { headers } = await ensureRequiredColumns(
           spreadsheetId,
           sheetName,
@@ -17,7 +19,7 @@ export function createSheetSyncService() {
         );
         return {
           skippedDueToLock: true,
-          rows: freshRows.rows.map((row) => ({ ...row, __originalColumns: headers })),
+          rows: dbRows.map((row) => ({ ...row, __originalColumns: headers })),
           headers,
           summary: {
             total: freshRows.rows.length,
@@ -37,7 +39,7 @@ export function createSheetSyncService() {
             demoDoneRows: [] as ExcelRow[],
             statusOnlyRows: [] as ExcelRow[],
             invalidRows: [] as ExcelRow[],
-            skippedRows: freshRows.rows
+            skippedRows: dbRows
           }
         };
       }
@@ -56,12 +58,12 @@ export function createSheetSyncService() {
           headers,
           sheetData.rows
         );
-        const rows = rowsWithAutomationIds.map((row) => ({
+        const rows = await applyDbTruthToRows(rowsWithAutomationIds.map((row) => ({
           ...row,
           __originalColumns: headers,
           __spreadsheetId: spreadsheetId,
           __sheetName: sheetName
-        }));
+        })));
         const plan = await buildProcessLeadPlan(rows);
         return {
           rows,
