@@ -24,6 +24,7 @@ interface ActionToolbarProps {
   source: SheetSource;
   onSelectAllReady: () => void;
   onClearSelection: () => void;
+  onClearWorkspace: () => void;
   onProcess: () => void;
   onSyncNow?: () => void;
   onExport: () => void;
@@ -41,6 +42,7 @@ export default function ActionToolbar({
   source,
   onSelectAllReady,
   onClearSelection,
+  onClearWorkspace,
   onProcess,
   onSyncNow,
   onExport
@@ -108,6 +110,9 @@ export default function ActionToolbar({
           <Button type="button" variant="ghost" size="sm" onClick={onClearSelection}>
             <XCircle className="h-4 w-4" />
             Clear
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={onClearWorkspace} disabled={isProcessing}>
+            Clear workspace
           </Button>
           {!isGoogleSheet && (
             <Button type="button" variant="outline" size="sm" onClick={onExport}>

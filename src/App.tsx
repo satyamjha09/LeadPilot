@@ -577,6 +577,32 @@ export default function App() {
     }
   };
 
+  const clearWorkspace = () => {
+    const confirmed = window.confirm('Clear imported rows from this browser? This will not delete Google Sheet or database data.');
+    if (!confirmed) return;
+
+    setRows([]);
+    setSelectedRowIds(new Set());
+    setSource({ type: 'excel' });
+    setUploadedFileName(null);
+    setSearchQuery('');
+    setStatusFilter('all');
+    setLastSummary(null);
+    setProcessingProgress(null);
+    setProcessTargetRows([]);
+    setProcessPreview(null);
+    setStatusRevertMap({});
+    setActiveView('dashboard');
+
+    try {
+      window.localStorage.removeItem(ROWS_STORAGE_KEY);
+      window.localStorage.removeItem(SELECTED_STORAGE_KEY);
+      window.localStorage.removeItem(SOURCE_STORAGE_KEY);
+    } catch {}
+
+    toast.success('Browser workspace cleared. Import a fresh sheet to test again.');
+  };
+
   const selectAllProcessable = () => {
     const updated = new Set<string>();
     rows.forEach((row) => {
@@ -671,6 +697,7 @@ export default function App() {
                   source={source}
                   onSelectAllReady={selectAllProcessable}
                   onClearSelection={() => setSelectedRowIds(new Set())}
+                  onClearWorkspace={clearWorkspace}
                   onProcess={() => openProcessPreflight(processTargetFromSelection)}
                   onSyncNow={source.type === 'google-sheet' ? () => syncGoogleSheet(true) : undefined}
                   onExport={handleExportDetails}
