@@ -31,8 +31,6 @@ async function configureFrontend(app: express.Express) {
   });
 }
 
-// made by satyam jha
-
 async function startServer() {
   const app = express();
   const sheetSyncService = createSheetSyncService();

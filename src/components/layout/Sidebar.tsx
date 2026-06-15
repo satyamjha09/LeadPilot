@@ -111,7 +111,7 @@ export default function Sidebar({ activeView, onNavigate, source, onSyncNow, isS
             <Users className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">Satyam Jha</p>
+            <p className="truncate text-sm font-semibold">demo.tallykonnect</p>
             <p className="text-xs text-slate-400">Admin</p>
           </div>
           <ChevronDown className="h-4 w-4 text-slate-400" />
