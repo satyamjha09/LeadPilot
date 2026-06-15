@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { AlertTriangle, CalendarPlus, CheckCircle2, Copy, ExternalLink, Eye, RotateCw, UserX } from 'lucide-react';
+import { AlertTriangle, CalendarPlus, CheckCircle2, Copy, Eye, FileText, RotateCw, UserX } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -70,6 +70,7 @@ export default function LeadsTable({
   } | null>(null);
   const [forceCloseAction, setForceCloseAction] = useState<ExcelRow | null>(null);
   const [forceCloseRemarks, setForceCloseRemarks] = useState('');
+  const [remarkRow, setRemarkRow] = useState<ExcelRow | null>(null);
 
   if (rows.length === 0) {
     return <EmptyState />;
@@ -131,9 +132,9 @@ export default function LeadsTable({
 
   return (
     <>
-      <Card className="tk-hover-card">
+      <Card className="tk-premium-card overflow-hidden">
         <CardHeader>
-          <CardTitle>Leads</CardTitle>
+          <CardTitle className="text-lg">Lead Workspace</CardTitle>
           <CardDescription>
             Showing {filteredRows.length} of {rows.length} leads | {selectedRowIds.size} selected
           </CardDescription>
@@ -142,7 +143,7 @@ export default function LeadsTable({
           <ScrollArea className="w-full whitespace-nowrap">
             <Table className="min-w-[1080px]">
               <TableHeader>
-                <TableRow className="sticky top-0 z-20 bg-card hover:bg-card">
+                <TableRow className="sticky top-0 z-20 bg-slate-50/90 hover:bg-slate-50 dark:bg-slate-900/90 dark:hover:bg-slate-900">
                   <TableHead className="w-10 bg-card">
                     <Checkbox
                       checked={allVisibleSelected}
@@ -186,7 +187,7 @@ export default function LeadsTable({
                       <TableRow
                         key={row.id}
                         data-state={selectedRowIds.has(row.id) ? 'selected' : undefined}
-                        className={cn('transition-colors', rowHintClass)}
+                        className={cn('transition-colors hover:bg-violet-50/50 dark:hover:bg-violet-950/20', rowHintClass)}
                       >
                         <TableCell>
                           <Checkbox
@@ -197,22 +198,8 @@ export default function LeadsTable({
                         </TableCell>
                         <TableCell className="font-medium">{row.full_name || '-'}</TableCell>
                         <TableCell className="max-w-[220px]">
-                          <div className="flex items-center gap-1.5">
-                            <span className="truncate">{row.email || '-'}</span>
-                            {row.email && (
-                              <IconTooltip label="Copy email">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  aria-label="Copy email"
-                                  className="h-7 w-7 shrink-0"
-                                  onClick={() => copyToClipboard(String(row.email), 'Email')}
-                                >
-                                  <Copy className="h-3.5 w-3.5" />
-                                </Button>
-                              </IconTooltip>
-                            )}
+                          <div className="flex min-w-0 items-center gap-2 whitespace-nowrap">
+                            <span className="min-w-0 truncate font-medium text-sky-600 dark:text-sky-400">{row.email || '-'}</span>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -224,15 +211,18 @@ export default function LeadsTable({
                         <TableCell>
                           {hasMeetLink(meetDetails) ? (
                             <div className="flex items-center gap-1.5">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => window.open(meetDetails, '_blank', 'noopener,noreferrer')}
-                              >
-                                Open Meet
-                                <ExternalLink className="h-3 w-3" />
-                              </Button>
+                              <IconTooltip label="Open Google Meet">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  aria-label="Open Google Meet"
+                                  className="h-8 w-8 rounded-lg hover:bg-sky-50 dark:hover:bg-sky-950/30"
+                                  onClick={() => window.open(meetDetails, '_blank', 'noopener,noreferrer')}
+                                >
+                                  <GoogleMeetIcon />
+                                </Button>
+                              </IconTooltip>
                               <IconTooltip label="Copy Meet link">
                                 <Button
                                   type="button"
@@ -267,10 +257,19 @@ export default function LeadsTable({
                             )}
                           </div>
                         </TableCell>
-                        <TableCell className="max-w-[280px]" title={String(row.Remarks || '')}>
-                          <div className="line-clamp-2 whitespace-normal text-sm text-muted-foreground">
-                            {formatRemark(row.Remarks)}
-                          </div>
+                        <TableCell className="text-center">
+                          <IconTooltip label="View remark">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label="View remark"
+                              className="h-8 w-8 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+                              onClick={() => setRemarkRow(row)}
+                            >
+                              <FileText className="h-4 w-4" />
+                            </Button>
+                          </IconTooltip>
                         </TableCell>
                         <TableCell className="sticky right-0 z-10 bg-inherit text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)]">
                           <div className="flex justify-end gap-1 bg-inherit">
@@ -375,6 +374,25 @@ export default function LeadsTable({
         onOpenChange={(open) => !open && setDetailsRow(null)}
       />
 
+      <Dialog open={!!remarkRow} onOpenChange={(open) => !open && setRemarkRow(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remark</DialogTitle>
+            <DialogDescription>
+              {remarkRow?.full_name || 'Selected lead'} {remarkRow?.email ? `(${remarkRow.email})` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border bg-muted/40 p-4 text-sm leading-6 text-foreground">
+            {formatRemark(remarkRow?.Remarks)}
+          </div>
+          <DialogFooter>
+            <Button type="button" onClick={() => setRemarkRow(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!confirmAction} onOpenChange={(open) => !open && setConfirmAction(null)}>
         <DialogContent>
           <DialogHeader>
@@ -454,6 +472,26 @@ export default function LeadsTable({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function GoogleMeetIcon() {
+  return (
+    <span className="relative inline-block h-[18px] w-[22px]" aria-hidden="true">
+      <span className="absolute left-[4px] top-0 h-[7px] w-[10px] rounded-tl-[3px] bg-[#ea4335]" />
+      <span className="absolute left-[9px] top-0 h-[7px] w-[8px] rounded-tr-[3px] bg-[#fbbc04]" />
+      <span className="absolute left-[4px] top-[7px] h-[6px] w-[7px] bg-[#4285f4]" />
+      <span className="absolute left-[4px] top-[13px] h-[5px] w-[7px] rounded-bl-[3px] bg-[#1a73e8]" />
+      <span className="absolute left-[11px] top-[7px] h-[11px] w-[8px] rounded-br-[3px] bg-[#34a853]" />
+      <span
+        className="absolute left-[14px] top-[6px] h-[12px] w-[8px] bg-[#00ac47]"
+        style={{ clipPath: 'polygon(0 35%, 100% 0, 100% 100%, 0 65%)' }}
+      />
+      <span
+        className="absolute left-[11px] top-[7px] h-[6px] w-[8px] bg-[#00832d]"
+        style={{ clipPath: 'polygon(100% 0, 100% 100%, 0 50%)' }}
+      />
+    </span>
   );
 }
 

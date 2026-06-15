@@ -143,16 +143,20 @@ function solutionCard(
 ) {
   const borderColor = muted ? '#e0e0e0' : '#e5e7eb';
   const backgroundColor = muted ? '#f7f8fa' : '#ffffff';
-  const iconBackground = muted ? '#ebebeb' : title === 'Smart Purchase' ? '#fff8e0' : '#eef1fb';
-  const iconColor = muted ? '#999999' : title === 'Smart Purchase' ? '#f5a800' : '#1a3c8f';
+  const iconBackground = muted ? '#f1f5fb' : title === 'Smart Purchase' ? '#fff8e0' : '#eef1fb';
+  const iconColor = muted ? '#22b8e8' : title === 'Smart Purchase' ? '#f5a800' : '#1a3c8f';
   const titleColor = muted ? '#999999' : '#1a3c8f';
   const descriptionColor = muted ? '#aaaaaa' : '#666666';
+  const ribbon = badge
+    ? `<div style="position:absolute; top:12px; right:-42px; z-index:2; width:138px; padding:4px 0; background:#d60000; border-top:1px solid #ff7a7a; border-bottom:1px solid #9f0000; color:#ffffff; font-size:9px; line-height:12px; font-weight:900; letter-spacing:0.6px; text-align:center; text-transform:uppercase; transform:rotate(45deg); -webkit-transform:rotate(45deg); transform-origin:center; -webkit-transform-origin:center; box-shadow:0 2px 4px rgba(0,0,0,0.22);">${escapeHtml(badge).toUpperCase()}</div>`
+    : '';
 
   return `
     <td class="product-column" width="33.33%" valign="top" style="width:33.33%; padding:6px; vertical-align:top;">
-      <table role="presentation" width="100%" height="176" cellpadding="0" cellspacing="0" border="0" style="width:100%; height:176px; min-height:176px; background:${backgroundColor}; border:1px solid ${borderColor}; border-radius:8px; border-collapse:separate;">
+      <table role="presentation" width="100%" height="176" cellpadding="0" cellspacing="0" border="0" style="width:100%; height:176px; min-height:176px; background:${backgroundColor}; border:1px solid ${borderColor}; border-radius:8px; border-collapse:separate; position:relative; overflow:hidden;">
         <tr>
-          <td valign="top" height="174" style="height:174px; padding:16px 14px 14px; vertical-align:top;">
+          <td valign="top" height="174" style="height:174px; padding:16px 14px 14px; vertical-align:top; position:relative; overflow:hidden;">
+            ${ribbon}
             <table role="presentation" width="100%" height="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; height:100%;">
               <tr>
                 <td valign="top" height="42" style="height:42px; vertical-align:top;">
@@ -180,7 +184,7 @@ function solutionCard(
 
               <tr>
                 <td valign="bottom" height="22" style="height:22px; vertical-align:bottom;">
-                  ${badge ? `<span style="display:inline-block; padding:3px 10px; background:#e02020; color:#ffffff; border-radius:20px; font-size:10px; line-height:14px; font-weight:700; letter-spacing:0.4px;">${escapeHtml(badge)}</span>` : '&nbsp;'}
+                  &nbsp;
                 </td>
               </tr>
             </table>

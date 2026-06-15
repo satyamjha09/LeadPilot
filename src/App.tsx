@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { AlertTriangle, CheckCircle2, Clock3, Mail, Send, Users } from 'lucide-react';
 import AppShell from '@/src/components/layout/AppShell';
-import StatsCards from '@/src/components/dashboard/StatsCards';
+import DashboardOverview from '@/src/components/dashboard/DashboardOverview';
 import ImportPanel from '@/src/components/dashboard/ImportPanel';
 import ActionToolbar from '@/src/components/dashboard/ActionToolbar';
 import LeadsTable from '@/src/components/dashboard/LeadsTable';
@@ -658,7 +658,12 @@ export default function App() {
         ) : (
           <>
             {rows.length > 0 && activeView !== 'import' && (
-              <StatsCards stats={stats} />
+              <DashboardOverview
+                rows={rows}
+                stats={stats}
+                selectedCount={selectedRowIds.size}
+                onRunAutomation={() => openProcessPreflight(processTargetFromSelection)}
+              />
             )}
 
             {showImport && (
