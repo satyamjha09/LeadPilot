@@ -38,12 +38,14 @@ export default function DashboardOverview({
   rows,
   stats,
   selectedCount,
-  onRunAutomation
+  onRunAutomation,
+  onViewAllActivity
 }: {
   rows: ExcelRow[];
   stats: DashboardStats;
   selectedCount: number;
   onRunAutomation: () => void;
+  onViewAllActivity: () => void;
 }) {
   const total = Math.max(stats.total, 1);
   const processed = stats.demoScheduled + stats.demoDone + stats.noResponse;
@@ -57,16 +59,16 @@ export default function DashboardOverview({
     { label: 'Demo Done', value: stats.demoDone, color: '#22c55e' },
     { label: 'No Response', value: stats.noResponse, color: '#fb923c' },
     { label: 'Failed / Needs Fix', value: stats.failed, color: '#ef4444' },
-    { label: 'Follow Up', value: stats.followUp, color: '#8b5cf6' }
+    { label: 'Follow Up', value: stats.followUp, color: '#38bdf8' }
   ];
 
   return (
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-[1.9fr_1fr]">
-        <Card className="tk-premium-card overflow-hidden border-violet-200/70 bg-gradient-to-br from-white via-violet-50/60 to-sky-50 shadow-sm dark:border-violet-500/20 dark:from-slate-950 dark:via-violet-950/20 dark:to-slate-900">
+        <Card className="tk-premium-card overflow-hidden border-sky-200/80 bg-gradient-to-br from-white via-sky-50/70 to-cyan-50/70 shadow-sm dark:border-sky-500/20 dark:from-slate-950 dark:via-sky-950/20 dark:to-slate-900">
           <CardContent className="grid gap-4 p-4 lg:grid-cols-[1.55fr_0.85fr]">
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-violet-700 dark:text-violet-300">
+              <div className="flex items-center gap-2 text-sm font-semibold text-sky-700 dark:text-sky-300">
                 <Sparkles className="h-4 w-4" />
                 Today's Automation Health
                 <TrendingUp className="ml-1 h-4 w-4" />
@@ -87,7 +89,7 @@ export default function DashboardOverview({
               <div className="space-y-2">
                 <div className="h-2.5 overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-800">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-600"
+                    className="h-full rounded-full bg-gradient-to-r from-sky-400 to-cyan-600"
                     style={{ width: `${healthPercent}%` }}
                   />
                 </div>
@@ -105,7 +107,7 @@ export default function DashboardOverview({
               </p>
               <Button
                 type="button"
-                className="mt-4 h-9 w-full bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-violet-500/20 hover:from-indigo-500 hover:to-violet-500"
+                className="mt-4 h-9 w-full bg-gradient-to-r from-sky-500 to-cyan-600 text-white shadow-lg shadow-sky-500/20 hover:from-sky-400 hover:to-cyan-500"
                 onClick={onRunAutomation}
                 disabled={selectedCount === 0}
               >
@@ -134,7 +136,7 @@ export default function DashboardOverview({
       <Pipeline stats={stats} total={total} />
 
       <div className="grid items-start gap-4 xl:grid-cols-[1fr_1fr_1.15fr]">
-        <ActivityCard rows={rows} />
+        <ActivityCard rows={rows} onViewAllActivity={onViewAllActivity} />
         <LeadsStatusChart slices={statusSlices} total={stats.total} />
         <TrendChart />
       </div>
@@ -179,7 +181,7 @@ function LegendDot({ color, label, value }: { color: string; label: string; valu
 
 function Pipeline({ stats, total }: { stats: DashboardStats; total: number }) {
   const items = [
-    { label: 'Imported', value: stats.total, icon: Users, color: 'violet' },
+    { label: 'Imported', value: stats.total, icon: Users, color: 'sky' },
     { label: 'Ready to Schedule', value: stats.readyToSchedule, icon: Send, color: 'blue' },
     { label: 'Demo Scheduled', value: stats.demoScheduled, icon: CalendarCheck2, color: 'cyan' },
     { label: 'Demo Done', value: stats.demoDone, icon: CheckCircle2, color: 'green' },
@@ -216,7 +218,7 @@ function Pipeline({ stats, total }: { stats: DashboardStats; total: number }) {
   );
 }
 
-function ActivityCard({ rows }: { rows: ExcelRow[] }) {
+function ActivityCard({ rows, onViewAllActivity }: { rows: ExcelRow[]; onViewAllActivity: () => void }) {
   const activity = rows.slice(0, 5).map((row, index) => {
     const status = getLeadStatus(row);
     const failed = status === 'Failed';
@@ -237,10 +239,10 @@ function ActivityCard({ rows }: { rows: ExcelRow[] }) {
       <CardHeader className="flex flex-row items-center justify-between px-4 pb-3 pt-4">
         <CardTitle className="flex items-center gap-2 text-base">
           Automation Activity
-          <span className="font-semibold text-violet-600 dark:text-violet-300">(Live)</span>
-          <span className="relative flex h-5 w-5 items-center justify-center rounded-full bg-violet-100 dark:bg-violet-950">
-            <span className="absolute h-3 w-3 animate-ping rounded-full bg-violet-400/60" />
-            <span className="h-2 w-2 rounded-full bg-violet-600" />
+          <span className="font-semibold text-sky-600 dark:text-sky-300">(Live)</span>
+          <span className="relative flex h-5 w-5 items-center justify-center rounded-full bg-sky-100 dark:bg-sky-950">
+            <span className="absolute h-3 w-3 animate-ping rounded-full bg-sky-400/60" />
+            <span className="h-2 w-2 rounded-full bg-sky-600" />
           </span>
         </CardTitle>
         <span className="inline-flex items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm">
@@ -267,7 +269,7 @@ function ActivityCard({ rows }: { rows: ExcelRow[] }) {
             ))}
           </div>
         )}
-        <Button type="button" variant="ghost" size="sm" className="mt-3 h-8 w-full rounded-xl">
+        <Button type="button" variant="ghost" size="sm" className="mt-3 h-8 w-full rounded-xl" onClick={onViewAllActivity}>
           View All Activity <ArrowRight className="h-4 w-4" />
         </Button>
       </CardContent>
@@ -291,7 +293,7 @@ function ActivityItem({
   time: string;
   meta?: string;
 }) {
-  const toneClass = tone === 'failed' ? 'red' : tone === 'success' ? 'green' : 'violet';
+  const toneClass = tone === 'failed' ? 'red' : tone === 'success' ? 'green' : 'sky';
   const dotClass =
     toneClass === 'red'
       ? 'bg-red-500 ring-red-100 dark:ring-red-950'
@@ -309,7 +311,7 @@ function ActivityItem({
       ? 'border-red-200 bg-red-50 text-red-600 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300'
       : toneClass === 'green'
         ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300'
-        : 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-300';
+        : 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-300';
   const badge =
     tone === 'failed' ? 'Failed' : tone === 'success' ? 'Success' : 'In Progress';
 
@@ -411,21 +413,21 @@ function TrendChart() {
         <svg viewBox="0 0 360 160" className="h-40 w-full overflow-visible">
           <defs>
             <linearGradient id="tkTrend" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor="#7c3aed" stopOpacity="0.28" />
-              <stop offset="100%" stopColor="#7c3aed" stopOpacity="0" />
+              <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.28" />
+              <stop offset="100%" stopColor="#0ea5e9" stopOpacity="0" />
             </linearGradient>
           </defs>
           {[32, 68, 104, 140].map((y) => (
             <line key={y} x1="20" x2="350" y1={y} y2={y} stroke="currentColor" className="text-border" strokeDasharray="4 4" />
           ))}
           <polygon points={`24,140 ${points} 348,140`} fill="url(#tkTrend)" />
-          <polyline points={points} fill="none" stroke="#6d28d9" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={points} fill="none" stroke="#0284c7" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
           {trendData.map((value, index) => {
             const x = 24 + index * 54;
               const y = 132 - (value / max) * 96;
             return (
               <g key={trendLabels[index]}>
-                <circle cx={x} cy={y} r="4" fill="#fff" stroke="#6d28d9" strokeWidth="3" />
+                <circle cx={x} cy={y} r="4" fill="#fff" stroke="#0284c7" strokeWidth="3" />
                 <text x={x} y={y - 12} textAnchor="middle" className="fill-muted-foreground text-[10px]">{value}</text>
                 <text x={x} y="152" textAnchor="middle" className="fill-muted-foreground text-[10px]">{trendLabels[index].replace('May ', '')}</text>
               </g>

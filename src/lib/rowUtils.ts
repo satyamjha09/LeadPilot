@@ -8,6 +8,7 @@ export type DashboardView =
   | 'dashboard'
   | 'leads'
   | 'automations'
+  | 'activity'
   | 'manual-review'
   | 'email-logs'
   | 'import'

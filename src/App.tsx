@@ -13,6 +13,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { AlertTriangle, CheckCircle2, Clock3, Mail, Send, Users } from 'lucide-react';
 import AppShell from '@/src/components/layout/AppShell';
 import DashboardOverview from '@/src/components/dashboard/DashboardOverview';
+import ActivityView from '@/src/components/dashboard/ActivityView';
 import ImportPanel from '@/src/components/dashboard/ImportPanel';
 import ActionToolbar from '@/src/components/dashboard/ActionToolbar';
 import LeadsTable from '@/src/components/dashboard/LeadsTable';
@@ -630,7 +631,7 @@ export default function App() {
   };
 
   const isAuthActive = !!(authStatus && authStatus.authenticated);
-  const showLeadsSection = rows.length > 0 && activeView !== 'settings' && activeView !== 'import';
+  const showLeadsSection = rows.length > 0 && activeView !== 'settings' && activeView !== 'import' && activeView !== 'activity';
   const showImport = activeView === 'dashboard' || activeView === 'import' || rows.length === 0;
   const viewCopy = getViewCopy(activeView);
 
@@ -657,14 +658,17 @@ export default function App() {
           <SettingsPanel />
         ) : (
           <>
-            {rows.length > 0 && activeView !== 'import' && (
+            {rows.length > 0 && activeView !== 'import' && activeView !== 'activity' && (
               <DashboardOverview
                 rows={rows}
                 stats={stats}
                 selectedCount={selectedRowIds.size}
                 onRunAutomation={() => openProcessPreflight(processTargetFromSelection)}
+                onViewAllActivity={() => setActiveView('activity')}
               />
             )}
+
+            {activeView === 'activity' && <ActivityView rows={rows} />}
 
             {showImport && (
               <div ref={importRef}>
@@ -932,6 +936,10 @@ function getViewCopy(view: DashboardView) {
     automations: {
       title: 'Automations',
       description: 'Process selected leads through validation, calendar creation, email sending, and sheet updates.'
+    },
+    activity: {
+      title: 'Activity',
+      description: 'Review every automation activity item for the current workspace.'
     },
     'manual-review': {
       title: 'Manual Review',

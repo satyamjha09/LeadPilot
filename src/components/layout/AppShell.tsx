@@ -34,7 +34,7 @@ export default function AppShell({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
-    <div className="flex min-h-screen bg-[linear-gradient(135deg,#f8fbff_0%,#f6f3ff_42%,#eef8ff_100%)] dark:bg-[radial-gradient(circle_at_top_right,#1e1b4b_0,#020617_42%,#0f172a_100%)]">
+    <div className="tk-grid-background flex min-h-screen">
       {!sidebarCollapsed && (
         <Sidebar
           activeView={activeView}

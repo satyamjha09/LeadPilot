@@ -69,7 +69,7 @@ export default function ActionToolbar({
             <p className="text-sm font-semibold">Lead workspace</p>
             <p className="text-xs text-muted-foreground">Filter, select, and run only the rows that are ready.</p>
           </div>
-          <div className="flex w-fit items-center gap-2 rounded-full bg-violet-50 px-3 py-2 text-xs text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
+          <div className="flex w-fit items-center gap-2 rounded-full bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
             <span className="font-semibold">{selectedCount}</span> selected
             <span className="h-3 w-px bg-border" />
             <span className="font-semibold">{readyCount}</span> processable
@@ -129,7 +129,7 @@ export default function ActionToolbar({
           <Button
             type="button"
             size="sm"
-            className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-violet-500/20 hover:from-indigo-500 hover:to-violet-500"
+            className="bg-gradient-to-r from-sky-500 to-cyan-600 text-white shadow-lg shadow-sky-500/20 hover:from-sky-400 hover:to-cyan-500"
             onClick={onProcess}
             disabled={!isAuthActive || isProcessing || selectedCount === 0}
           >

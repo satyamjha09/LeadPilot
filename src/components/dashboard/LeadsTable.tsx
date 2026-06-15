@@ -187,7 +187,7 @@ export default function LeadsTable({
                       <TableRow
                         key={row.id}
                         data-state={selectedRowIds.has(row.id) ? 'selected' : undefined}
-                        className={cn('transition-colors hover:bg-violet-50/50 dark:hover:bg-violet-950/20', rowHintClass)}
+                        className={cn('transition-colors hover:bg-sky-50/60 dark:hover:bg-sky-950/20', rowHintClass)}
                       >
                         <TableCell>
                           <Checkbox

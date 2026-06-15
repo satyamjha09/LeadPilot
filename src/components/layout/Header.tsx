@@ -1,7 +1,6 @@
-import { Bell, ChevronDown, FileSpreadsheet, Key, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, ShieldCheck, Sun } from 'lucide-react';
+import { Bell, ChevronDown, FileSpreadsheet, Key, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, ShieldCheck, Sun } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import Sidebar from '@/src/components/layout/Sidebar';
 import { DashboardView } from '@/src/lib/rowUtils';
@@ -53,7 +52,7 @@ export default function Header({
   };
 
   return (
-    <header className="sticky top-0 z-30 border-b bg-background/90 shadow-sm backdrop-blur-xl">
+    <header className="sticky top-0 z-30 border-b border-sky-200/70 bg-white/78 shadow-sm backdrop-blur-xl dark:border-sky-900/50 dark:bg-slate-950/78">
       <div className="flex min-h-20 items-center justify-between gap-4 px-4 py-3 lg:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <Sheet>
@@ -89,19 +88,6 @@ export default function Header({
               <h1 className="truncate text-xl font-bold tracking-normal">Dashboard</h1>
               <p className="truncate text-sm text-muted-foreground">Overview of your lead automation</p>
             </div>
-          </div>
-
-          <div className="relative hidden min-w-[320px] max-w-xl flex-1 lg:block">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              readOnly
-              value=""
-              placeholder="Search leads, emails, status, meeting link..."
-              className="h-12 rounded-xl border-slate-200 bg-card pl-10 pr-14 shadow-sm dark:border-slate-800"
-            />
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
-              Ctrl K
-            </span>
           </div>
 
           <div className="flex min-w-0 items-center justify-end gap-2">
@@ -151,7 +137,7 @@ export default function Header({
             </Button>
             {authStatus?.authenticated && (
               <Button type="button" variant="outline" size="sm" className="h-11 rounded-full pl-2 pr-3" onClick={onClearAuth}>
-                <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-xs font-bold text-white">
+                <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-sky-500 to-cyan-600 text-xs font-bold text-white">
                   SJ
                 </span>
                 <span className="hidden xl:inline">Profile</span>

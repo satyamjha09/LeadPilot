@@ -44,11 +44,11 @@ export default function Sidebar({ activeView, onNavigate, source, onSyncNow, isS
 
   return (
     <aside
-      className={cn('flex h-full w-64 flex-col border-r border-white/10 bg-[radial-gradient(circle_at_top_left,#312e81_0,#0f172a_42%,#020617_100%)] text-white', className)}
+      className={cn('flex h-full w-64 flex-col border-r border-white/10 bg-[radial-gradient(circle_at_top_left,#0ea5e9_0,#0f3b57_38%,#061728_100%)] text-white', className)}
     >
       <div className="px-4 py-5">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-400 to-indigo-600 text-white shadow-[0_18px_35px_-18px_rgba(124,58,237,0.95)]">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-300 to-cyan-600 text-white shadow-[0_18px_35px_-18px_rgba(14,165,233,0.95)]">
             <Rocket className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
@@ -143,7 +143,7 @@ function NavGroup({
             variant="ghost"
             className={cn(
               'h-10 w-full justify-start gap-3 rounded-xl text-slate-300 hover:bg-white/10 hover:text-white',
-              activeView === id && 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-lg shadow-violet-900/30'
+              activeView === id && 'bg-gradient-to-r from-sky-500 to-cyan-600 text-white shadow-lg shadow-sky-900/30'
             )}
             onClick={() => onNavigate(id)}
           >
