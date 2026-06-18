@@ -52,18 +52,18 @@ export function createSheetSyncService() {
           sheetName,
           incomingHeaders?.length ? incomingHeaders : sheetData.headers
         );
-        const rowsWithAutomationIds = await ensureSheetAutomationIds(
-          spreadsheetId,
-          sheetName,
-          headers,
-          sheetData.rows
-        );
-        const rows = await applyDbTruthToRows(rowsWithAutomationIds.map((row) => ({
+        const dbRows = await applyDbTruthToRows(sheetData.rows.map((row) => ({
           ...row,
           __originalColumns: headers,
           __spreadsheetId: spreadsheetId,
           __sheetName: sheetName
         })));
+        const rows = await ensureSheetAutomationIds(
+          spreadsheetId,
+          sheetName,
+          headers,
+          dbRows
+        );
         const plan = await buildProcessLeadPlan(rows);
         return {
           rows,

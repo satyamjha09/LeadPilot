@@ -317,7 +317,15 @@ export async function ensureSheetAutomationIds(
 
   for (const row of rows) {
     const existing = String(row.automation_id || '').trim();
-    if (existing) continue;
+    if (existing) {
+      if (row.__automationIdRestoredFromDb) {
+        updates.push({
+          rowNumber: Number(row.__sheetRowNumber || row.__sourceRowNumber),
+          values: { automation_id: existing }
+        });
+      }
+      continue;
+    }
 
     const automationId = createNewAutomationId();
     row.automation_id = automationId;

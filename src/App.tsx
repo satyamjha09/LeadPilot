@@ -57,6 +57,27 @@ type ProcessPreview = {
   noResponseRecipients: string[];
 };
 
+type ProcessLeadJobStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+
+type ProcessLeadJobResponse = {
+  jobId: string;
+  status: ProcessLeadJobStatus;
+  progress?: {
+    total: number;
+    processed: number;
+    success: number;
+    failed: number;
+    skipped: number;
+    currentName?: string;
+    currentEmail?: string;
+  };
+  rows?: ExcelRow[];
+  summary?: ScheduleSummary;
+  headers?: string[];
+  sheetSyncError?: string;
+  error?: string;
+};
+
 type ProcessingProgress = {
   current: number;
   total: number;
@@ -123,6 +144,7 @@ export default function App() {
   const [confirmClearAuthOpen, setConfirmClearAuthOpen] = useState(false);
   const [processTargetRows, setProcessTargetRows] = useState<ExcelRow[]>([]);
   const [processPreview, setProcessPreview] = useState<ProcessPreview | null>(null);
+  const [processQueueEnabled, setProcessQueueEnabled] = useState(false);
   const [isPreflightLoading, setIsPreflightLoading] = useState(false);
   const [statusRevertMap, setStatusRevertMap] = useState<Record<string, LeadStatusLabel | 'Failed' | ''>>({});
 
@@ -145,6 +167,16 @@ export default function App() {
     () => rows.filter((row) => selectedRowIds.has(row.id) && canProcessLead(row)),
     [rows, selectedRowIds]
   );
+
+  const previewSummary = processPreview?.summary;
+  const previewActionable = previewSummary?.actionable ?? 0;
+  const processButtonLabel = !processPreview
+    ? 'Preparing...'
+    : previewActionable === 0
+      ? 'Nothing new to process'
+      : previewSummary?.demoScheduled
+        ? `Confirm & Process ${previewSummary.demoScheduled} New Row${previewSummary.demoScheduled === 1 ? '' : 's'}`
+        : `Confirm & Process ${previewActionable} Action${previewActionable === 1 ? '' : 's'}`;
 
   const sheetRequestMeta = () =>
     source.type === 'google-sheet'
@@ -198,6 +230,17 @@ export default function App() {
     }
   };
 
+  const fetchProcessQueueConfig = async () => {
+    try {
+      const res = await fetch('/api/process-leads/queue-config');
+      if (!res.ok) return;
+      const data = await res.json();
+      setProcessQueueEnabled(!!data.enabled);
+    } catch {
+      setProcessQueueEnabled(false);
+    }
+  };
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
     window.localStorage.setItem('theme', isDark ? 'dark' : 'light');
@@ -205,6 +248,7 @@ export default function App() {
 
   useEffect(() => {
     fetchAuthStatus();
+    fetchProcessQueueConfig();
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
         fetchAuthStatus();
@@ -358,6 +402,85 @@ export default function App() {
     }
   };
 
+  const applyProcessResult = (
+    updatedRows: ExcelRow[],
+    rawSummary: ScheduleSummary | undefined,
+    headers?: string[],
+    sheetSyncError?: string
+  ) => {
+    const summary = applyProcessSummary(rawSummary, processTargetRows.length);
+    const updatedById = new Map(updatedRows.map((row) => [row.id, row]));
+    setRows((current) => current.map((row) => updatedById.get(row.id) || row));
+    if (source.type === 'google-sheet' && Array.isArray(headers)) {
+      setSource({ ...source, headers });
+    }
+    setLastSummary(summary);
+    setSelectedRowIds(new Set());
+    if (sheetSyncError) {
+      toast.warning(`Lead processing completed, but Sheet update failed: ${sheetSyncError}`);
+    } else {
+      toast.success('Lead processing completed');
+    }
+  };
+
+  const pollProcessJob = async (jobId: string) => {
+    while (true) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      const res = await fetch(`/api/process-leads/jobs/${encodeURIComponent(jobId)}`);
+      const data: ProcessLeadJobResponse = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Process job lookup failed.');
+
+      const progress = data.progress;
+      if (progress) {
+        setProcessingProgress({
+          current: Math.min(progress.processed, progress.total),
+          total: progress.total,
+          success: progress.success,
+          failed: progress.failed,
+          skipped: progress.skipped,
+          currentName: progress.currentName || 'Processing leads',
+          currentEmail: progress.currentEmail,
+          currentStep: data.status === 'QUEUED' ? 'Queued' : 'Processing in background',
+          stepIndex: data.status === 'QUEUED' ? 0 : 1,
+          steps: ['Queued', 'Processing in background', 'Updating results', 'Done']
+        });
+      }
+
+      if (data.status === 'COMPLETED') {
+        applyProcessResult(data.rows || [], data.summary, data.headers, data.sheetSyncError);
+        return;
+      }
+
+      if (data.status === 'FAILED') {
+        throw new Error(data.error || 'Background processing failed.');
+      }
+    }
+  };
+
+  const runQueuedProcessRows = async () => {
+    const res = await fetch('/api/process-leads/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: processTargetRows, ...sheetRequestMeta() })
+    });
+    const data: ProcessLeadJobResponse = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to queue lead processing.');
+
+    setProcessingProgress({
+      current: 0,
+      total: processTargetRows.length,
+      success: 0,
+      failed: 0,
+      skipped: processPreview?.summary.skipped || 0,
+      currentName: 'Queued for background processing',
+      currentStep: 'Queued',
+      stepIndex: 0,
+      steps: ['Queued', 'Processing in background', 'Updating results', 'Done']
+    });
+    toast.info('Processing queued in background...');
+    await pollProcessJob(data.jobId);
+  };
+
   const runProcessRows = async () => {
     if (processTargetRows.length === 0) {
       toast.error('No processable rows selected.');
@@ -372,6 +495,26 @@ export default function App() {
     setConfirmProcessOpen(false);
     setIsProcessing(true);
     setLastSummary(null);
+
+    if (processQueueEnabled) {
+      try {
+        await runQueuedProcessRows();
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Lead processing failed';
+        toast.error(message);
+        Object.entries(statusRevertMap).forEach(([rowId, previous]) =>
+          revertRowStatus(rowId, previous as LeadStatusLabel | 'Failed' | '')
+        );
+      } finally {
+        setIsProcessing(false);
+        setProcessingProgress(null);
+        setStatusRevertMap({});
+        setProcessTargetRows([]);
+        setProcessPreview(null);
+      }
+      return;
+    }
+
     const firstRow = processTargetRows[0];
     setProcessingProgress({
       current: Math.min(1, processTargetRows.length),
@@ -417,20 +560,7 @@ export default function App() {
       if (!res.ok) throw new Error(data.error || 'Lead processing failed.');
 
       const updatedRows: ExcelRow[] = Array.isArray(data.rows) ? data.rows : [];
-      const summary = applyProcessSummary(data.summary, processTargetRows.length);
-
-      const updatedById = new Map(updatedRows.map((row) => [row.id, row]));
-      setRows((current) => current.map((row) => updatedById.get(row.id) || row));
-      if (source.type === 'google-sheet' && Array.isArray(data.headers)) {
-        setSource({ ...source, headers: data.headers });
-      }
-      setLastSummary(summary);
-      setSelectedRowIds(new Set());
-      if (data.sheetSyncError) {
-        toast.warning(`Lead processing completed, but Sheet update failed: ${data.sheetSyncError}`);
-      } else {
-        toast.success('Lead processing completed');
-      }
+      applyProcessResult(updatedRows, data.summary, data.headers, data.sheetSyncError);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Lead processing failed';
       toast.error(message);
@@ -777,27 +907,44 @@ export default function App() {
             ) : (
               <div className="space-y-5">
                 <div className="tk-hover-card rounded-lg border bg-card p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Processing source</p>
-                      <p className="mt-1 text-base font-semibold">
-                        {processPreview.summary.total} row(s) from {source.type === 'google-sheet' ? 'Google Sheet' : 'Excel'}
-                      </p>
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Processing source</p>
+                        <p className="mt-1 text-base font-semibold">
+                          {processPreview.summary.total} row(s) found from {source.type === 'google-sheet' ? 'Google Sheet' : 'Excel'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+                        <Clock3 className="h-4 w-4" />
+                        Estimated time: <span className="font-medium text-foreground">{processPreview.estimatedTime.label}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-                      <Clock3 className="h-4 w-4" />
-                      Estimated time: <span className="font-medium text-foreground">{processPreview.estimatedTime.label}</span>
+
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-lg border bg-muted/30 p-3">
+                        <p className="text-xs text-muted-foreground">Total rows</p>
+                        <p className="mt-1 text-2xl font-semibold">{processPreview.summary.total}</p>
+                      </div>
+                      <div className="rounded-lg border bg-muted/30 p-3">
+                        <p className="text-xs text-muted-foreground">Already processed / skipped</p>
+                        <p className="mt-1 text-2xl font-semibold">{processPreview.summary.skipped}</p>
+                      </div>
+                      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200">
+                        <p className="text-xs">New demo emails</p>
+                        <p className="mt-1 text-2xl font-semibold">{processPreview.summary.demoScheduled}</p>
+                      </div>
                     </div>
                   </div>
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <PreviewStat icon={<Mail className="h-4 w-4" />} label="Scheduled emails" value={processPreview.summary.demoScheduled} tone="blue" />
+                  <PreviewStat icon={<Mail className="h-4 w-4" />} label="New demo scheduled emails" value={processPreview.summary.demoScheduled} tone="blue" />
                   <PreviewStat icon={<Send className="h-4 w-4" />} label="Reschedule emails" value={processPreview.summary.reschedule} tone="cyan" />
                   <PreviewStat icon={<CheckCircle2 className="h-4 w-4" />} label="Thank-you emails" value={processPreview.summary.demoDone} tone="green" />
                   <PreviewStat icon={<Users className="h-4 w-4" />} label="Not Attended emails" value={processPreview.summary.noResponse ?? 0} tone="amber" />
                   <PreviewStat label="Status-only updates" value={processPreview.summary.statusOnly} />
-                  <PreviewStat label="Skipped" value={processPreview.summary.skipped} />
+                  <PreviewStat label="Already processed / skipped" value={processPreview.summary.skipped} />
                   <PreviewStat label="Invalid" value={processPreview.summary.invalid} tone="red" />
                   <PreviewStat label="Time conflicts" value={processPreview.summary.timeConflicts} tone="red" />
                 </div>
@@ -842,7 +989,7 @@ export default function App() {
                 processPreview.summary.actionable === 0
               }
             >
-              Start Processing
+              {processButtonLabel}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -38,6 +38,12 @@ import {
   sendThankYouForRow,
   updateLeadStatusOnly
 } from '../leadWorkflow';
+import {
+  createProcessLeadJob,
+  getProcessLeadJob,
+  serializeProcessLeadJob
+} from '../processLeadJobs';
+import { enqueueProcessLeadJob, isProcessQueueEnabled } from '../processLeadQueue';
 import { buildExportRow, normalizeRows, reconcileScheduledRows } from '../services/rowTransforms';
 
 type SheetSyncRunner = (
@@ -622,6 +628,75 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     } catch (err: any) {
       console.error('Lead process preview failed:', err);
       return res.status(500).json({ error: err.message || 'Lead process preview failed' });
+    }
+  });
+
+  app.get('/api/process-leads/queue-config', (req, res) => {
+    return res.json({ enabled: isProcessQueueEnabled() });
+  });
+
+  app.post('/api/process-leads/jobs', async (req, res) => {
+    try {
+      if (!isProcessQueueEnabled()) {
+        return res.status(409).json({ error: 'Process queue is disabled.' });
+      }
+
+      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders } = req.body as {
+        rows?: ExcelRow[];
+        sourceType?: 'excel' | 'google-sheet';
+        spreadsheetId?: string;
+        sheetName?: string;
+        headers?: string[];
+      };
+
+      if (!rows || !Array.isArray(rows)) {
+        return res.status(400).json({ error: 'Valid rows list must be supplied.' });
+      }
+
+      let headers = incomingHeaders || [];
+      if (sourceType === 'google-sheet') {
+        if (!spreadsheetId || !sheetName) {
+          return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
+        }
+        if (!headers.length) {
+          return res.status(400).json({ error: 'Google Sheet headers are required.' });
+        }
+        const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers);
+        headers = ensured.headers;
+      }
+
+      const dbRows = await applyDbTruthToRows(rows);
+      const job = await createProcessLeadJob({
+        sourceType: sourceType || 'excel',
+        spreadsheetId,
+        sheetName,
+        headers,
+        rows: dbRows
+      });
+      await enqueueProcessLeadJob(job.id);
+
+      return res.status(202).json({
+        jobId: job.id,
+        status: job.status
+      });
+    } catch (err: any) {
+      console.error('Lead processing job enqueue failed:', err);
+      const friendlyError = friendlySheetsError(err);
+      if (req.body?.sourceType === 'google-sheet') {
+        return res.status(friendlyError.status).json({ error: friendlyError.message });
+      }
+      return res.status(500).json({ error: err.message || 'Lead processing job enqueue failed' });
+    }
+  });
+
+  app.get('/api/process-leads/jobs/:jobId', async (req, res) => {
+    try {
+      const job = await getProcessLeadJob(String(req.params.jobId || ''));
+      if (!job) return res.status(404).json({ error: 'Process job not found.' });
+      return res.json(serializeProcessLeadJob(job));
+    } catch (err: any) {
+      console.error('Lead processing job lookup failed:', err);
+      return res.status(500).json({ error: err.message || 'Lead processing job lookup failed' });
     }
   });
 

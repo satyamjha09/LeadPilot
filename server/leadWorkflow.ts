@@ -70,6 +70,7 @@ export type SheetContext = {
   spreadsheetId?: string;
   sheetName?: string;
   headers?: string[];
+  onRowProcessed?: (row: ExcelRow, summary: ProcessLeadsResult['summary']) => void | Promise<void>;
 };
 
 type WorkflowOptions = {
@@ -577,6 +578,19 @@ export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLea
     }
 
     if (normalized === LEAD_STATUS.DEMO_SCHEDULED) {
+      if (hasGoogleMeetLink(row['Meeting Details'])) {
+        const reason = 'Already scheduled, skipped';
+        plan.skippedRows.push({
+          row: {
+            ...row,
+            lead_status: LEAD_STATUS.DEMO_SCHEDULED,
+            Remarks: row.Remarks || reason
+          },
+          reason
+        });
+        continue;
+      }
+
       const validationError = validateDemoScheduledRow(row);
       if (validationError) {
         plan.invalidRows.push({ row: failureRow(row, validationError), reason: validationError });
@@ -674,6 +688,9 @@ export async function processLeadsByStatus(
     skipped: plan.skippedRows.length,
     timeConflicts: plan.summary.timeConflicts
   };
+  const notifyRowProcessed = async (row: ExcelRow) => {
+    await context.onRowProcessed?.(row, summary);
+  };
 
   for (const item of plan.invalidRows) {
     resultsById.set(item.row.id, item.row);
@@ -681,6 +698,7 @@ export async function processLeadsByStatus(
       lead_status: item.row.lead_status || '',
       Remarks: item.row.Remarks || item.reason || ''
     });
+    await notifyRowProcessed(item.row);
   }
 
   for (const item of plan.skippedRows) {
@@ -690,6 +708,7 @@ export async function processLeadsByStatus(
       lead_status: item.row.lead_status || '',
       Remarks: item.row.Remarks || item.reason || ''
     });
+    await notifyRowProcessed(item.row);
   }
 
   for (let index = 0; index < plan.demoScheduledRows.length; index++) {
@@ -709,6 +728,7 @@ export async function processLeadsByStatus(
         Remarks: processedRow.Remarks || ''
       });
       await saveSheetLeadState(processedRow, { lastAction: 'DEMO_SCHEDULED', lastActionStatus: 'success' });
+      await notifyRowProcessed(processedRow);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Scheduling failed.';
       const failedRow = failureRow(row, message);
@@ -719,6 +739,7 @@ export async function processLeadsByStatus(
         Remarks: message
       });
       await saveSheetLeadState(failedRow, { lastAction: 'DEMO_SCHEDULED', lastActionStatus: 'failed', lastError: message });
+      await notifyRowProcessed(failedRow);
     }
 
     if (index < plan.demoScheduledRows.length - 1 || plan.demoDoneRows.length > 0) {
@@ -755,6 +776,7 @@ export async function processLeadsByStatus(
           lead_status: LEAD_STATUS.DEMO_SCHEDULED,
           Remarks: skippedRow.Remarks || ''
         });
+        await notifyRowProcessed(skippedRow);
         continue;
       }
 
@@ -777,6 +799,7 @@ export async function processLeadsByStatus(
         lastActionStatus: result.skipped ? 'skipped' : 'success',
         lastError: null
       });
+      await notifyRowProcessed(processedRow);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Reschedule failed.';
       const failedRow = failureRow(row, message);
@@ -795,6 +818,7 @@ export async function processLeadsByStatus(
         lastActionStatus: 'failed',
         lastError: message
       });
+      await notifyRowProcessed(failedRow);
     }
 
     if (index < plan.rescheduleRows.length - 1 || plan.demoDoneRows.length > 0) {
@@ -817,6 +841,7 @@ export async function processLeadsByStatus(
         lastAction: 'DEMO_DONE_THANK_YOU',
         lastActionStatus: result.skipped ? 'skipped' : 'success'
       });
+      await notifyRowProcessed(result.row);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Thank-you email failed.';
       const failedRow = failureRow(row, message);
@@ -827,6 +852,7 @@ export async function processLeadsByStatus(
         Remarks: message
       });
       await saveSheetLeadState(failedRow, { lastAction: 'DEMO_DONE_THANK_YOU', lastActionStatus: 'failed', lastError: message });
+      await notifyRowProcessed(failedRow);
     }
 
     if (index < plan.demoDoneRows.length - 1) {
@@ -864,6 +890,7 @@ export async function processLeadsByStatus(
         lastAction: isNoResponse ? 'NO_RESPONSE' : 'STATUS_ONLY',
         lastActionStatus: result.skipped ? 'skipped' : 'success'
       });
+      await notifyRowProcessed(updatedRow);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Status update failed.';
       const failedRow = failureRow(row, message);
@@ -874,6 +901,7 @@ export async function processLeadsByStatus(
         Remarks: message
       });
       await saveSheetLeadState(failedRow, { lastAction: 'STATUS_ONLY', lastActionStatus: 'failed', lastError: message });
+      await notifyRowProcessed(failedRow);
     }
   }
 

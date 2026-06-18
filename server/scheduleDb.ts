@@ -680,6 +680,7 @@ export async function applyDbTruthToRow(row: ExcelRow): Promise<ExcelRow> {
       normalizeLeadDate(active.state.demoDate) === rowDate &&
       active.state.demoTime === rowTime;
     if (sameSlot) {
+      const activeAutomationId = active.state.userId.includes('@') ? '' : active.state.userId;
       return {
         ...row,
         'Meeting Details': active.state.meetingLink || row['Meeting Details'] || '',
@@ -687,7 +688,8 @@ export async function applyDbTruthToRow(row: ExcelRow): Promise<ExcelRow> {
         Remarks: isOutcomeRequest(requestedStatus)
           ? row.Remarks || ''
           : row.Remarks || 'Active demo from database',
-        automation_id: row.automation_id || (active.state.userId.includes('@') ? undefined : active.state.userId)
+        automation_id: activeAutomationId || row.automation_id || '',
+        __automationIdRestoredFromDb: !!activeAutomationId && activeAutomationId !== row.automation_id
       };
     }
 
@@ -718,6 +720,8 @@ export async function applyDbTruthToRow(row: ExcelRow): Promise<ExcelRow> {
     dbStatus === 'Failed' ||
     !isOutcomeRequest(requestedStatus);
 
+  const restoredAutomationId = schedule.automationId || row.automation_id || '';
+
   return {
     ...row,
     full_name: row.full_name || schedule.fullName || '',
@@ -726,8 +730,10 @@ export async function applyDbTruthToRow(row: ExcelRow): Promise<ExcelRow> {
     'Time of Demo': schedule.timeOfDemo || row['Time of Demo'],
     'Meeting Details': schedule.meetingLink || '',
     lead_status: shouldUseDbStatus ? dbStatus : requestedStatus,
+    automation_id: restoredAutomationId,
     Remarks: schedule.remarks || row.Remarks || '',
-    __dbFinalState: terminalStatus || row.__dbFinalState,
+    __dbFinalState: terminalStatus || dbStatus === LEAD_STATUS.DEMO_SCHEDULED || row.__dbFinalState,
+    __automationIdRestoredFromDb: !!schedule.automationId && schedule.automationId !== row.automation_id,
     __schedulerStatus: dbStatus === 'Failed' ? 'Failed' : row.__schedulerStatus
   };
 }
