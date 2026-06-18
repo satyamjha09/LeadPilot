@@ -25,18 +25,6 @@ export default function ExcelUpload({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const maxFileSizeBytes = 10 * 1024 * 1024;
 
-  const convertToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const base64str = reader.result as string;
-        resolve(base64str.split(',')[1]);
-      };
-      reader.onerror = (error) => reject(error);
-    });
-  };
-
   const handleExcelFile = async (file: File) => {
     const isExcel =
       file.name.endsWith('.xlsx') ||
@@ -59,11 +47,12 @@ export default function ExcelUpload({
     setUploadedFileName(file.name);
 
     try {
-      const base64Data = await convertToBase64(file);
+      const formData = new FormData();
+      formData.append('file', file);
+
       const response = await fetch('/api/preview', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileData: base64Data })
+        body: formData
       });
 
       if (!response.ok) {

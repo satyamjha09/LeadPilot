@@ -448,7 +448,7 @@ function formatLogType(type: string) {
   if (type === 'DEMO_RESCHEDULED') return 'Reschedule email';
   if (type === 'DEMO_DONE') return 'Thank-you email';
   if (type === 'DEMO_DONE_THANK_YOU') return 'Thank-you email';
-  if (type === 'NO_RESPONSE') return 'No Response email';
+  if (type === 'NO_RESPONSE') return 'Not Attended email';
   return type.replace(/_/g, ' ').toLowerCase();
 }
 

@@ -47,13 +47,13 @@ export function extractSheetInfo(sheetUrl: string) {
   return { spreadsheetId, gid };
 }
 
-export function getSheetsClient() {
-  const oauth2Client = getOAuthClient();
+export async function getSheetsClient() {
+  const oauth2Client = await getOAuthClient();
   return google.sheets({ version: 'v4', auth: oauth2Client });
 }
 
 export async function getSheetTitleByGid(spreadsheetId: string, gid?: string) {
-  const sheets = getSheetsClient();
+  const sheets = await getSheetsClient();
   const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
   const sheetTabs = spreadsheet.data.sheets || [];
 
@@ -78,7 +78,7 @@ export async function getSheetTitleByGid(spreadsheetId: string, gid?: string) {
 }
 
 export async function readSheetRows(spreadsheetId: string, sheetName: string) {
-  const sheets = getSheetsClient();
+  const sheets = await getSheetsClient();
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `${quoteSheetName(sheetName)}!A:Z`
@@ -159,7 +159,7 @@ export async function readSheetRows(spreadsheetId: string, sheetName: string) {
 }
 
 export async function ensureRequiredColumns(spreadsheetId: string, sheetName: string, headers: string[]) {
-  const sheets = getSheetsClient();
+  const sheets = await getSheetsClient();
   const updatedHeaders = [...headers];
   let changed = false;
 
@@ -220,7 +220,7 @@ export async function updateGoogleSheetRowsResilient(
 ): Promise<GoogleSheetRowUpdateResult[]> {
   if (!updates.length) return [];
 
-  const sheets = getSheetsClient();
+  const sheets = await getSheetsClient();
   const columnIndexMap = buildColumnIndexMap(headers);
   const validUpdates = updates.filter((update) => update.rowNumber >= 2);
   const results: GoogleSheetRowUpdateResult[] = [];

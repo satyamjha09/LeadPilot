@@ -5,7 +5,7 @@ import { LEAD_STATUS, LEAD_STATUS_BADGE_CLASS, LeadStatusLabel } from '@/src/lib
 const STATUS_LABELS: Record<string, string> = {
   [LEAD_STATUS.DEMO_SCHEDULED]: 'Scheduled',
   [LEAD_STATUS.DEMO_DONE]: 'Demo Done',
-  [LEAD_STATUS.NO_RESPONSE]: 'No Response',
+  [LEAD_STATUS.NO_RESPONSE]: 'Not Attended',
   [LEAD_STATUS.RESCHEDULE]: 'Reschedule',
   [LEAD_STATUS.FOLLOW_UP]: 'Follow Up',
   [LEAD_STATUS.TO_BE_CALLED]: 'To Be Called',

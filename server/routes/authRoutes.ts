@@ -11,12 +11,11 @@ export function registerAuthRoutes(app: Express) {
     }
   });
 
-  app.post('/api/auth/clear', (req, res) => {
+  app.post('/api/auth/clear', async (req, res) => {
     try {
-      clearCredentials();
-      return getAuthStatus().then((status) => {
-        return res.json({ success: true, message: 'Google authentication cleared.', status });
-      });
+      await clearCredentials();
+      const status = await getAuthStatus();
+      return res.json({ success: true, message: 'Google authentication cleared.', status });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }

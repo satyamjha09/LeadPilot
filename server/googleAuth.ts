@@ -2,6 +2,7 @@ import { google } from 'googleapis';
 import fs from 'fs';
 import path from 'path';
 import { ExcelRow } from '../src/types';
+import { prisma } from './db';
 import {
   buildMeetingInviteEmail,
   buildNoResponseEmail,
@@ -26,6 +27,71 @@ const GOOGLE_OAUTH_SCOPES = [
 const dataDir = path.dirname(TOKENS_PATH);
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
+}
+
+type StoredGoogleTokens = {
+  access_token?: string | null;
+  refresh_token?: string | null;
+  expiry_date?: number | null;
+};
+
+function getGoogleAuthEmail() {
+  return (
+    process.env.GOOGLE_AUTH_EMAIL ||
+    process.env.GMAIL_FROM_EMAIL ||
+    'demo.tallykonnect@gmail.com'
+  ).trim().toLowerCase();
+}
+
+function readLegacySavedTokens(): StoredGoogleTokens | null {
+  if (!fs.existsSync(TOKENS_PATH)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf-8'));
+  } catch (e) {
+    console.error('Failed to parse saved Google tokens:', e);
+    return null;
+  }
+}
+
+async function saveTokens(tokens: StoredGoogleTokens) {
+  const email = getGoogleAuthEmail();
+  const existing = await prisma.googleAuth.findUnique({ where: { email } });
+  const refreshToken = tokens.refresh_token || existing?.refreshToken || null;
+
+  await prisma.googleAuth.upsert({
+    where: { email },
+    update: {
+      accessToken: tokens.access_token || existing?.accessToken || null,
+      refreshToken,
+      expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : existing?.expiryDate || null
+    },
+    create: {
+      email,
+      accessToken: tokens.access_token || null,
+      refreshToken,
+      expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : null
+    }
+  });
+}
+
+async function readSavedTokens(): Promise<StoredGoogleTokens | null> {
+  const email = getGoogleAuthEmail();
+  const record = await prisma.googleAuth.findUnique({ where: { email } });
+  if (record) {
+    return {
+      access_token: record.accessToken,
+      refresh_token: record.refreshToken,
+      expiry_date: record.expiryDate?.getTime() || null
+    };
+  }
+
+  const legacyTokens = readLegacySavedTokens();
+  if (legacyTokens?.refresh_token || legacyTokens?.access_token) {
+    await saveTokens(legacyTokens);
+    return legacyTokens;
+  }
+
+  return null;
 }
 
 // Get credentials from env or fallback configuration
@@ -81,7 +147,7 @@ function setEnvTokenSuppressed(suppressed: boolean) {
   }
 }
 
-export function getOAuthClient() {
+export async function getOAuthClient() {
   const { clientId, clientSecret, redirectUri, envRefreshToken } = getCredentials();
   
   const oauth2Client = new google.auth.OAuth2(
@@ -90,16 +156,7 @@ export function getOAuthClient() {
     redirectUri
   );
 
-  // Check if we have token saved in tokens file
-  let savedTokens: any = null;
-  if (fs.existsSync(TOKENS_PATH)) {
-    try {
-      const data = fs.readFileSync(TOKENS_PATH, 'utf-8');
-      savedTokens = JSON.parse(data);
-    } catch (e) {
-      console.error('Failed to parse saved tokens:', e);
-    }
-  }
+  const savedTokens = await readSavedTokens();
 
   if (savedTokens && savedTokens.refresh_token) {
     oauth2Client.setCredentials({
@@ -114,22 +171,19 @@ export function getOAuthClient() {
   }
 
   // Handle token refreshing events to automatically persist them
-  oauth2Client.on('tokens', (tokens) => {
+  oauth2Client.on('tokens', async (tokens) => {
     try {
-      let existing: any = {};
-      if (fs.existsSync(TOKENS_PATH)) {
-        existing = JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf-8'));
-      }
+      const existing = await readSavedTokens();
       const updated = {
         ...existing,
         ...tokens,
         // Make sure refresh_token is kept if the refresh event doesn't supply a new one
-        refresh_token: tokens.refresh_token || existing.refresh_token || envRefreshToken
+        refresh_token: tokens.refresh_token || existing?.refresh_token || envRefreshToken
       };
-      fs.writeFileSync(TOKENS_PATH, JSON.stringify(updated, null, 2), 'utf-8');
-      console.log('Successfully refreshed and saved Google Auth tokens.');
+      await saveTokens(updated);
+      console.log('Successfully refreshed and saved Google Auth tokens to database.');
     } catch (err) {
-      console.error('Failed to write refreshed tokens:', err);
+      console.error('Failed to persist refreshed Google Auth tokens:', err);
     }
   });
 
@@ -308,7 +362,7 @@ async function withCalendarRetry<T>(action: () => Promise<T>, maxAttempts = 4): 
 }
 
 async function sendRawGmailMessage(raw: string) {
-  const oauth2Client = getOAuthClient();
+  const oauth2Client = await getOAuthClient();
   const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
   const response = await gmail.users.messages.send({
@@ -345,7 +399,7 @@ export async function sendGmailTemplate(
 
 export async function scheduleMeeting(row: ExcelRow) {
   try {
-    const oauth2Client = getOAuthClient();
+    const oauth2Client = await getOAuthClient();
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     
     const dateVal = row['Date of Demo'];
@@ -410,7 +464,7 @@ export async function updateCalendarMeeting(row: ExcelRow, calendarEventId: stri
   }
 
   try {
-    const oauth2Client = getOAuthClient();
+    const oauth2Client = await getOAuthClient();
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
     const startTime = parseExcelDateTime(row['Date of Demo'], row['Time of Demo']);
@@ -477,7 +531,7 @@ export async function sendNoResponseEmail(row: ExcelRow) {
 
     return await sendRawGmailMessage(encodedMessage);
   } catch (err: any) {
-    throw new Error(friendlyGoogleError(err, 'Gmail No Response email'));
+    throw new Error(friendlyGoogleError(err, 'Gmail Not Attended email'));
   }
 }
 
@@ -553,14 +607,8 @@ export async function getAuthStatus() {
   let authenticated = false;
   let isUsingEnvToken = false;
 
-  if (fs.existsSync(TOKENS_PATH)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf-8'));
-      authenticated = !!data.refresh_token;
-    } catch (e) {
-      console.error('Error verifying auth status from tokens file:', e);
-    }
-  }
+  const savedTokens = await readSavedTokens();
+  authenticated = !!savedTokens?.refresh_token;
 
   if (!authenticated && envRefreshToken && !envTokenSuppressed) {
     authenticated = true;
@@ -595,29 +643,24 @@ export async function exchangeCodeAndSave(code: string) {
   
   const { tokens } = await oauth2Client.getToken(code);
   
-  let existing: any = {};
-  if (fs.existsSync(TOKENS_PATH)) {
-    try {
-      existing = JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf-8'));
-    } catch (e) {}
-  }
-
-  const updated = {
+  const existing = await readSavedTokens();
+  const updated: StoredGoogleTokens = {
     ...existing,
     ...tokens
   };
 
-  fs.writeFileSync(TOKENS_PATH, JSON.stringify(updated, null, 2), 'utf-8');
+  await saveTokens(updated);
   setEnvTokenSuppressed(false);
-  console.log('Saved tokens directly from exchangeCodeAndSave.');
+  console.log('Saved Google Auth tokens directly from exchangeCodeAndSave.');
   return updated;
 }
 
-export function clearCredentials() {
+export async function clearCredentials() {
+  await prisma.googleAuth.deleteMany({ where: { email: getGoogleAuthEmail() } });
   if (fs.existsSync(TOKENS_PATH)) {
     fs.unlinkSync(TOKENS_PATH);
-    console.log('Google Auth tokens cleared.');
   }
+  console.log('Google Auth tokens cleared.');
   setEnvTokenSuppressed(true);
   console.log('Environment refresh token disabled for this local session.');
 }

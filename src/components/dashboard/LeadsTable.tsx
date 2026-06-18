@@ -299,12 +299,12 @@ export default function LeadsTable({
                                     <CheckCircle2 className="h-4 w-4" />
                                   </Button>
                                 </IconTooltip>
-                                <IconTooltip label={meetingStarted ? 'Mark No Response' : 'No Response unlocks after start'}>
+                                <IconTooltip label={meetingStarted ? 'Mark Not Attended' : 'Not Attended unlocks after start'}>
                                   <Button
                                     type="button"
                                     variant="ghost"
                                     size="icon-sm"
-                                    aria-label="Mark No Response"
+                                    aria-label="Mark Not Attended"
                                     disabled={isProcessing || !canMarkDemoOutcome(row)}
                                     onClick={() => setConfirmAction({ row, status: LEAD_STATUS.NO_RESPONSE })}
                                   >
@@ -399,7 +399,7 @@ export default function LeadsTable({
             <DialogTitle>
               {confirmAction?.status === LEAD_STATUS.DEMO_DONE
                 ? 'Mark this demo as completed?'
-                : 'Mark this customer as No Response?'}
+                : 'Mark this customer as Not Attended?'}
             </DialogTitle>
             <DialogDescription>
               {confirmAction?.status === LEAD_STATUS.DEMO_DONE

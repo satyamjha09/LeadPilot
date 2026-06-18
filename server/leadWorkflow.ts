@@ -1085,7 +1085,7 @@ export async function sendNoResponseForRow(
   if (emailResult.skipped) {
     const message =
       emailResult.reason === 'ALREADY_SENT'
-        ? 'No Response email already sent'
+        ? 'Not Attended email already sent'
         : emailResult.reason === 'ALREADY_PROCESSING'
           ? 'Email is being processed'
           : emailResult.reason === 'UNKNOWN_RESULT'
@@ -1126,7 +1126,7 @@ export async function sendNoResponseForRow(
     ...row,
     lead_status: LEAD_STATUS.NO_RESPONSE,
     'Meeting Details': '',
-    Remarks: 'No Response email sent',
+    Remarks: 'Not Attended email sent',
     __emailDeliveryId: emailResult.deliveryId
   };
 
@@ -1134,7 +1134,7 @@ export async function sendNoResponseForRow(
     await syncSheetRow(row, context, {
       'Meeting Details': '',
       lead_status: LEAD_STATUS.NO_RESPONSE,
-      Remarks: 'No Response email sent'
+      Remarks: 'Not Attended email sent'
     }, true);
   }
 
@@ -1142,12 +1142,12 @@ export async function sendNoResponseForRow(
     updatedRow,
     {
       status: LEAD_STATUS.NO_RESPONSE,
-      remarks: 'No Response email sent'
+      remarks: 'Not Attended email sent'
     },
     { sourceType: context.sourceType, sourceId: context.spreadsheetId }
   );
 
-  return { row: updatedRow, skipped: false, message: 'No Response email sent' };
+  return { row: updatedRow, skipped: false, message: 'Not Attended email sent' };
 }
 
 export async function rescheduleDemoForRow(

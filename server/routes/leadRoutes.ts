@@ -1,4 +1,5 @@
 import type { Express } from 'express';
+import multer from 'multer';
 import xlsx from 'xlsx';
 import { ExcelRow } from '../../src/types';
 import {
@@ -46,6 +47,11 @@ type SheetSyncRunner = (
 ) => Promise<any>;
 
 export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetSyncRunner }) {
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }
+  });
+
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
@@ -60,15 +66,13 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     }
   });
 
-  app.post('/api/preview', (req, res) => {
+  app.post('/api/preview', upload.single('file'), (req, res) => {
     try {
-      const { fileData } = req.body;
-      if (!fileData) {
-        return res.status(400).json({ error: 'No Excel file data supplied.' });
+      if (!req.file) {
+        return res.status(400).json({ error: 'No Excel file supplied.' });
       }
 
-      const buffer = Buffer.from(fileData, 'base64');
-      const workbook = xlsx.read(buffer, { type: 'buffer', cellDates: true });
+      const workbook = xlsx.read(req.file.buffer, { type: 'buffer', cellDates: true });
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
       const rows = xlsx.utils.sheet_to_json<any>(sheet);
@@ -327,7 +331,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         return res.status(400).json({ error: 'Use lead processing endpoint for Reschedule' });
       }
       if (normalized === LEAD_STATUS.NO_RESPONSE) {
-        return res.status(400).json({ error: 'Use lead processing endpoint for No Response' });
+        return res.status(400).json({ error: 'Use lead processing endpoint for Not Attended' });
       }
       if (!isValidLeadStatus(status)) {
         return res.status(400).json({ error: 'Invalid lead_status value.' });

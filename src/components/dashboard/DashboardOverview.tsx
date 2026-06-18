@@ -57,7 +57,7 @@ export default function DashboardOverview({
     { label: 'Ready to Schedule', value: stats.readyToSchedule, color: '#3b82f6' },
     { label: 'Demo Scheduled', value: stats.demoScheduled, color: '#22c7d8' },
     { label: 'Demo Done', value: stats.demoDone, color: '#22c55e' },
-    { label: 'No Response', value: stats.noResponse, color: '#fb923c' },
+    { label: 'Not Attended', value: stats.noResponse, color: '#fb923c' },
     { label: 'Failed / Needs Fix', value: stats.failed, color: '#ef4444' },
     { label: 'Follow Up', value: stats.followUp, color: '#38bdf8' }
   ];
@@ -185,7 +185,7 @@ function Pipeline({ stats, total }: { stats: DashboardStats; total: number }) {
     { label: 'Ready to Schedule', value: stats.readyToSchedule, icon: Send, color: 'blue' },
     { label: 'Demo Scheduled', value: stats.demoScheduled, icon: CalendarCheck2, color: 'cyan' },
     { label: 'Demo Done', value: stats.demoDone, icon: CheckCircle2, color: 'green' },
-    { label: 'No Response', value: stats.noResponse, icon: Mail, color: 'orange' },
+    { label: 'Not Attended', value: stats.noResponse, icon: Mail, color: 'orange' },
     { label: 'Failed / Needs Fix', value: stats.failed, icon: AlertTriangle, color: 'red' }
   ];
 

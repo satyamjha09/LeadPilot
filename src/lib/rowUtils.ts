@@ -130,7 +130,7 @@ export const isStatusOnly = (row: ExcelRow) =>
   ].includes(normalizeStatus(row.lead_status));
 
 export const canMarkNoResponse = (row: ExcelRow) =>
-  normalizeStatus(row.lead_status) === 'no response' &&
+  getLeadStatus(row) === LEAD_STATUS.NO_RESPONSE &&
   hasMeetLink(row['Meeting Details']) &&
   hasMeetingStarted(row);
 

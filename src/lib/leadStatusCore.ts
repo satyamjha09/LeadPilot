@@ -3,7 +3,7 @@ export const LEAD_STATUS = {
   RESCHEDULE: 'Reschedule',
   DEMO_DONE: 'Demo Done',
   FOLLOW_UP: 'Follow Up',
-  NO_RESPONSE: 'No Response',
+  NO_RESPONSE: 'Not Attended',
   TO_BE_CALLED: 'To be called',
   NOT_REQUIRED: 'not required',
   REPEATED: 'Repeated'
@@ -61,6 +61,9 @@ const STATUS_ALIASES: Record<string, LeadStatusLabel> = {
   followup: LEAD_STATUS.FOLLOW_UP,
   'no response': LEAD_STATUS.NO_RESPONSE,
   'no show': LEAD_STATUS.NO_RESPONSE,
+  'not attended': LEAD_STATUS.NO_RESPONSE,
+  'not attend': LEAD_STATUS.NO_RESPONSE,
+  unattended: LEAD_STATUS.NO_RESPONSE,
   'to be called': LEAD_STATUS.TO_BE_CALLED,
   'not required': LEAD_STATUS.NOT_REQUIRED,
   'notrequired': LEAD_STATUS.NOT_REQUIRED,

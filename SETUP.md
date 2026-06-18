@@ -28,7 +28,7 @@ npx prisma migrate dev
 npx prisma generate
 ```
 
-Do not use `DATABASE_URL="file:./dev.db"` on Render. Render services can lose local filesystem state on restart/redeploy unless you attach a persistent disk, and this app requires persistent demo state for Demo Done / No Response. Use Render Postgres and set `DATABASE_URL` to the internal Postgres URL without quotes.
+Do not use `DATABASE_URL="file:./dev.db"` on Render. Render services can lose local filesystem state on restart/redeploy unless you attach a persistent disk, and this app requires persistent demo state for Demo Done / Not Attended. Use Render Postgres and set `DATABASE_URL` to the internal Postgres URL without quotes.
 
 ### 🛰️ How to obtain Google credentials
 1. Create or open a project in the [Google Cloud Console](https://console.cloud.google.com/).
@@ -86,7 +86,7 @@ The spreadsheet parser accepts standard `.xlsx` or `.xls` spreadsheets containin
 * `Date of Demo` — Target booking date (e.g. `2026-06-10` or a standard serial date number)
 * `Time of Demo` — Target booking hour (e.g. `14:30` or `2:30 PM`)
 * `Meeting Details` — Leave blank or empty (Google Meet url will populate here)
-* `lead_status` — Lead workflow state (`Demo Scheduled`, `Demo Done`, `No Response`, `Follow Up`, `To be called`, `Not Required`, `Repeated`, `Reschedule`)
+* `lead_status` — Lead workflow state (`Demo Scheduled`, `Demo Done`, `Not Attended`, `Follow Up`, `To be called`, `Not Required`, `Repeated`, `Reschedule`)
 * `Remarks` — Automated diagnosis log entries
 
 ---

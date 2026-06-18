@@ -795,7 +795,7 @@ export default function App() {
                   <PreviewStat icon={<Mail className="h-4 w-4" />} label="Scheduled emails" value={processPreview.summary.demoScheduled} tone="blue" />
                   <PreviewStat icon={<Send className="h-4 w-4" />} label="Reschedule emails" value={processPreview.summary.reschedule} tone="cyan" />
                   <PreviewStat icon={<CheckCircle2 className="h-4 w-4" />} label="Thank-you emails" value={processPreview.summary.demoDone} tone="green" />
-                  <PreviewStat icon={<Users className="h-4 w-4" />} label="No Response emails" value={processPreview.summary.noResponse ?? 0} tone="amber" />
+                  <PreviewStat icon={<Users className="h-4 w-4" />} label="Not Attended emails" value={processPreview.summary.noResponse ?? 0} tone="amber" />
                   <PreviewStat label="Status-only updates" value={processPreview.summary.statusOnly} />
                   <PreviewStat label="Skipped" value={processPreview.summary.skipped} />
                   <PreviewStat label="Invalid" value={processPreview.summary.invalid} tone="red" />
@@ -812,7 +812,7 @@ export default function App() {
                 <div className="grid gap-3 lg:grid-cols-3">
                   <RecipientList title="Meeting email recipients" recipients={processPreview.meetingRecipients} />
                   <RecipientList title="Thank-you email recipients" recipients={processPreview.thankYouRecipients} />
-                  <RecipientList title="No Response email recipients" recipients={processPreview.noResponseRecipients ?? []} />
+                  <RecipientList title="Not Attended email recipients" recipients={processPreview.noResponseRecipients ?? []} />
                 </div>
               </div>
             )}

@@ -18,7 +18,7 @@ const items = [
   { key: 'demoScheduled', label: 'Demo Scheduled', description: 'Invite workflow done', icon: CalendarCheck2 },
   { key: 'reschedule', label: 'Reschedule', description: 'Needs active demo update', icon: RotateCw },
   { key: 'demoDone', label: 'Demo Done', description: 'Thank-you workflow done', icon: CheckCircle2 },
-  { key: 'noResponse', label: 'No Response', description: 'Closed missed demos', icon: UserX },
+  { key: 'noResponse', label: 'Not Attended', description: 'Closed missed demos', icon: UserX },
   { key: 'followUp', label: 'Follow Up', description: 'Waiting for action', icon: Phone },
   { key: 'failed', label: 'Needs Fix', description: 'Rows with clear errors', icon: XCircle }
 ] as const;

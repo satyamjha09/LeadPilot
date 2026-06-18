@@ -177,3 +177,13 @@ model SheetSyncJob {
   @@index([nextRetryAt])
   @@index([emailDeliveryId])
 }
+
+model GoogleAuth {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  accessToken  String?
+  refreshToken String?
+  expiryDate   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}

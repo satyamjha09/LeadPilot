@@ -144,7 +144,7 @@ export default function ProcessingPanel({
           <SummaryItem label="Meetings scheduled" value={lastSummary.demoScheduled ?? lastSummary.scheduled} />
           <SummaryItem label="Meetings rescheduled" value={lastSummary.reschedule ?? 0} />
           <SummaryItem label="Thank-you sent" value={lastSummary.demoDone ?? 0} />
-          <SummaryItem label="No Response" value={lastSummary.noResponse ?? 0} />
+          <SummaryItem label="Not Attended" value={lastSummary.noResponse ?? 0} />
           <SummaryItem label="Status-only" value={lastSummary.statusOnly ?? 0} />
           <SummaryItem label="Time conflicts" value={lastSummary.timeConflicts ?? 0} />
           <SummaryItem label="Invalid rows" value={lastSummary.failed} />
