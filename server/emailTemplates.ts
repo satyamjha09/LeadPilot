@@ -1,6 +1,7 @@
 type EmailMessage = {
   to: string;
   cc?: string;
+  fromName?: string;
   subject: string;
   text: string;
   html: string;
@@ -12,6 +13,7 @@ type DemoEmailInput = {
   date: string;
   time: string;
   meetLink: string;
+  brand?: EmailBrandKey | string;
 };
 
 type RescheduleEmailInput = DemoEmailInput & {
@@ -21,10 +23,12 @@ type RescheduleEmailInput = DemoEmailInput & {
 
 type ThankYouEmailInput = {
   fullName?: string;
+  brand?: EmailBrandKey | string;
 };
 
 type NoResponseEmailInput = {
   fullName?: string;
+  brand?: EmailBrandKey | string;
 };
 
 const BRAND_NAME = 'TallyKonnect';
@@ -35,14 +39,59 @@ const WEBSITE_URL = 'https://tallykonnect.com';
 const CONTACT_EMAIL = 'info@tallykonnect.com';
 const UNSUBSCRIBE_URL = 'https://tallykonnect.com/unsubscribe';
 
+export type EmailBrandKey = 'tallykonnect' | 'anywheretally';
+
+type EmailBrandConfig = {
+  key: EmailBrandKey;
+  name: string;
+  signatureName: string;
+  logoPath: string;
+  websiteUrl: string;
+  websiteLabel: string;
+  contactEmail: string;
+  unsubscribeUrl: string;
+};
+
+const EMAIL_BRANDS: Record<EmailBrandKey, EmailBrandConfig> = {
+  tallykonnect: {
+    key: 'tallykonnect',
+    name: 'TallyKonnect',
+    signatureName: 'Team TallyKonnect',
+    logoPath: '/images/logo.png',
+    websiteUrl: 'https://tallykonnect.com',
+    websiteLabel: 'tallykonnect.com',
+    contactEmail: 'info@tallykonnect.com',
+    unsubscribeUrl: 'https://tallykonnect.com/unsubscribe'
+  },
+  anywheretally: {
+    key: 'anywheretally',
+    name: 'AnyWhereTally',
+    signatureName: 'Team AnyWhereTally',
+    logoPath: '/images/anywheretally.png',
+    websiteUrl: 'https://anywheretally.com',
+    websiteLabel: 'anywheretally.com',
+    contactEmail: 'info@anywheretally.com',
+    unsubscribeUrl: 'https://anywheretally.com/unsubscribe'
+  }
+};
+
+export function normalizeEmailBrand(value: unknown): EmailBrandKey {
+  const key = String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+  return key === 'anywheretally' || key === 'awt' ? 'anywheretally' : 'tallykonnect';
+}
+
+function getEmailBrand(value: unknown): EmailBrandConfig {
+  return EMAIL_BRANDS[normalizeEmailBrand(value)];
+}
+
 function safeHeader(value: string) {
   return String(value || '').replace(/[\r\n]+/g, ' ').trim();
 }
 
-function senderHeader() {
+function senderHeader(fromName?: string) {
   const fromEmail = safeHeader(process.env.GMAIL_FROM_EMAIL || 'demo.tallykonnect@gmail.com');
-  const fromName = safeHeader(process.env.GMAIL_FROM_NAME || BRAND_NAME);
-  return `${fromName} <${fromEmail}>`;
+  const displayName = safeHeader(fromName || process.env.GMAIL_FROM_NAME || BRAND_NAME);
+  return `${displayName} <${fromEmail}>`;
 }
 
 function escapeHtml(value: unknown) {
@@ -61,6 +110,34 @@ function publicAssetUrl(pathname: string) {
     (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : '')
   ).replace(/\/+$/, '');
   return publicBaseUrl ? `${publicBaseUrl}${pathname}` : pathname;
+}
+
+function brandLogoUrl(brand: EmailBrandConfig) {
+  return publicAssetUrl(brand.logoPath);
+}
+
+function applyEmailBrand(content: string, brand: EmailBrandConfig) {
+  if (brand.key === 'tallykonnect') return content;
+
+  const defaultBrand = EMAIL_BRANDS.tallykonnect;
+  const replacements: Array<[string, string]> = [
+    [escapeHtml(publicAssetUrl(defaultBrand.logoPath)), escapeHtml(brandLogoUrl(brand))],
+    [publicAssetUrl(defaultBrand.logoPath), brandLogoUrl(brand)],
+    ['Team TallyKonnect', brand.signatureName],
+    ['TallyKonnect Team', brand.signatureName],
+    ['TallyKonnect%2C', `${encodeURIComponent(brand.name)}%2C`],
+    ['TallyKonnect%20solutions', `${encodeURIComponent(brand.name)}%20solutions`],
+    ['TallyKonnect', brand.name],
+    ['info@tallykonnect.com', brand.contactEmail],
+    ['https://tallykonnect.com/unsubscribe', brand.unsubscribeUrl],
+    ['https://tallykonnect.com', brand.websiteUrl],
+    ['tallykonnect.com', brand.websiteLabel]
+  ];
+
+  return replacements.reduce(
+    (next, [from, to]) => next.split(from).join(to),
+    content
+  );
 }
 
 function emailGreeting(fullName?: string) {
@@ -1013,11 +1090,12 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
 }
 
 export function buildMeetingInviteEmail(input: DemoEmailInput) {
+  const brand = getEmailBrand(input.brand);
   const greeting = emailGreeting(input.fullName);
   const text = [
     greeting,
     '',
-    'Your Smart TDS demo with TallyKonnect has been scheduled.',
+    `Your Smart TDS demo with ${brand.name} has been scheduled.`,
     '',
     'We will show you how Smart TDS helps make TDS work simpler by reducing manual calculation, tracking deductions, and keeping your process ready for returns and compliance.',
     '',
@@ -1027,15 +1105,16 @@ export function buildMeetingInviteEmail(input: DemoEmailInput) {
     '',
     'Please use the link above to join at the scheduled time.',
     '',
-    'Unsubscribe: https://tallykonnect.com/unsubscribe',
+    `Unsubscribe: ${brand.unsubscribeUrl}`,
     '',
     `Regards,`,
-    SIGNATURE_NAME
+    brand.signatureName
   ].join('\r\n');
 
-  const html = buildTallyKonnectScheduledHtml(input);
+  const html = applyEmailBrand(buildTallyKonnectScheduledHtml(input), brand);
 
   return {
+    fromName: brand.name,
     subject: 'Smart TDS Demo Scheduled',
     text,
     html
@@ -1043,11 +1122,12 @@ export function buildMeetingInviteEmail(input: DemoEmailInput) {
 }
 
 export function buildRescheduleEmail(input: RescheduleEmailInput) {
+  const brand = getEmailBrand(input.brand);
   const greeting = emailGreeting(input.fullName);
   const text = [
     greeting,
     '',
-    'Your Smart TDS demo with TallyKonnect has been rescheduled.',
+    `Your Smart TDS demo with ${brand.name} has been rescheduled.`,
     '',
     `Previous Date: ${input.oldDate || 'Previous date'}`,
     `Previous Time: ${input.oldTime || 'Previous time'}`,
@@ -1058,15 +1138,16 @@ export function buildRescheduleEmail(input: RescheduleEmailInput) {
     '',
     'Please use the updated link above to join at the new scheduled time.',
     '',
-    'Unsubscribe: https://tallykonnect.com/unsubscribe',
+    `Unsubscribe: ${brand.unsubscribeUrl}`,
     '',
     `Regards,`,
-    SIGNATURE_NAME
+    brand.signatureName
   ].join('\r\n');
 
-  const html = buildTallyKonnectRescheduleHtml(input);
+  const html = applyEmailBrand(buildTallyKonnectRescheduleHtml(input), brand);
 
   return {
+    fromName: brand.name,
     subject: 'Smart TDS Demo Rescheduled',
     text,
     html
@@ -1074,6 +1155,7 @@ export function buildRescheduleEmail(input: RescheduleEmailInput) {
 }
 
 export function buildReminderEmail(input: DemoEmailInput) {
+  const brand = getEmailBrand(input.brand);
   const greeting = emailGreeting(input.fullName);
   const text = [
     greeting,
@@ -1087,10 +1169,10 @@ export function buildReminderEmail(input: DemoEmailInput) {
     'Please use the link above to join.',
     '',
     `Regards,`,
-    SIGNATURE_NAME
+    brand.signatureName
   ].join('\r\n');
 
-  const html = emailShell({
+  const html = applyEmailBrand(emailShell({
     eyebrow: 'Meeting reminder',
     title: 'Your demo starts soon',
     intro: `${htmlGreeting(input.fullName)}<br>This is a quick reminder that your demo meeting is starting soon.`,
@@ -1102,9 +1184,10 @@ export function buildReminderEmail(input: DemoEmailInput) {
     ctaLabel: 'Join Google Meet',
     ctaUrl: input.meetLink,
     closing: 'Please join when you are ready. We will meet you there.'
-  });
+  }), brand);
 
   return {
+    fromName: brand.name,
     subject: 'Reminder: Your Demo Meeting is starting soon',
     text,
     html
@@ -1112,6 +1195,7 @@ export function buildReminderEmail(input: DemoEmailInput) {
 }
 
 export function buildThankYouEmail(input: ThankYouEmailInput) {
+  const brand = getEmailBrand(input.brand);
   const greeting = emailGreeting(input.fullName);
   const text = [
     greeting,
@@ -1120,19 +1204,20 @@ export function buildThankYouEmail(input: ThankYouEmailInput) {
     '',
     'We hope the session gave you a clear view of how Smart TDS simplifies TDS calculations, auto-creates vouchers, and helps keep your returns ready inside Tally.',
     '',
-    'You can also explore TallyKonnect automation solutions such as Connected Banking, Smart Purchase, Smart Bank Recon, Smart Reports, AnyWhereTally, and MessageAPI.',
+    `You can also explore ${brand.name} automation solutions such as Connected Banking, Smart Purchase, Smart Bank Recon, Smart Reports, AnyWhereTally, and MessageAPI.`,
     '',
-    'Website: https://tallykonnect.com',
-    'Contact: info@tallykonnect.com',
-    'Unsubscribe: https://tallykonnect.com/unsubscribe',
+    `Website: ${brand.websiteUrl}`,
+    `Contact: ${brand.contactEmail}`,
+    `Unsubscribe: ${brand.unsubscribeUrl}`,
     '',
     `Regards,`,
-    'TallyKonnect Team'
+    brand.signatureName
   ].join('\r\n');
 
-  const html = buildTallyKonnectThankYouHtml(input);
+  const html = applyEmailBrand(buildTallyKonnectThankYouHtml(input), brand);
 
   return {
+    fromName: brand.name,
     subject: 'Thank you for attending the Smart TDS demo',
     text,
     html
@@ -1140,9 +1225,10 @@ export function buildThankYouEmail(input: ThankYouEmailInput) {
 }
 
 export function buildNoResponseEmail(input: NoResponseEmailInput) {
+  const brand = getEmailBrand(input.brand);
   const greeting = emailGreeting(input.fullName);
   const customerName = escapeHtml(String(input.fullName || '').trim() || 'there');
-  const logoUrl = escapeHtml(publicAssetUrl('/images/logo.png'));
+  const logoUrl = escapeHtml(brandLogoUrl(brand));
   const currentYear = new Date().getFullYear();
   const subject = 'We missed you at the Smart TDS demo';
 
@@ -1153,15 +1239,15 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
     '',
     'No worries. Whenever you are ready, you can contact our team and we will help you arrange another demo at a time that works best for you.',
     '',
-    'Contact: info@tallykonnect.com',
-    'Website: https://tallykonnect.com',
-    'Unsubscribe: https://tallykonnect.com/unsubscribe',
+    `Contact: ${brand.contactEmail}`,
+    `Website: ${brand.websiteUrl}`,
+    `Unsubscribe: ${brand.unsubscribeUrl}`,
     '',
     'Regards,',
-    'Team TallyKonnect'
+    brand.signatureName
   ].join('\r\n');
 
-  const html = `<!doctype html>
+  const html = applyEmailBrand(`<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8">
@@ -1343,9 +1429,10 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
       </tr>
     </table>
   </body>
-</html>`;
+</html>`, brand);
 
   return {
+    fromName: brand.name,
     subject,
     text,
     html
@@ -1355,7 +1442,7 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
 export function buildRawEmail(message: EmailMessage) {
   const boundary = `tallykonnect_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const headers = [
-    `From: ${senderHeader()}`,
+    `From: ${senderHeader(message.fromName)}`,
     `To: ${safeHeader(message.to)}`,
     message.cc ? `Cc: ${safeHeader(message.cc)}` : '',
     `Subject: ${safeHeader(message.subject)}`,

@@ -53,6 +53,7 @@ async function processLeadJob(jobId: string) {
     spreadsheetId: input.spreadsheetId,
     sheetName: input.sheetName,
     headers,
+    emailBrand: input.emailBrand,
     onRowProcessed: async (row, rowSummary) => {
       progress.processed += 1;
       progress.success =

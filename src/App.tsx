@@ -28,11 +28,20 @@ import {
 import { LEAD_STATUS, LeadStatusLabel } from '@/src/lib/leadStatus';
 import { getLeadStatus } from '@/src/lib/rowUtils';
 import { ExcelRow, AuthStatus, ScheduleSummary, SheetSource } from '@/src/types';
+import { cn } from '@/lib/utils';
 
 const ROWS_STORAGE_KEY = 'excel-meet-scheduler.rows';
 const SELECTED_STORAGE_KEY = 'excel-meet-scheduler.selectedRowIds';
 const SOURCE_STORAGE_KEY = 'excel-meet-scheduler.source';
+const EMAIL_BRAND_STORAGE_KEY = 'excel-meet-scheduler.emailBrand';
 const AUTOMATION_STEPS = ['Validating lead', 'Creating calendar', 'Sending email', 'Updating sheet', 'Done'];
+
+type EmailBrandKey = 'tallykonnect' | 'anywheretally';
+
+const EMAIL_BRANDS: Array<{ key: EmailBrandKey; label: string; description: string }> = [
+  { key: 'tallykonnect', label: 'TallyKonnect', description: 'Use TallyKonnect logo, website, and footer.' },
+  { key: 'anywheretally', label: 'AnyWhereTally', description: 'Use AnyWhereTally logo, website, and footer.' }
+];
 
 type ProcessPreview = {
   summary: {
@@ -126,11 +135,19 @@ const loadStoredSource = (): SheetSource => {
   }
 };
 
+const loadStoredEmailBrand = (): EmailBrandKey => {
+  if (typeof window === 'undefined') return 'tallykonnect';
+  return window.localStorage.getItem(EMAIL_BRAND_STORAGE_KEY) === 'anywheretally'
+    ? 'anywheretally'
+    : 'tallykonnect';
+};
+
 export default function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [rows, setRows] = useState<ExcelRow[]>(loadStoredRows);
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(loadStoredSelectedIds);
   const [source, setSource] = useState<SheetSource>(loadStoredSource);
+  const [selectedEmailBrand, setSelectedEmailBrand] = useState<EmailBrandKey>(loadStoredEmailBrand);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<DashboardView>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
@@ -187,6 +204,11 @@ export default function App() {
           headers: source.headers
         }
       : { sourceType: 'excel' as const };
+
+  const processRequestMeta = () => ({
+    ...sheetRequestMeta(),
+    emailBrand: selectedEmailBrand
+  });
 
   const updateRowInState = (updatedRow: ExcelRow) => {
     setRows((current) => current.map((row) => (row.id === updatedRow.id ? updatedRow : row)));
@@ -277,6 +299,12 @@ export default function App() {
       window.localStorage.setItem(SOURCE_STORAGE_KEY, JSON.stringify(source));
     } catch {}
   }, [source]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(EMAIL_BRAND_STORAGE_KEY, selectedEmailBrand);
+    } catch {}
+  }, [selectedEmailBrand]);
 
   useEffect(() => {
     if (didReconcileStoredRows.current || rows.length === 0) return;
@@ -382,7 +410,7 @@ export default function App() {
       const res = await fetch('/api/process-leads/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: targetRows, ...sheetRequestMeta() })
+        body: JSON.stringify({ rows: targetRows, ...processRequestMeta() })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -461,7 +489,7 @@ export default function App() {
     const res = await fetch('/api/process-leads/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rows: processTargetRows, ...sheetRequestMeta() })
+      body: JSON.stringify({ rows: processTargetRows, ...processRequestMeta() })
     });
     const data: ProcessLeadJobResponse = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to queue lead processing.');
@@ -554,7 +582,7 @@ export default function App() {
       const res = await fetch('/api/process-leads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: processTargetRows, ...sheetRequestMeta() })
+        body: JSON.stringify({ rows: processTargetRows, ...processRequestMeta() })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Lead processing failed.');
@@ -934,6 +962,36 @@ export default function App() {
                         <p className="text-xs">New demo emails</p>
                         <p className="mt-1 text-2xl font-semibold">{processPreview.summary.demoScheduled}</p>
                       </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border bg-card p-4">
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Send emails as</p>
+                      <p className="mt-1 text-sm text-muted-foreground">Choose the company branding for all emails in this batch.</p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {EMAIL_BRANDS.map((brand) => {
+                        const selected = selectedEmailBrand === brand.key;
+                        return (
+                          <button
+                            key={brand.key}
+                            type="button"
+                            className={cn(
+                              'rounded-lg border p-3 text-left transition-colors',
+                              selected
+                                ? 'border-primary bg-primary/10 text-foreground'
+                                : 'border-border bg-background hover:bg-muted/60'
+                            )}
+                            onClick={() => setSelectedEmailBrand(brand.key)}
+                          >
+                            <span className="block text-sm font-semibold">{brand.label}</span>
+                            <span className="mt-1 block text-xs text-muted-foreground">{brand.description}</span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>

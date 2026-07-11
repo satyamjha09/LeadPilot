@@ -132,14 +132,23 @@ Export preserves original Excel columns and only updates:
 
 Rows that already contain a `meet.google.com` link in **Meeting Details** are skipped. Google Sheet imports update these same three columns directly in the sheet.
 
-## Future Redis + BullMQ upgrade
+## Email brand selection
 
-**Current mode:** Selected rows are processed inline inside `POST /api/schedule` or `POST /api/sheets/schedule`, with a 1-second pause between rows.
+Before final processing, the preview dialog lets you choose the email brand:
 
-**Future mode (planned):**
+- `TallyKonnect`
+- `AnyWhereTally`
 
-1. API creates a batch and enqueues one BullMQ job per row.
-2. A worker processes Calendar, Gmail, and Google Sheet updates with retries and rate limiting.
-3. The frontend polls a status endpoint for progress.
+The scheduling workflow, duplicate prevention, Google Meet creation, and Google Sheet updates stay the same. The selected brand changes the email logo, company name, website, contact email, footer, and sender display name.
 
-Stub files live under `server/jobs/`. Redis is **not** required today. To experiment later, install `bullmq` and `ioredis`, set `ENABLE_SCHEDULER_QUEUE=true`, and implement the TODOs in `schedulerQueue.ts` and `schedulerWorker.ts`.
+## Redis + BullMQ background processing
+
+Inline processing remains available through `POST /api/process-leads`.
+
+When `PROCESS_QUEUE_ENABLED=true`, the frontend uses the background queue:
+
+1. `POST /api/process-leads/jobs` stores a durable job in PostgreSQL and enqueues it in BullMQ.
+2. `npm run worker:process-leads` processes the job in the background.
+3. `GET /api/process-leads/jobs/:jobId` returns status, progress, rows, and summary for frontend polling.
+
+Redis runs the queue. PostgreSQL remains the durable source for job progress/results and duplicate prevention.

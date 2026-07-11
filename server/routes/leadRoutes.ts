@@ -202,12 +202,13 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/send-thank-you', async (req, res) => {
     try {
-      const { row, sourceType, spreadsheetId, sheetName, headers } = req.body as {
+      const { row, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
         row?: ExcelRow;
         sourceType?: 'excel' | 'google-sheet';
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
+        emailBrand?: any;
       };
       if (!row) return res.status(400).json({ error: 'Row is required.' });
 
@@ -225,7 +226,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         sourceType: sourceType || 'excel',
         spreadsheetId,
         sheetName,
-        headers
+        headers,
+        emailBrand
       });
 
       return res.json({
@@ -242,12 +244,13 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/send-thank-you/batch', async (req, res) => {
     try {
-      const { rows, sourceType, spreadsheetId, sheetName, headers } = req.body as {
+      const { rows, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
         rows?: ExcelRow[];
         sourceType?: 'excel' | 'google-sheet';
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
+        emailBrand?: any;
       };
       if (!rows || !Array.isArray(rows)) {
         return res.status(400).json({ error: 'Valid rows list must be supplied.' });
@@ -257,7 +260,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         sourceType: (sourceType || 'excel') as 'excel' | 'google-sheet',
         spreadsheetId,
         sheetName,
-        headers
+        headers,
+        emailBrand
       };
 
       const results: Array<{
@@ -641,12 +645,13 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         return res.status(409).json({ error: 'Process queue is disabled.' });
       }
 
-      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders } = req.body as {
+      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
         rows?: ExcelRow[];
         sourceType?: 'excel' | 'google-sheet';
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
+        emailBrand?: any;
       };
 
       if (!rows || !Array.isArray(rows)) {
@@ -671,6 +676,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         spreadsheetId,
         sheetName,
         headers,
+        emailBrand,
         rows: dbRows
       });
       await enqueueProcessLeadJob(job.id);
@@ -702,12 +708,13 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/process-leads', async (req, res) => {
     try {
-      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders } = req.body as {
+      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
         rows?: ExcelRow[];
         sourceType?: 'excel' | 'google-sheet';
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
+        emailBrand?: any;
       };
 
       if (!rows || !Array.isArray(rows)) {
@@ -731,7 +738,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         sourceType: sourceType || 'excel',
         spreadsheetId,
         sheetName,
-        headers
+        headers,
+        emailBrand
       });
 
       return res.json({ ...result, headers });

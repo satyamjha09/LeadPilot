@@ -28,7 +28,13 @@ import {
   saveLeadStatusUpdate
 } from './scheduleDb';
 import { addScheduledReminder, invalidateScheduledReminder } from './reminders';
-import { buildMeetingInviteEmail, buildNoResponseEmail, buildRescheduleEmail, buildThankYouEmail } from './emailTemplates';
+import {
+  buildMeetingInviteEmail,
+  buildNoResponseEmail,
+  buildRescheduleEmail,
+  buildThankYouEmail,
+  type EmailBrandKey
+} from './emailTemplates';
 import {
   claimEmailDelivery,
   findEmailDeliveryByEventKey,
@@ -70,6 +76,7 @@ export type SheetContext = {
   spreadsheetId?: string;
   sheetName?: string;
   headers?: string[];
+  emailBrand?: EmailBrandKey;
   onRowProcessed?: (row: ExcelRow, summary: ProcessLeadsResult['summary']) => void | Promise<void>;
 };
 
@@ -1013,7 +1020,7 @@ export async function sendThankYouForRow(
   if (!isValidEmail(email)) throw new Error('Email is invalid.');
   await assertManualCloseAllowed(row);
 
-  const template = buildThankYouEmail({ fullName: row.full_name });
+  const template = buildThankYouEmail({ fullName: row.full_name, brand: context.emailBrand });
   const emailResult = await sendIdempotentEmail({
     row,
     context,
@@ -1023,7 +1030,7 @@ export async function sendThankYouForRow(
     subject: template.subject,
     text: template.text,
     html: template.html,
-    send: () => sendThankYouEmail(row)
+    send: () => sendThankYouEmail(row, context.emailBrand)
   });
 
   if (emailResult.skipped) {
@@ -1097,7 +1104,7 @@ export async function sendNoResponseForRow(
   if (!isValidEmail(email)) throw new Error('Email is invalid.');
   await assertManualCloseAllowed(row);
 
-  const template = buildNoResponseEmail({ fullName: row.full_name });
+  const template = buildNoResponseEmail({ fullName: row.full_name, brand: context.emailBrand });
   const emailResult = await sendIdempotentEmail({
     row,
     context,
@@ -1107,7 +1114,7 @@ export async function sendNoResponseForRow(
     subject: template.subject,
     text: template.text,
     html: template.html,
-    send: () => sendNoResponseEmail(row)
+    send: () => sendNoResponseEmail(row, context.emailBrand)
   });
 
   if (emailResult.skipped) {
@@ -1239,7 +1246,8 @@ export async function rescheduleDemoForRow(
     time: String(row['Time of Demo'] || ''),
     meetLink,
     oldDate,
-    oldTime
+    oldTime,
+    brand: context.emailBrand
   });
   let emailResult: Awaited<ReturnType<typeof sendIdempotentEmail>> | null = null;
   let emailError = '';
@@ -1257,7 +1265,7 @@ export async function rescheduleDemoForRow(
         sendGmailRescheduleInvite(updatedRow, meetLink, {
           date: oldDate,
           time: oldTime
-        })
+        }, context.emailBrand)
     });
   } catch (error) {
     emailError = error instanceof Error ? error.message : String(error);
@@ -1588,13 +1596,15 @@ export async function processScheduleRows(
             time: String(row['Time of Demo'] || ''),
             meetLink,
             oldDate: options?.previousMeetingDate || undefined,
-            oldTime: options?.previousMeetingTime || undefined
+            oldTime: options?.previousMeetingTime || undefined,
+            brand: sheetContext.emailBrand
           })
         : buildMeetingInviteEmail({
             fullName: row.full_name,
             date: String(row['Date of Demo'] || ''),
             time: String(row['Time of Demo'] || ''),
-            meetLink
+            meetLink,
+            brand: sheetContext.emailBrand
           });
       const emailResult = await sendIdempotentEmail({
         row,
@@ -1610,8 +1620,8 @@ export async function processScheduleRows(
             ? sendGmailRescheduleInvite(row, meetLink, {
                 date: options?.previousMeetingDate || undefined,
                 time: options?.previousMeetingTime || undefined
-              })
-            : sendGmailInvite(row, meetLink)
+              }, sheetContext.emailBrand)
+            : sendGmailInvite(row, meetLink, sheetContext.emailBrand)
       });
       const gmailMessageId = emailResult.messageId || '';
       const remarks = emailResult.sent

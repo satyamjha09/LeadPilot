@@ -192,6 +192,7 @@ model ProcessLeadJob {
   id             String   @id @default(cuid())
   status         String   @default("QUEUED")
   sourceType     String
+  emailBrand     String?
   spreadsheetId  String?
   sheetName      String?
   headersJson    String?

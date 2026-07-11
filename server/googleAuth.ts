@@ -9,7 +9,8 @@ import {
   buildRescheduleEmail,
   buildRawEmail,
   buildReminderEmail,
-  buildThankYouEmail
+  buildThankYouEmail,
+  type EmailBrandKey
 } from './emailTemplates';
 import { parseDateParts } from '../src/lib/dateFormat';
 
@@ -503,10 +504,11 @@ export async function updateCalendarMeeting(row: ExcelRow, calendarEventId: stri
   }
 }
 
-export async function sendThankYouEmail(row: ExcelRow) {
+export async function sendThankYouEmail(row: ExcelRow, brand?: EmailBrandKey) {
   try {
     const template = buildThankYouEmail({
-      fullName: row.full_name
+      fullName: row.full_name,
+      brand
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
@@ -519,10 +521,11 @@ export async function sendThankYouEmail(row: ExcelRow) {
   }
 }
 
-export async function sendNoResponseEmail(row: ExcelRow) {
+export async function sendNoResponseEmail(row: ExcelRow, brand?: EmailBrandKey) {
   try {
     const template = buildNoResponseEmail({
-      fullName: row.full_name
+      fullName: row.full_name,
+      brand
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
@@ -535,13 +538,14 @@ export async function sendNoResponseEmail(row: ExcelRow) {
   }
 }
 
-export async function sendGmailInvite(row: ExcelRow, meetLink: string) {
+export async function sendGmailInvite(row: ExcelRow, meetLink: string, brand?: EmailBrandKey) {
   try {
     const template = buildMeetingInviteEmail({
       fullName: row.full_name,
       date: String(row['Date of Demo'] || ''),
       time: String(row['Time of Demo'] || ''),
-      meetLink
+      meetLink,
+      brand
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
@@ -557,7 +561,8 @@ export async function sendGmailInvite(row: ExcelRow, meetLink: string) {
 export async function sendGmailRescheduleInvite(
   row: ExcelRow,
   meetLink: string,
-  previous?: { date?: string; time?: string }
+  previous?: { date?: string; time?: string },
+  brand?: EmailBrandKey
 ) {
   try {
     const template = buildRescheduleEmail({
@@ -566,7 +571,8 @@ export async function sendGmailRescheduleInvite(
       time: String(row['Time of Demo'] || ''),
       meetLink,
       oldDate: previous?.date,
-      oldTime: previous?.time
+      oldTime: previous?.time,
+      brand
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
@@ -579,13 +585,14 @@ export async function sendGmailRescheduleInvite(
   }
 }
 
-export async function sendGmailReminder(fullName: string, email: string, dateStr: string, timeStr: string, meetLink: string) {
+export async function sendGmailReminder(fullName: string, email: string, dateStr: string, timeStr: string, meetLink: string, brand?: EmailBrandKey) {
   try {
     const template = buildReminderEmail({
       fullName,
       date: dateStr,
       time: timeStr,
-      meetLink
+      meetLink,
+      brand
     });
     const encodedMessage = buildRawEmail({
       to: email,
