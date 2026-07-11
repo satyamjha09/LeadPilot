@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import Sidebar from '@/src/components/layout/Sidebar';
 import { DashboardView } from '@/src/lib/rowUtils';
-import { AuthStatus, SheetSource } from '@/src/types';
+import { AuthStatus, NotificationCounts, SheetSource } from '@/src/types';
 
 interface HeaderProps {
   authStatus: AuthStatus | null;
@@ -15,6 +15,7 @@ interface HeaderProps {
   isSyncing?: boolean;
   activeView: DashboardView;
   onNavigate: (view: DashboardView) => void;
+  notificationCounts: NotificationCounts;
   isDark: boolean;
   onToggleTheme: () => void;
   sidebarCollapsed: boolean;
@@ -30,11 +31,16 @@ export default function Header({
   isSyncing,
   activeView,
   onNavigate,
+  notificationCounts,
   isDark,
   onToggleTheme,
   sidebarCollapsed,
   onToggleSidebar
 }: HeaderProps) {
+  const manualReviewCount = notificationCounts.manualReview;
+  const emailLogsCount = notificationCounts.emailLogs;
+  const notificationBadge = manualReviewCount > 99 ? '99+' : String(manualReviewCount);
+
   const handleAuthClick = () => {
     if (!authStatus?.authUrl) return;
     const width = 600;
@@ -49,6 +55,18 @@ export default function Header({
     if (!authWindow) {
       alert('Pop-up blocked. Please allow pop-ups to connect Google.');
     }
+  };
+
+  const handleNotificationsClick = () => {
+    if (manualReviewCount > 0) {
+      onNavigate('manual-review');
+      return;
+    }
+    if (emailLogsCount > 0) {
+      onNavigate('email-logs');
+      return;
+    }
+    onNavigate('activity');
   };
 
   return (
@@ -70,6 +88,7 @@ export default function Header({
                   source={source}
                   onSyncNow={onSyncNow}
                   isSyncing={isSyncing}
+                  notificationCounts={notificationCounts}
                   className="w-full border-0"
                 />
               </SheetContent>
@@ -129,11 +148,21 @@ export default function Header({
             <Button type="button" variant="outline" size="icon" className="h-11 w-11 rounded-full" onClick={onToggleTheme} aria-label="Toggle theme">
               {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
-            <Button type="button" variant="outline" size="icon" className="relative h-11 w-11 rounded-full" aria-label="Notifications">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="relative h-11 w-11 rounded-full"
+              aria-label={manualReviewCount > 0 ? `${manualReviewCount} item${manualReviewCount === 1 ? '' : 's'} need manual review` : 'Open activity'}
+              title={manualReviewCount > 0 ? 'Open Manual Review' : emailLogsCount > 0 ? 'Open Email Logs' : 'Open Activity'}
+              onClick={handleNotificationsClick}
+            >
               <Bell className="h-4 w-4" />
-              <span className="absolute -right-0.5 -top-0.5 grid h-4 w-4 place-items-center rounded-full bg-rose-500 text-[10px] font-bold text-white">
-                8
-              </span>
+              {manualReviewCount > 0 && (
+                <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+                  {notificationBadge}
+                </span>
+              )}
             </Button>
             {authStatus?.authenticated && (
               <Button type="button" variant="outline" size="sm" className="h-11 rounded-full pl-2 pr-3" onClick={onClearAuth}>

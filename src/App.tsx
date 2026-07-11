@@ -23,11 +23,13 @@ import {
   canProcessLead,
   computeStats,
   DashboardView,
-  filterRowsByView
+  filterRowsByView,
+  hasEmailActivity,
+  needsManualReview
 } from '@/src/lib/rowUtils';
 import { LEAD_STATUS, LeadStatusLabel } from '@/src/lib/leadStatus';
 import { getLeadStatus } from '@/src/lib/rowUtils';
-import { ExcelRow, AuthStatus, ScheduleSummary, SheetSource } from '@/src/types';
+import { ExcelRow, AuthStatus, NotificationCounts, ScheduleSummary, SheetSource } from '@/src/types';
 import { cn } from '@/lib/utils';
 
 const ROWS_STORAGE_KEY = 'excel-meet-scheduler.rows';
@@ -175,6 +177,13 @@ export default function App() {
   const importRef = useRef<HTMLDivElement>(null);
 
   const stats = useMemo(() => computeStats(rows), [rows]);
+  const notificationCounts = useMemo<NotificationCounts>(
+    () => ({
+      manualReview: rows.filter((row) => needsManualReview(row)).length,
+      emailLogs: rows.filter((row) => hasEmailActivity(row)).length
+    }),
+    [rows]
+  );
   const filteredRows = useMemo(
     () => filterRowsByView(rows, activeView, searchQuery, statusFilter),
     [rows, activeView, searchQuery, statusFilter]
@@ -804,6 +813,7 @@ export default function App() {
         isSyncing={isProcessing}
         activeView={activeView}
         onNavigate={setActiveView}
+        notificationCounts={notificationCounts}
         isDark={isDark}
         onToggleTheme={() => setIsDark((prev) => !prev)}
       >

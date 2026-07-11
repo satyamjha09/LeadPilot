@@ -2,7 +2,7 @@ import { ReactNode, useState } from 'react';
 import Header from '@/src/components/layout/Header';
 import Sidebar from '@/src/components/layout/Sidebar';
 import { DashboardView } from '@/src/lib/rowUtils';
-import { AuthStatus, SheetSource } from '@/src/types';
+import { AuthStatus, NotificationCounts, SheetSource } from '@/src/types';
 
 interface AppShellProps {
   children: ReactNode;
@@ -14,6 +14,7 @@ interface AppShellProps {
   isSyncing?: boolean;
   activeView: DashboardView;
   onNavigate: (view: DashboardView) => void;
+  notificationCounts: NotificationCounts;
   isDark: boolean;
   onToggleTheme: () => void;
 }
@@ -28,6 +29,7 @@ export default function AppShell({
   isSyncing,
   activeView,
   onNavigate,
+  notificationCounts,
   isDark,
   onToggleTheme
 }: AppShellProps) {
@@ -42,6 +44,7 @@ export default function AppShell({
           source={source}
           onSyncNow={onSyncNow}
           isSyncing={isSyncing}
+          notificationCounts={notificationCounts}
           onCollapse={() => setSidebarCollapsed(true)}
           className="hidden lg:flex"
         />
@@ -57,6 +60,7 @@ export default function AppShell({
           isSyncing={isSyncing}
           activeView={activeView}
           onNavigate={onNavigate}
+          notificationCounts={notificationCounts}
           isDark={isDark}
           onToggleTheme={onToggleTheme}
           sidebarCollapsed={sidebarCollapsed}

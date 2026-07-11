@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { DashboardView } from '@/src/lib/rowUtils';
-import type { SheetSource } from '@/src/types';
+import type { NotificationCounts, SheetSource } from '@/src/types';
 
 const navItems: { id: DashboardView; label: string; icon: ComponentType<{ className?: string }> }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -34,11 +34,12 @@ interface SidebarProps {
   source: SheetSource;
   onSyncNow?: () => void;
   isSyncing?: boolean;
+  notificationCounts: NotificationCounts;
   onCollapse?: () => void;
   className?: string;
 }
 
-export default function Sidebar({ activeView, onNavigate, source, onSyncNow, isSyncing, onCollapse, className }: SidebarProps) {
+export default function Sidebar({ activeView, onNavigate, source, onSyncNow, isSyncing, notificationCounts, onCollapse, className }: SidebarProps) {
   const isGoogleSheet = source.type === 'google-sheet';
   const sourceName = isGoogleSheet ? source.sheetName || 'TallyKonnect Leads' : 'Excel import';
 
@@ -77,7 +78,13 @@ export default function Sidebar({ activeView, onNavigate, source, onSyncNow, isS
 
       <nav className="flex-1 space-y-5 p-3">
         <NavGroup title="Main" items={navItems.slice(0, 1)} activeView={activeView} onNavigate={onNavigate} />
-        <NavGroup title="Workspace" items={navItems.slice(1, 4)} activeView={activeView} onNavigate={onNavigate} />
+        <NavGroup
+          title="Workspace"
+          items={navItems.slice(1, 4)}
+          activeView={activeView}
+          onNavigate={onNavigate}
+          notificationCounts={notificationCounts}
+        />
         <NavGroup title="Automation" items={navItems.slice(4, 5)} activeView={activeView} onNavigate={onNavigate} />
         <NavGroup title="System" items={navItems.slice(5)} activeView={activeView} onNavigate={onNavigate} />
       </nav>
@@ -125,35 +132,72 @@ function NavGroup({
   title,
   items,
   activeView,
-  onNavigate
+  onNavigate,
+  notificationCounts
 }: {
   title: string;
   items: typeof navItems;
   activeView: DashboardView;
   onNavigate: (view: DashboardView) => void;
+  notificationCounts?: NotificationCounts;
 }) {
+  const badgeForItem = (id: DashboardView) => {
+    if (id === 'manual-review') return notificationCounts?.manualReview || 0;
+    if (id === 'email-logs') return notificationCounts?.emailLogs || 0;
+    return 0;
+  };
+
   return (
     <div>
       <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{title}</p>
       <div className="space-y-1">
         {items.map(({ id, label, icon: Icon }) => (
-          <Button
+          <NavButton
             key={id}
-            type="button"
-            variant="ghost"
-            className={cn(
-              'h-10 w-full justify-start gap-3 rounded-xl text-slate-300 hover:bg-white/10 hover:text-white',
-              activeView === id && 'bg-gradient-to-r from-sky-500 to-cyan-600 text-white shadow-lg shadow-sky-900/30'
-            )}
-            onClick={() => onNavigate(id)}
-          >
-            <Icon className="h-4 w-4" />
-            <span className="flex-1 text-left">{label}</span>
-            {label === 'Manual Review' && <span className="rounded-md bg-white/15 px-1.5 py-0.5 text-xs">5</span>}
-            {label === 'Email Logs' && <span className="rounded-md bg-white/15 px-1.5 py-0.5 text-xs">12</span>}
-          </Button>
+            id={id}
+            label={label}
+            icon={Icon}
+            activeView={activeView}
+            onNavigate={onNavigate}
+            badgeCount={badgeForItem(id)}
+          />
         ))}
       </div>
     </div>
+  );
+}
+
+function NavButton({
+  id,
+  label,
+  icon: Icon,
+  activeView,
+  onNavigate,
+  badgeCount
+}: {
+  key?: DashboardView;
+  id: DashboardView;
+  label: string;
+  icon: ComponentType<{ className?: string }>;
+  activeView: DashboardView;
+  onNavigate: (view: DashboardView) => void;
+  badgeCount: number;
+}) {
+  const badgeLabel = badgeCount > 99 ? '99+' : String(badgeCount);
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      className={cn(
+        'h-10 w-full justify-start gap-3 rounded-xl text-slate-300 hover:bg-white/10 hover:text-white',
+        activeView === id && 'bg-gradient-to-r from-sky-500 to-cyan-600 text-white shadow-lg shadow-sky-900/30'
+      )}
+      onClick={() => onNavigate(id)}
+    >
+      <Icon className="h-4 w-4" />
+      <span className="flex-1 text-left">{label}</span>
+      {badgeCount > 0 && <span className="rounded-md bg-white/15 px-1.5 py-0.5 text-xs">{badgeLabel}</span>}
+    </Button>
   );
 }

@@ -75,6 +75,11 @@ export interface ScheduledReminder {
   error?: string;
 }
 
+export interface NotificationCounts {
+  manualReview: number;
+  emailLogs: number;
+}
+
 export interface AuthStatus {
   authenticated: boolean;
   configured: boolean;
