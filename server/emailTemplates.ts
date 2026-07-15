@@ -49,6 +49,8 @@ type EmailBrandConfig = {
   websiteUrl: string;
   websiteLabel: string;
   contactEmail: string;
+  phone?: string;
+  tagline?: string;
   unsubscribeUrl: string;
 };
 
@@ -61,6 +63,8 @@ const EMAIL_BRANDS: Record<EmailBrandKey, EmailBrandConfig> = {
     websiteUrl: 'https://tallykonnect.com',
     websiteLabel: 'tallykonnect.com',
     contactEmail: 'info@tallykonnect.com',
+    phone: '+91 83759 38947',
+    tagline: 'Business Automation Made Simple',
     unsubscribeUrl: 'https://tallykonnect.com/unsubscribe'
   },
   anywheretally: {
@@ -71,6 +75,8 @@ const EMAIL_BRANDS: Record<EmailBrandKey, EmailBrandConfig> = {
     websiteUrl: 'https://anywheretally.com',
     websiteLabel: 'anywheretally.com',
     contactEmail: 'info@anywheretally.com',
+    phone: '+91 83759 38947',
+    tagline: 'Your Tally. Anywhere. Anytime.',
     unsubscribeUrl: 'https://anywheretally.com/unsubscribe'
   }
 };
@@ -626,6 +632,183 @@ function buildTallyKonnectScheduledHtml(input: DemoEmailInput) {
 </html>`;
 }
 
+function awtCheckItem(text: string) {
+  return `
+    <tr>
+      <td width="34" valign="top" style="width:34px; padding:7px 0; vertical-align:top;">
+        <span style="display:inline-block; width:21px; height:21px; border-radius:50%; background:#005bd7; color:#ffffff; font-size:13px; line-height:21px; text-align:center; font-weight:800;">&#10003;</span>
+      </td>
+      <td valign="top" style="padding:7px 0; font-size:15px; line-height:23px; color:#222222;">${escapeHtml(text)}</td>
+    </tr>
+  `;
+}
+
+function awtDetailRow(icon: string, label: string, value: string) {
+  return `
+    <tr>
+      <td width="64" align="center" valign="middle" style="width:64px; padding:13px 0; border-bottom:1px solid #eef1f6;">
+        <span style="display:inline-block; width:34px; height:34px; border-radius:50%; background:#edf5ff; color:#005bd7; font-size:18px; line-height:34px;">${icon}</span>
+      </td>
+      <td width="108" valign="middle" style="width:108px; padding:13px 8px; border-bottom:1px solid #eef1f6; font-size:15px; line-height:22px; color:#111827; font-weight:800;">${escapeHtml(label)}:</td>
+      <td valign="middle" style="padding:13px 8px; border-bottom:1px solid #eef1f6; font-size:15px; line-height:22px; color:#111827;">${escapeHtml(value || '-')}</td>
+    </tr>
+  `;
+}
+
+function buildAnyWhereTallyScheduledHtml(input: DemoEmailInput, brand: EmailBrandConfig) {
+  const customerName = escapeHtml(String(input.fullName || '').trim() || 'there');
+  const meetLink = escapeHtml(input.meetLink || '#');
+  const demoDate = escapeHtml(input.date || '-');
+  const demoTime = escapeHtml(input.time || '-');
+  const logoUrl = escapeHtml(brandLogoUrl(brand));
+  const websiteUrl = escapeHtml(brand.websiteUrl);
+  const websiteLabel = escapeHtml(brand.websiteLabel);
+  const tagline = escapeHtml(brand.tagline || 'Your Tally. Anywhere. Anytime.');
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light">
+    <meta name="supported-color-schemes" content="light">
+    <title>AnyWhereTally Demo Confirmed</title>
+    <style>
+      @media only screen and (max-width: 640px) {
+        .awt-wrapper { width:100% !important; }
+        .awt-pad { padding-left:22px !important; padding-right:22px !important; }
+        .awt-hero-left, .awt-hero-right { display:block !important; width:100% !important; }
+        .awt-hero-right { padding-top:24px !important; text-align:left !important; }
+        .awt-title { font-size:34px !important; line-height:42px !important; }
+        .awt-footer-column { display:block !important; width:100% !important; text-align:left !important; padding:4px 0 !important; }
+      }
+    </style>
+  </head>
+  <body style="margin:0; padding:0; background:#f2f5fb; font-family:Arial, Helvetica, sans-serif; color:#111827;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f2f5fb;">
+      <tr>
+        <td align="center" style="padding:18px 10px;">
+          <table class="awt-wrapper" role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:640px; background:#ffffff; border:1px solid #dde5f1; border-radius:14px; overflow:hidden;">
+            <tr>
+              <td class="awt-pad" style="padding:26px 34px 22px; background:#ffffff; border-bottom:3px solid #f4c514;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td width="92" valign="middle" style="width:92px;">
+                      <img src="${logoUrl}" alt="AnyWhereTally logo" width="78" style="display:block; width:78px; height:auto; border:0; outline:none;">
+                    </td>
+                    <td valign="middle" style="font-size:23px; line-height:30px; font-weight:800; color:#004aad;">AnyWhereTally</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:44px 34px 28px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td class="awt-hero-left" width="58%" valign="top" style="width:58%; vertical-align:top;">
+                      <div style="font-size:21px; line-height:30px; color:#111827; margin-bottom:20px;">Hi ${customerName},</div>
+                      <div class="awt-title" style="font-size:42px; line-height:52px; font-weight:900; color:#0050c8; letter-spacing:-0.6px;">
+                        Your Tally Mobile App<br>demo is confirmed.
+                      </div>
+                      <p style="margin:22px 0 0; font-size:17px; line-height:29px; color:#222222;">
+                        We're excited to show you how AnyWhereTally can simplify your business on the go.
+                      </p>
+                    </td>
+                    <td class="awt-hero-right" width="42%" align="center" valign="middle" style="width:42%; vertical-align:middle;">
+                      <table role="presentation" width="190" height="260" cellpadding="0" cellspacing="0" border="0" style="width:190px; height:260px; background:#07152d; border-radius:26px; border:6px solid #07152d; box-shadow:0 16px 30px rgba(0,74,173,0.22);">
+                        <tr>
+                          <td style="padding:12px; background:#ffffff; border-radius:20px;">
+                            <div style="background:#005bd7; color:#ffffff; padding:10px 12px; border-radius:14px 14px 0 0; font-size:12px; font-weight:800;">Welcome back</div>
+                            <div style="padding:12px 8px; font-size:11px; line-height:18px; color:#111827;">
+                              <strong>Business Overview</strong><br>
+                              Total Sales&nbsp;&nbsp;<strong>&#8377; 23,76,000</strong><br>
+                              Receivables&nbsp;&nbsp;<strong>&#8377; 1,75,000</strong>
+                            </div>
+                            <div style="padding:0 8px 8px;">
+                              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                  <td style="height:44px; vertical-align:bottom;"><span style="display:inline-block;width:12px;height:22px;background:#7ab6ff;"></span></td>
+                                  <td style="height:44px; vertical-align:bottom;"><span style="display:inline-block;width:12px;height:34px;background:#005bd7;"></span></td>
+                                  <td style="height:44px; vertical-align:bottom;"><span style="display:inline-block;width:12px;height:16px;background:#7ab6ff;"></span></td>
+                                  <td style="height:44px; vertical-align:bottom;"><span style="display:inline-block;width:12px;height:40px;background:#005bd7;"></span></td>
+                                  <td style="height:44px; vertical-align:bottom;"><span style="display:inline-block;width:12px;height:28px;background:#7ab6ff;"></span></td>
+                                </tr>
+                              </table>
+                            </div>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 34px 24px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f8fbff; border:1px solid #dce7f6; border-left:6px solid #f4c514; border-radius:12px;">
+                  <tr>
+                    <td style="padding:22px 26px;">
+                      <div style="font-size:19px; line-height:26px; color:#004aad; font-weight:900; text-transform:uppercase; margin-bottom:10px;">What we'll cover</div>
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                        ${awtCheckItem('Real-time Tally data sync across devices')}
+                        ${awtCheckItem('Live access to sales, profit, receivables, and payables')}
+                        ${awtCheckItem('Automatically create vouchers in Tally by uploading your bills')}
+                        ${awtCheckItem('Secure multi-user access with role-based permissions')}
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 34px 24px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border:1px solid #dfe7f2; border-radius:12px; overflow:hidden;">
+                  ${awtDetailRow('&#128197;', 'Date', demoDate)}
+                  ${awtDetailRow('&#128336;', 'Time', demoTime)}
+                  ${awtDetailRow('&#128205;', 'Venue', 'Google Meet')}
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 34px 28px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td align="center" style="background:#005bd7; background-image:linear-gradient(135deg,#0066ff 0%,#004aad 100%); border-radius:10px; box-shadow:0 8px 18px rgba(0,74,173,0.22);">
+                      <a href="${meetLink}" style="display:block; padding:17px 20px; color:#ffffff; text-decoration:none; font-size:20px; line-height:26px; font-weight:900;">Join Meeting Now&nbsp;&nbsp;&#8594;</a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:26px 0 0; font-size:15px; line-height:25px; color:#222222;">
+                  Looking forward to meeting you!<br>
+                  <strong style="color:#004aad;">- ${escapeHtml(brand.signatureName)}</strong>
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 34px 22px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f0f6ff; border-radius:10px;">
+                  <tr>
+                    <td class="awt-footer-column" valign="middle" style="padding:16px 18px; font-size:15px; line-height:22px; color:#0b3378;">${tagline}</td>
+                    <td class="awt-footer-column" align="right" valign="middle" style="padding:16px 18px; font-size:14px; line-height:22px;">
+                      <a href="${websiteUrl}" style="color:#0b3378; text-decoration:none;">www.${websiteLabel}</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
 function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
   const customerName = escapeHtml(String(input.fullName || '').trim() || 'there');
   const meetLink = escapeHtml(input.meetLink || '#');
@@ -1089,33 +1272,248 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
  `;
 }
 
+function awtProductCard(icon: string, title: string, description: string, href: string) {
+  const safeHref = escapeHtml(href);
+  return `
+    <td class="awt-product-column" width="33.33%" valign="top" style="width:33.33%; padding:0 8px; vertical-align:top;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border:1px solid #dfe7f2; border-radius:10px; background:#ffffff;">
+        <tr>
+          <td align="center" style="padding:22px 18px 20px;">
+            <div style="display:inline-block; width:62px; height:62px; border-radius:50%; background:#eef6ff; color:#005bd7; font-size:30px; line-height:62px; margin-bottom:12px;">${icon}</div>
+            <div style="font-size:16px; line-height:22px; color:#0050c8; font-weight:900; margin-bottom:10px;">${escapeHtml(title)}</div>
+            <div style="min-height:62px; font-size:13px; line-height:21px; color:#111827;">${escapeHtml(description)}</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:16px;">
+              <tr>
+                <td align="center" style="background:#005bd7; border-radius:7px;">
+                  <a href="${safeHref}" style="display:block; padding:11px 10px; color:#ffffff; text-decoration:none; font-size:13px; line-height:18px; font-weight:800;">Explore Now&nbsp;&nbsp;&#8594;</a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td>
+  `;
+}
+
+function buildAnyWhereTallyThankYouHtml(input: ThankYouEmailInput, brand: EmailBrandConfig) {
+  const customerName = escapeHtml(String(input.fullName || '').trim() || 'there');
+  const logoUrl = escapeHtml(brandLogoUrl(brand));
+  const websiteUrl = escapeHtml(brand.websiteUrl);
+  const contactEmail = escapeHtml(brand.contactEmail);
+  const phone = escapeHtml(brand.phone || '+91 83759 38947');
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light">
+    <meta name="supported-color-schemes" content="light">
+    <title>Thank You - AnyWhereTally Demo</title>
+    <style>
+      @media only screen and (max-width: 680px) {
+        .awt-wrapper { width:100% !important; }
+        .awt-pad { padding-left:22px !important; padding-right:22px !important; }
+        .awt-hero-left, .awt-hero-right { display:block !important; width:100% !important; }
+        .awt-hero-right { padding-top:22px !important; text-align:left !important; }
+        .awt-product-column { display:block !important; width:100% !important; padding:0 0 14px !important; }
+        .awt-trial-column { display:block !important; width:100% !important; text-align:left !important; padding:10px 0 !important; }
+        .awt-footer-column { display:block !important; width:100% !important; text-align:left !important; padding:7px 0 !important; }
+      }
+    </style>
+  </head>
+  <body style="margin:0; padding:0; background:#f2f5fb; font-family:Arial, Helvetica, sans-serif; color:#111827;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f2f5fb;">
+      <tr>
+        <td align="center" style="padding:18px 10px;">
+          <table class="awt-wrapper" role="presentation" width="660" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:660px; background:#ffffff; border-radius:8px; overflow:hidden;">
+            <tr>
+              <td class="awt-pad" style="padding:26px 34px 20px; border-bottom:3px solid #f4c514;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td width="82" valign="middle" style="width:82px;">
+                      <img src="${logoUrl}" alt="AnyWhereTally logo" width="68" style="display:block; width:68px; height:auto; border:0; outline:none;">
+                    </td>
+                    <td valign="middle" style="font-size:20px; line-height:28px; color:#004aad; font-weight:900;">AnyWhereTally</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:34px 34px 24px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td class="awt-hero-left" width="48%" valign="top" style="width:48%; vertical-align:top;">
+                      <div style="font-size:20px; line-height:28px; font-weight:800; color:#111827; margin-bottom:16px;">Hi ${customerName},</div>
+                      <div style="font-size:37px; line-height:48px; font-weight:900; color:#0050c8; letter-spacing:-0.5px;">Thank you for<br>attending the demo!</div>
+                      <p style="margin:18px 0 0; font-size:16px; line-height:27px; color:#111827;">
+                        We're glad you took the time to explore AnyWhereTally with us.
+                      </p>
+                      <p style="margin:16px 0 0; font-size:16px; line-height:27px; color:#111827;">
+                        To help you experience the app in action, we have <strong style="color:#0050c8;">something special for you.</strong>
+                      </p>
+                    </td>
+                    <td class="awt-hero-right" width="52%" align="right" valign="middle" style="width:52%; vertical-align:middle;">
+                      <table role="presentation" width="280" cellpadding="0" cellspacing="0" border="0" style="width:280px; max-width:100%;">
+                        <tr>
+                          <td align="center">
+                            <table role="presentation" width="185" cellpadding="0" cellspacing="0" border="0" style="display:inline-table; width:185px; background:#ffffff; border:7px solid #111827; border-radius:18px; box-shadow:0 12px 28px rgba(0,74,173,0.14);">
+                              <tr>
+                                <td style="padding:10px;">
+                                  <div style="background:#005bd7; color:#ffffff; padding:9px 10px; border-radius:9px; font-size:11px; line-height:15px; font-weight:800;">Business Overview</div>
+                                  <div style="padding:12px 4px; font-size:11px; line-height:18px; color:#111827;">Sales &#8377;25,75,000<br>Receivables &#8377;8,75,000<br>Trend &#9608;&#9608;&#9605;&#9608;&#9603;&#9608;</div>
+                                </td>
+                              </tr>
+                            </table>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 34px 24px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#fffaf0; border:1px solid #f4e1b4; border-radius:12px;">
+                  <tr>
+                    <td class="awt-trial-column" width="170" align="center" valign="middle" style="width:170px; padding:26px 20px;">
+                      <span style="display:inline-block; width:92px; height:92px; border-radius:50%; background:#fff3cc; font-size:50px; line-height:92px;">&#127873;</span>
+                    </td>
+                    <td class="awt-trial-column" valign="middle" style="padding:26px 28px 26px 0;">
+                      <div style="font-size:22px; line-height:30px; color:#0050c8; font-weight:900; margin-bottom:8px;">Try it for real - on us!</div>
+                      <div style="font-size:16px; line-height:26px; color:#111827;">
+                        Get full access to a <strong>live demo setup of a company</strong> and experience the complete app for <strong>30 days - absolutely free.</strong>
+                      </div>
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:12px;">
+                        ${awtCheckItem('Explore all features with real data')}
+                        ${awtCheckItem('See how it fits your daily business operations')}
+                        ${awtCheckItem('No commitment - just real experience')}
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" align="center" style="padding:0 34px 20px;">
+                <div style="font-size:20px; line-height:28px; color:#111827; font-weight:900;">Explore our value-added solutions in Tally</div>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 26px 28px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+                  <tr>
+                    ${awtProductCard('&#128196;', 'Smart TDS', 'Automated TDS calculation, deduction tracking and seamless reporting in Tally.', websiteUrl)}
+                    ${awtProductCard('&#127974;', 'Bank Reconciliation', 'Auto-match bank statements with Tally entries and reconcile in minutes.', websiteUrl)}
+                    ${awtProductCard('&#128221;', 'GST Reconciliation', 'Match your GSTR-2B data with purchases in Tally with ease and accuracy.', websiteUrl)}
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 34px 28px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f0f6ff; border:1px solid #dce7f6; border-radius:10px;">
+                  <tr>
+                    <td width="100" align="center" valign="middle" style="width:100px; padding:22px 8px; font-size:48px;">&#128640;</td>
+                    <td valign="middle" style="padding:22px 12px;">
+                      <div style="font-size:20px; line-height:28px; color:#0050c8; font-weight:900;">Ready to get started?</div>
+                      <div style="margin-top:6px; font-size:14px; line-height:22px; color:#111827;">Our team will be happy to help you set up your account and make the most of your free trial.</div>
+                    </td>
+                    <td class="awt-trial-column" width="210" align="right" valign="middle" style="width:210px; padding:22px 20px;">
+                      <a href="mailto:${contactEmail}?subject=Start%20My%20Free%2030-Day%20Trial" style="display:inline-block; padding:13px 16px; background:#005bd7; color:#ffffff; text-decoration:none; border-radius:8px; font-size:13px; line-height:18px; font-weight:900;">Start My Free 30-Day Trial&nbsp;&#8594;</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 34px 24px;">
+                <p style="margin:0; font-size:15px; line-height:25px; color:#111827;">Warm regards,<br><strong style="color:#004aad;">${escapeHtml(brand.signatureName)}</strong></p>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 34px 28px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#edf5ff; border-radius:8px;">
+                  <tr>
+                    <td class="awt-footer-column" align="center" style="padding:15px 10px; font-size:14px; line-height:20px; color:#004aad;">&#9993;&nbsp; <a href="mailto:${contactEmail}" style="color:#004aad; text-decoration:none;">${contactEmail}</a></td>
+                    <td class="awt-footer-column" align="center" style="padding:15px 10px; font-size:14px; line-height:20px; color:#004aad;">&#9742;&nbsp; ${phone}</td>
+                    <td class="awt-footer-column" align="center" style="padding:15px 10px; font-size:14px; line-height:20px; color:#004aad;">&#127760;&nbsp; <a href="${websiteUrl}" style="color:#004aad; text-decoration:none;">www.${escapeHtml(brand.websiteLabel)}</a></td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
 export function buildMeetingInviteEmail(input: DemoEmailInput) {
   const brand = getEmailBrand(input.brand);
   const greeting = emailGreeting(input.fullName);
-  const text = [
-    greeting,
-    '',
-    `Your Smart TDS demo with ${brand.name} has been scheduled.`,
-    '',
-    'We will show you how Smart TDS helps make TDS work simpler by reducing manual calculation, tracking deductions, and keeping your process ready for returns and compliance.',
-    '',
-    `Date: ${input.date || '-'}`,
-    `Time: ${input.time || '-'}`,
-    `Google Meet Link: ${input.meetLink}`,
-    '',
-    'Please use the link above to join at the scheduled time.',
-    '',
-    `Unsubscribe: ${brand.unsubscribeUrl}`,
-    '',
-    `Regards,`,
-    brand.signatureName
-  ].join('\r\n');
+  const text = brand.key === 'anywheretally'
+    ? [
+        greeting,
+        '',
+        'Your Tally Mobile App demo is confirmed.',
+        '',
+        'We are excited to show you how AnyWhereTally can simplify your business on the go.',
+        '',
+        'What we will cover:',
+        '- Real-time Tally data sync across devices',
+        '- Live access to sales, profit, receivables, and payables',
+        '- Automatically create vouchers in Tally by uploading your bills',
+        '- Secure multi-user access with role-based permissions',
+        '',
+        `Date: ${input.date || '-'}`,
+        `Time: ${input.time || '-'}`,
+        `Google Meet Link: ${input.meetLink}`,
+        '',
+        'Please use the link above to join at the scheduled time.',
+        '',
+        `Website: ${brand.websiteUrl}`,
+        `Unsubscribe: ${brand.unsubscribeUrl}`,
+        '',
+        `Regards,`,
+        brand.signatureName
+      ].join('\r\n')
+    : [
+        greeting,
+        '',
+        `Your Smart TDS demo with ${brand.name} has been scheduled.`,
+        '',
+        'We will show you how Smart TDS helps make TDS work simpler by reducing manual calculation, tracking deductions, and keeping your process ready for returns and compliance.',
+        '',
+        `Date: ${input.date || '-'}`,
+        `Time: ${input.time || '-'}`,
+        `Google Meet Link: ${input.meetLink}`,
+        '',
+        'Please use the link above to join at the scheduled time.',
+        '',
+        `Unsubscribe: ${brand.unsubscribeUrl}`,
+        '',
+        `Regards,`,
+        brand.signatureName
+      ].join('\r\n');
 
-  const html = applyEmailBrand(buildTallyKonnectScheduledHtml(input), brand);
+  const html = brand.key === 'anywheretally'
+    ? buildAnyWhereTallyScheduledHtml(input, brand)
+    : applyEmailBrand(buildTallyKonnectScheduledHtml(input), brand);
 
   return {
     fromName: brand.name,
-    subject: 'Smart TDS Demo Scheduled',
+    subject: brand.key === 'anywheretally' ? 'Your Tally Mobile App demo is confirmed' : 'Smart TDS Demo Scheduled',
     text,
     html
   };
@@ -1197,28 +1595,50 @@ export function buildReminderEmail(input: DemoEmailInput) {
 export function buildThankYouEmail(input: ThankYouEmailInput) {
   const brand = getEmailBrand(input.brand);
   const greeting = emailGreeting(input.fullName);
-  const text = [
-    greeting,
-    '',
-    'Thank you for attending the Smart TDS demo.',
-    '',
-    'We hope the session gave you a clear view of how Smart TDS simplifies TDS calculations, auto-creates vouchers, and helps keep your returns ready inside Tally.',
-    '',
-    `You can also explore ${brand.name} automation solutions such as Connected Banking, Smart Purchase, Smart Bank Recon, Smart Reports, AnyWhereTally, and MessageAPI.`,
-    '',
-    `Website: ${brand.websiteUrl}`,
-    `Contact: ${brand.contactEmail}`,
-    `Unsubscribe: ${brand.unsubscribeUrl}`,
-    '',
-    `Regards,`,
-    brand.signatureName
-  ].join('\r\n');
+  const text = brand.key === 'anywheretally'
+    ? [
+        greeting,
+        '',
+        'Thank you for attending the AnyWhereTally demo.',
+        '',
+        'We are glad you took the time to explore AnyWhereTally with us.',
+        '',
+        'To help you experience the app in action, we have something special for you: full access to a live demo setup of a company for 30 days, absolutely free.',
+        '',
+        'You can also explore our value-added solutions in Tally: Smart TDS, Bank Reconciliation, and GST Reconciliation.',
+        '',
+        `Website: ${brand.websiteUrl}`,
+        `Contact: ${brand.contactEmail}`,
+        `Phone: ${brand.phone || '+91 83759 38947'}`,
+        `Unsubscribe: ${brand.unsubscribeUrl}`,
+        '',
+        `Regards,`,
+        brand.signatureName
+      ].join('\r\n')
+    : [
+        greeting,
+        '',
+        'Thank you for attending the Smart TDS demo.',
+        '',
+        'We hope the session gave you a clear view of how Smart TDS simplifies TDS calculations, auto-creates vouchers, and helps keep your returns ready inside Tally.',
+        '',
+        `You can also explore ${brand.name} automation solutions such as Connected Banking, Smart Purchase, Smart Bank Recon, Smart Reports, AnyWhereTally, and MessageAPI.`,
+        '',
+        `Website: ${brand.websiteUrl}`,
+        `Contact: ${brand.contactEmail}`,
+        `Unsubscribe: ${brand.unsubscribeUrl}`,
+        '',
+        `Regards,`,
+        brand.signatureName
+      ].join('\r\n');
 
-  const html = applyEmailBrand(buildTallyKonnectThankYouHtml(input), brand);
+  const html = brand.key === 'anywheretally'
+    ? buildAnyWhereTallyThankYouHtml(input, brand)
+    : applyEmailBrand(buildTallyKonnectThankYouHtml(input), brand);
 
   return {
     fromName: brand.name,
-    subject: 'Thank you for attending the Smart TDS demo',
+    subject: brand.key === 'anywheretally' ? 'Thank you for attending the AnyWhereTally demo' : 'Thank you for attending the Smart TDS demo',
     text,
     html
   };
