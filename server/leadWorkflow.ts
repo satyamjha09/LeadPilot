@@ -1207,7 +1207,7 @@ export async function rescheduleDemoForRow(
 
   const oldDate = active.state.demoDate || active.history.displayDate || undefined;
   const oldTime = active.state.demoTime || active.history.displayTime || undefined;
-  const calendarResult = await updateCalendarMeeting(row, active.state.calendarEventId);
+  const calendarResult = await updateCalendarMeeting(row, active.state.calendarEventId, context.emailBrand);
   const meetLink = calendarResult.meetLink || active.state.meetingLink;
   const calendarEventId = calendarResult.eventId || active.state.calendarEventId;
 
@@ -1551,7 +1551,7 @@ export async function processScheduleRows(
             throw new Error(calendarBlockedMessage());
           }
 
-          const scheduleResult = await scheduleMeeting(row);
+          const scheduleResult = await scheduleMeeting(row, sheetContext.emailBrand);
           meetLink = scheduleResult.meetLink;
           calendarEventId = scheduleResult.eventId;
           startTime = scheduleResult.startTime;

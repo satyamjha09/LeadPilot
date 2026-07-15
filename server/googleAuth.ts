@@ -10,6 +10,7 @@ import {
   buildRawEmail,
   buildReminderEmail,
   buildThankYouEmail,
+  normalizeEmailBrand,
   type EmailBrandKey
 } from './emailTemplates';
 import { parseDateParts } from '../src/lib/dateFormat';
@@ -398,7 +399,22 @@ export async function sendGmailTemplate(
   }
 }
 
-export async function scheduleMeeting(row: ExcelRow) {
+function calendarBrandCopy(brand?: EmailBrandKey) {
+  const normalized = normalizeEmailBrand(brand);
+  if (normalized === 'anywheretally') {
+    return {
+      summary: 'Tally Mobile App Demo - AnyWhereTally',
+      description: 'Tally Mobile App demo scheduled by AnyWhereTally. For support, contact info@anywheretally.com.'
+    };
+  }
+
+  return {
+    summary: 'Smart TDS Demo - TallyKonnect',
+    description: 'Smart TDS demo scheduled by TallyKonnect. For support, contact info@tallykonnect.com.'
+  };
+}
+
+export async function scheduleMeeting(row: ExcelRow, brand?: EmailBrandKey) {
   try {
     const oauth2Client = await getOAuthClient();
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
@@ -410,10 +426,11 @@ export async function scheduleMeeting(row: ExcelRow) {
     const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // 30 mins later
     
     const attendees = [{ email: row.email }];
+    const brandCopy = calendarBrandCopy(brand);
 
     const event = {
-      summary: 'Smart TDS Demo - TallyKonnect',
-      description: 'Smart TDS demo scheduled by TallyKonnect. For support, contact info@tallykonnect.com.',
+      summary: brandCopy.summary,
+      description: brandCopy.description,
       start: {
         dateTime: toCalendarDateTime(startTime),
         timeZone: GOOGLE_CALENDAR_TIME_ZONE,
@@ -459,7 +476,7 @@ export async function scheduleMeeting(row: ExcelRow) {
   }
 }
 
-export async function updateCalendarMeeting(row: ExcelRow, calendarEventId: string) {
+export async function updateCalendarMeeting(row: ExcelRow, calendarEventId: string, brand?: EmailBrandKey) {
   if (!calendarEventId) {
     throw new Error('Calendar event ID is required to reschedule this demo.');
   }
@@ -470,14 +487,15 @@ export async function updateCalendarMeeting(row: ExcelRow, calendarEventId: stri
 
     const startTime = parseExcelDateTime(row['Date of Demo'], row['Time of Demo']);
     const endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
+    const brandCopy = calendarBrandCopy(brand);
 
     const response = await withCalendarRetry(() =>
       calendar.events.patch({
         calendarId: 'primary',
         eventId: calendarEventId,
         requestBody: {
-          summary: 'Smart TDS Demo - TallyKonnect',
-          description: 'Smart TDS demo rescheduled by TallyKonnect. For support, contact info@tallykonnect.com.',
+          summary: brandCopy.summary,
+          description: brandCopy.description.replace('scheduled by', 'rescheduled by'),
           start: {
             dateTime: toCalendarDateTime(startTime),
             timeZone: GOOGLE_CALENDAR_TIME_ZONE,

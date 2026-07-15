@@ -1841,6 +1841,42 @@ export function buildThankYouEmail(input: ThankYouEmailInput) {
 export function buildNoResponseEmail(input: NoResponseEmailInput) {
   const brand = getEmailBrand(input.brand);
   const greeting = emailGreeting(input.fullName);
+
+  if (brand.key === 'anywheretally') {
+    const subject = 'We missed you at the Tally Mobile App demo';
+    const text = [
+      greeting,
+      '',
+      'We noticed that you were unable to attend the scheduled Tally Mobile App demo.',
+      '',
+      'No worries. Whenever you are ready, you can contact our team and we will help you arrange another AnyWhereTally demo at a time that works best for you.',
+      '',
+      `Contact: ${brand.contactEmail}`,
+      `Website: ${brand.websiteUrl}`,
+      `Unsubscribe: ${brand.unsubscribeUrl}`,
+      '',
+      'Regards,',
+      brand.signatureName
+    ].join('\r\n');
+
+    const html = applyEmailBrand(emailShell({
+      eyebrow: 'We missed you',
+      title: 'Sorry we could not connect this time',
+      intro: `${htmlGreeting(input.fullName)}<br>We noticed that you were unable to attend the scheduled Tally Mobile App demo.`,
+      details: detailRow('Next step', 'Contact us to reschedule'),
+      ctaLabel: 'Contact AnyWhereTally',
+      ctaUrl: `mailto:${brand.contactEmail}`,
+      closing: 'Whenever you are ready, our team will help you arrange another AnyWhereTally demo at a time that works best for you.'
+    }), brand);
+
+    return {
+      fromName: brand.name,
+      subject,
+      text,
+      html
+    };
+  }
+
   const customerName = escapeHtml(String(input.fullName || '').trim() || 'there');
   const logoUrl = escapeHtml(brandLogoUrl(brand));
   const currentYear = new Date().getFullYear();
