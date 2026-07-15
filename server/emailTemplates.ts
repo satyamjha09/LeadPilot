@@ -1272,6 +1272,175 @@ function buildTallyKonnectRescheduleHtml(input: RescheduleEmailInput) {
  `;
 }
 
+function buildAnyWhereTallyRescheduleHtml(input: RescheduleEmailInput, brand: EmailBrandConfig) {
+  const customerName = escapeHtml(String(input.fullName || '').trim() || 'there');
+  const meetLink = escapeHtml(input.meetLink || '#');
+  const newDate = escapeHtml(input.date || '-');
+  const newTime = escapeHtml(input.time || '-');
+  const logoUrl = escapeHtml(brandLogoUrl(brand));
+  const websiteUrl = escapeHtml(brand.websiteUrl);
+  const contactEmail = escapeHtml(brand.contactEmail);
+  const unsubscribeUrl = escapeHtml(brand.unsubscribeUrl);
+  const tagline = escapeHtml(brand.tagline || 'Your Tally. Anywhere. Anytime.');
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light">
+    <meta name="supported-color-schemes" content="light">
+    <title>Demo Rescheduled - AnyWhereTally</title>
+    <style>
+      @media only screen and (max-width: 640px) {
+        .awt-wrapper { width:100% !important; }
+        .awt-pad { padding-left:22px !important; padding-right:22px !important; }
+        .awt-hero-title { font-size:34px !important; line-height:43px !important; }
+        .awt-detail-icon { width:52px !important; }
+        .awt-footer-column { display:block !important; width:100% !important; text-align:left !important; padding:7px 0 !important; }
+      }
+    </style>
+  </head>
+  <body style="margin:0; padding:0; background:#f4f7fb; font-family:Arial, Helvetica, sans-serif; color:#111827;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f4f7fb;">
+      <tr>
+        <td align="center" style="padding:18px 10px;">
+          <table class="awt-wrapper" role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:640px; background:#ffffff; overflow:hidden;">
+            <tr>
+              <td class="awt-pad" style="padding:30px 32px 24px; background:#ffffff;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td width="88" valign="middle" style="width:88px;">
+                      <img src="${logoUrl}" alt="AnyWhereTally logo" width="76" style="display:block; width:76px; height:auto; border:0; outline:none;">
+                    </td>
+                    <td valign="middle" style="font-size:25px; line-height:32px; color:#004aad; font-weight:900; letter-spacing:-0.4px;">AnyWhereTally</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 22px 34px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#005bd7; background-image:linear-gradient(135deg,#004aad 0%,#0066ff 100%); border-radius:7px;">
+                  <tr>
+                    <td style="padding:42px 36px 48px;">
+                      <div style="font-size:17px; line-height:24px; color:#ffffff; font-weight:700; text-transform:uppercase; margin-bottom:26px;">&#128197;&nbsp; Demo Update</div>
+                      <div class="awt-hero-title" style="font-size:40px; line-height:52px; color:#ffffff; font-weight:900; letter-spacing:-0.7px;">
+                        Your Demo Has Been<br>Rescheduled
+                      </div>
+                      <div style="margin-top:20px; font-size:20px; line-height:28px; color:#ffffff;">Connect with Tally Mobile App</div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 48px 26px;">
+                <div style="font-size:20px; line-height:28px; font-weight:900; color:#111827; margin-bottom:28px;">Hi ${customerName},</div>
+                <p style="margin:0; font-size:18px; line-height:34px; color:#334155;">
+                  We wanted to let you know that your upcoming Tally Mobile App demo has been rescheduled. Please find the updated meeting details below and make sure to add it to your calendar.
+                </p>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 48px 28px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f3f7ff; border:1px solid #dce7f6; border-left:6px solid #005bd7; border-radius:7px;">
+                  <tr>
+                    <td width="78" align="center" valign="middle" style="width:78px; padding:24px 8px; font-size:31px; line-height:36px;">&#9888;</td>
+                    <td valign="middle" style="padding:24px 24px 24px 0; font-size:16px; line-height:27px; color:#002d91;">
+                      <strong style="color:#0050c8;">Your demo time has changed.</strong> The previous slot is no longer valid.<br>
+                      Please use the new date and time below to join your session.
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 48px 28px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border:1px solid #d6dee9; border-radius:9px;">
+                  <tr>
+                    <td colspan="2" style="padding:28px 28px 14px; font-size:17px; line-height:24px; color:#0050c8; font-weight:900; text-transform:uppercase;">Updated Meeting Details</td>
+                  </tr>
+                  <tr>
+                    <td class="awt-detail-icon" width="78" align="center" valign="top" style="width:78px; padding:15px 0 10px; font-size:30px; line-height:36px;">&#128197;</td>
+                    <td valign="top" style="padding:15px 26px 10px 0;">
+                      <div style="font-size:16px; line-height:24px; color:#475569;">New Meeting Date</div>
+                      <div style="font-size:18px; line-height:27px; color:#111827; font-weight:900;">${newDate}</div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="awt-detail-icon" width="78" align="center" valign="top" style="width:78px; padding:15px 0 10px; font-size:30px; line-height:36px;">&#128336;</td>
+                    <td valign="top" style="padding:15px 26px 10px 0;">
+                      <div style="font-size:16px; line-height:24px; color:#475569;">New Meeting Time</div>
+                      <div style="font-size:18px; line-height:27px; color:#111827; font-weight:900;">${newTime}</div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="awt-detail-icon" width="78" align="center" valign="top" style="width:78px; padding:15px 0 32px; font-size:30px; line-height:36px;">&#128279;</td>
+                    <td valign="top" style="padding:15px 26px 32px 0;">
+                      <div style="font-size:16px; line-height:24px; color:#475569;">Meet Link</div>
+                      <a href="${meetLink}" style="font-size:18px; line-height:27px; color:#0050c8; font-weight:900; text-decoration:none;">Join Google Meet</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 48px 34px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td align="center" style="background:#005bd7; background-image:linear-gradient(135deg,#004aad 0%,#0066ff 100%); border-radius:7px;">
+                      <a href="${meetLink}" style="display:block; padding:19px 18px; color:#ffffff; text-decoration:none; font-size:20px; line-height:26px; font-weight:900;">Join Meeting Now</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 32px 26px;">
+                <div style="height:1px; line-height:1px; background:#dce3ee;">&nbsp;</div>
+              </td>
+            </tr>
+
+            <tr>
+              <td class="awt-pad" style="padding:0 34px 28px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td class="awt-footer-column" width="42%" valign="middle" style="width:42%; padding:0;">
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                        <tr>
+                          <td width="76" valign="middle" style="width:76px;">
+                            <img src="${logoUrl}" alt="AnyWhereTally logo" width="66" style="display:block; width:66px; height:auto; border:0; outline:none;">
+                          </td>
+                          <td valign="middle" style="font-size:21px; line-height:27px; color:#004aad; font-weight:900;">AnyWhereTally</td>
+                        </tr>
+                      </table>
+                      <div style="margin-top:10px; font-size:14px; line-height:20px; color:#475569;">${tagline}</div>
+                    </td>
+                    <td class="awt-footer-column" align="right" valign="middle" style="font-size:15px; line-height:22px; color:#334155;">
+                      <a href="${websiteUrl}" style="color:#334155; text-decoration:none;">Website</a>
+                      <span style="color:#cbd5e1;">&nbsp;&nbsp;&nbsp;&nbsp;</span>
+                      <a href="mailto:${contactEmail}" style="color:#334155; text-decoration:none;">Contact</a>
+                      <span style="color:#cbd5e1;">&nbsp;&nbsp;&nbsp;&nbsp;</span>
+                      <a href="${unsubscribeUrl}" style="color:#334155; text-decoration:none;">Unsubscribe</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
 function awtProductCard(icon: string, title: string, description: string, href: string) {
   const safeHref = escapeHtml(href);
   return `
@@ -1522,31 +1691,56 @@ export function buildMeetingInviteEmail(input: DemoEmailInput) {
 export function buildRescheduleEmail(input: RescheduleEmailInput) {
   const brand = getEmailBrand(input.brand);
   const greeting = emailGreeting(input.fullName);
-  const text = [
-    greeting,
-    '',
-    `Your Smart TDS demo with ${brand.name} has been rescheduled.`,
-    '',
-    `Previous Date: ${input.oldDate || 'Previous date'}`,
-    `Previous Time: ${input.oldTime || 'Previous time'}`,
-    '',
-    `New Date: ${input.date || '-'}`,
-    `New Time: ${input.time || '-'}`,
-    `Google Meet Link: ${input.meetLink}`,
-    '',
-    'Please use the updated link above to join at the new scheduled time.',
-    '',
-    `Unsubscribe: ${brand.unsubscribeUrl}`,
-    '',
-    `Regards,`,
-    brand.signatureName
-  ].join('\r\n');
+  const text = brand.key === 'anywheretally'
+    ? [
+        greeting,
+        '',
+        'Your Tally Mobile App demo has been rescheduled.',
+        '',
+        'Your demo time has changed. The previous slot is no longer valid.',
+        '',
+        `Previous Date: ${input.oldDate || 'Previous date'}`,
+        `Previous Time: ${input.oldTime || 'Previous time'}`,
+        '',
+        `New Meeting Date: ${input.date || '-'}`,
+        `New Meeting Time: ${input.time || '-'}`,
+        `Google Meet Link: ${input.meetLink}`,
+        '',
+        'Please use the updated link above to join your session.',
+        '',
+        `Website: ${brand.websiteUrl}`,
+        `Unsubscribe: ${brand.unsubscribeUrl}`,
+        '',
+        `Regards,`,
+        brand.signatureName
+      ].join('\r\n')
+    : [
+        greeting,
+        '',
+        `Your Smart TDS demo with ${brand.name} has been rescheduled.`,
+        '',
+        `Previous Date: ${input.oldDate || 'Previous date'}`,
+        `Previous Time: ${input.oldTime || 'Previous time'}`,
+        '',
+        `New Date: ${input.date || '-'}`,
+        `New Time: ${input.time || '-'}`,
+        `Google Meet Link: ${input.meetLink}`,
+        '',
+        'Please use the updated link above to join at the new scheduled time.',
+        '',
+        `Unsubscribe: ${brand.unsubscribeUrl}`,
+        '',
+        `Regards,`,
+        brand.signatureName
+      ].join('\r\n');
 
-  const html = applyEmailBrand(buildTallyKonnectRescheduleHtml(input), brand);
+  const html = brand.key === 'anywheretally'
+    ? buildAnyWhereTallyRescheduleHtml(input, brand)
+    : applyEmailBrand(buildTallyKonnectRescheduleHtml(input), brand);
 
   return {
     fromName: brand.name,
-    subject: 'Smart TDS Demo Rescheduled',
+    subject: brand.key === 'anywheretally' ? 'Your Demo Has Been Rescheduled' : 'Smart TDS Demo Rescheduled',
     text,
     html
   };
