@@ -4,7 +4,7 @@ import { createWorkflowBusyError } from './workflowActivity';
 export const WORKFLOW_CONTROL_ID = 'global';
 export const STALE_WORKFLOW_GENERATION_CODE = 'STALE_WORKFLOW_GENERATION';
 export const STALE_WORKFLOW_GENERATION_MESSAGE =
-  'This workflow job belongs to an older reset generation and was stopped.';
+  'Workflow cancelled because application data was reset.';
 
 type WorkflowGenerationError = Error & {
   code?: string;

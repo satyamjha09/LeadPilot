@@ -388,6 +388,10 @@ type IdempotentEmailInput = {
   send: () => Promise<{ messageId: string; threadId?: string }>;
 };
 
+async function assertWorkflowStillValid(context?: Pick<SheetContext, 'assertStillCurrent'>) {
+  await context?.assertStillCurrent?.();
+}
+
 async function getEmailEventState(input: {
   row: ExcelRow;
   context: SheetContext;
@@ -428,6 +432,7 @@ async function sendIdempotentEmail(input: IdempotentEmailInput) {
     html: input.html
   });
 
+  await assertWorkflowStillValid(input.context);
   const claim = await claimEmailDelivery({
     eventKey,
     automationId,
@@ -467,11 +472,13 @@ async function sendIdempotentEmail(input: IdempotentEmailInput) {
   });
 
   try {
+    await assertWorkflowStillValid(input.context);
     const result = await input.send();
     if (!result.messageId) {
       throw new Error('Gmail send returned no message ID.');
     }
 
+    await assertWorkflowStillValid(input.context);
     await markEmailDeliverySent({
       deliveryId: claim.deliveryId,
       providerMessageId: result.messageId
@@ -492,6 +499,10 @@ async function sendIdempotentEmail(input: IdempotentEmailInput) {
       messageId: result.messageId
     };
   } catch (error) {
+    if (isStaleWorkflowGenerationError(error)) {
+      throw error;
+    }
+    await assertWorkflowStillValid(input.context);
     const classification = await markEmailDeliveryFailed({
       deliveryId: claim.deliveryId,
       error
@@ -743,6 +754,7 @@ export async function processLeadsByStatus(
         lead_status: processedRow.lead_status || LEAD_STATUS.DEMO_SCHEDULED,
         Remarks: processedRow.Remarks || ''
       });
+      await assertStillCurrent();
       await saveSheetLeadState(processedRow, { lastAction: 'DEMO_SCHEDULED', lastActionStatus: 'success' });
       await notifyRowProcessed(processedRow);
     } catch (err: unknown) {
@@ -755,6 +767,7 @@ export async function processLeadsByStatus(
         lead_status: failedRow.lead_status || LEAD_STATUS.DEMO_SCHEDULED,
         Remarks: message
       });
+      await assertStillCurrent();
       await saveSheetLeadState(failedRow, { lastAction: 'DEMO_SCHEDULED', lastActionStatus: 'failed', lastError: message });
       await notifyRowProcessed(failedRow);
     }
@@ -808,6 +821,7 @@ export async function processLeadsByStatus(
         lead_status: LEAD_STATUS.DEMO_SCHEDULED,
         Remarks: processedRow.Remarks || ''
       });
+      await assertStillCurrent();
       await saveSheetLeadState(processedRow, {
         lastLeadStatus: LEAD_STATUS.RESCHEDULE,
         lastMeetingDate: currentMeetingDate || null,
@@ -828,6 +842,7 @@ export async function processLeadsByStatus(
         lead_status: LEAD_STATUS.RESCHEDULE,
         Remarks: message
       });
+      await assertStillCurrent();
       await saveSheetLeadState(failedRow, {
         lastLeadStatus: LEAD_STATUS.RESCHEDULE,
         lastMeetingDate: currentMeetingDate || null,
@@ -857,6 +872,7 @@ export async function processLeadsByStatus(
         lead_status: result.row.lead_status || LEAD_STATUS.DEMO_DONE,
         Remarks: result.row.Remarks || result.message || ''
       });
+      await assertStillCurrent();
       await saveSheetLeadState(result.row, {
         lastAction: 'DEMO_DONE_THANK_YOU',
         lastActionStatus: result.skipped ? 'skipped' : 'success'
@@ -872,6 +888,7 @@ export async function processLeadsByStatus(
         lead_status: failedRow.lead_status || LEAD_STATUS.DEMO_DONE,
         Remarks: message
       });
+      await assertStillCurrent();
       await saveSheetLeadState(failedRow, { lastAction: 'DEMO_DONE_THANK_YOU', lastActionStatus: 'failed', lastError: message });
       await notifyRowProcessed(failedRow);
     }
@@ -907,6 +924,7 @@ export async function processLeadsByStatus(
         lead_status: updatedRow.lead_status || '',
         Remarks: updatedRow.Remarks || ''
       });
+      await assertStillCurrent();
       await saveSheetLeadState(updatedRow, {
         lastMeetingLink: String(updatedRow['Meeting Details'] || '') || null,
         lastAction: isNoResponse ? 'NO_RESPONSE' : 'STATUS_ONLY',
@@ -923,6 +941,7 @@ export async function processLeadsByStatus(
         lead_status: failedRow.lead_status || '',
         Remarks: message
       });
+      await assertStillCurrent();
       await saveSheetLeadState(failedRow, { lastAction: 'STATUS_ONLY', lastActionStatus: 'failed', lastError: message });
       await notifyRowProcessed(failedRow);
     }
@@ -948,10 +967,14 @@ export async function processLeadsByStatus(
       const failedResults = sheetResults.filter((result) => !result.success);
       for (const result of sheetResults) {
         if (result.success) {
-          if (result.emailDeliveryId) await markEmailSheetSyncSucceeded(result.emailDeliveryId);
+          if (result.emailDeliveryId) {
+            await assertStillCurrent();
+            await markEmailSheetSyncSucceeded(result.emailDeliveryId);
+          }
           continue;
         }
 
+        await assertStillCurrent();
         await enqueueSheetSyncJob({
           spreadsheetId: context.spreadsheetId,
           sheetName: context.sheetName,
@@ -962,6 +985,7 @@ export async function processLeadsByStatus(
           error: result.error
         });
         if (result.emailDeliveryId) {
+          await assertStillCurrent();
           await markEmailSheetSyncFailed(result.emailDeliveryId, result.error);
         }
       }
@@ -970,6 +994,7 @@ export async function processLeadsByStatus(
         sheetSyncError = `${failedResults.length} Google Sheet row update(s) queued for retry.`;
       }
     } catch (err) {
+      if (isStaleWorkflowGenerationError(err)) throw err;
       const friendly = friendlySheetsError(err);
       sheetSyncError = friendly.message;
       console.error('GOOGLE_SHEET_SYNC_AFTER_PROCESS_FAILED', {
@@ -1020,6 +1045,7 @@ export async function syncSheetRow(
     payload['Meeting Details'] = updates['Meeting Details'];
   }
 
+  await assertWorkflowStillValid(context);
   await updateGoogleSheetRow(
     context.spreadsheetId,
     context.sheetName,
@@ -1074,6 +1100,7 @@ export async function sendThankYouForRow(
       });
     }
     if (emailResult.reason === 'ALREADY_SENT') {
+      await assertWorkflowStillValid(context);
       await closeActiveDemoForRow(row, LEAD_STATUS.DEMO_DONE);
     }
     return { row: updatedRow, skipped: true, message };
@@ -1081,6 +1108,7 @@ export async function sendThankYouForRow(
 
   const keys = { email, dateOfDemo: String(row['Date of Demo'] || ''), timeOfDemo: String(row['Time of Demo'] || '') };
   if (keys.email && keys.dateOfDemo && keys.timeOfDemo) {
+    await assertWorkflowStillValid(context);
     await saveLeadScheduleSuccess(
       row,
       {
@@ -1107,6 +1135,7 @@ export async function sendThankYouForRow(
     });
   }
 
+  await assertWorkflowStillValid(context);
   await closeActiveDemoForRow(row, LEAD_STATUS.DEMO_DONE, {
     emailSentAt: emailResult.sent ? new Date().toISOString() : undefined
   });
@@ -1160,8 +1189,10 @@ export async function sendNoResponseForRow(
       }, true);
     }
     if (emailResult.reason === 'ALREADY_SENT') {
+      await assertWorkflowStillValid(context);
       await closeActiveDemoForRow(row, LEAD_STATUS.NO_RESPONSE);
     }
+    await assertWorkflowStillValid(context);
     await saveLeadStatusUpdate(
       updatedRow,
       {
@@ -1173,6 +1204,7 @@ export async function sendNoResponseForRow(
     return { row: updatedRow, skipped: true, message };
   }
 
+  await assertWorkflowStillValid(context);
   await closeActiveDemoForRow(row, LEAD_STATUS.NO_RESPONSE, {
     emailSentAt: new Date().toISOString()
   });
@@ -1193,6 +1225,7 @@ export async function sendNoResponseForRow(
     }, true);
   }
 
+  await assertWorkflowStillValid(context);
   await saveLeadStatusUpdate(
     updatedRow,
     {
@@ -1227,6 +1260,7 @@ export async function rescheduleDemoForRow(
 
   const oldDate = active.state.demoDate || active.history.displayDate || undefined;
   const oldTime = active.state.demoTime || active.history.displayTime || undefined;
+  await assertWorkflowStillValid(context);
   const calendarResult = await updateCalendarMeeting(row, active.state.calendarEventId, context.emailBrand);
   const meetLink = calendarResult.meetLink || active.state.meetingLink;
   const calendarEventId = calendarResult.eventId || active.state.calendarEventId;
@@ -1238,11 +1272,13 @@ export async function rescheduleDemoForRow(
     Remarks: 'Rescheduled. Meeting updated and email sent.'
   };
 
+  await assertWorkflowStillValid(context);
   await rescheduleActiveDemoForRow(updatedRow, {
     meetingLink: meetLink,
     calendarEventId
   });
 
+  await assertWorkflowStillValid(context);
   await saveLeadScheduleSuccess(
     updatedRow,
     {
@@ -1257,6 +1293,7 @@ export async function rescheduleDemoForRow(
     }
   );
 
+  await assertWorkflowStillValid(context);
   invalidateScheduledReminder(row, 'Reminder invalidated by reschedule');
   addScheduledReminder(updatedRow, meetLink, calendarResult.startTime);
 
@@ -1288,6 +1325,7 @@ export async function rescheduleDemoForRow(
         }, context.emailBrand)
     });
   } catch (error) {
+    if (isStaleWorkflowGenerationError(error)) throw error;
     emailError = error instanceof Error ? error.message : String(error);
   }
 
@@ -1309,6 +1347,7 @@ export async function rescheduleDemoForRow(
     __emailDeliveryId: emailResult?.deliveryId
   };
 
+  await assertWorkflowStillValid(context);
   await saveLeadScheduleSuccess(
     finalRow,
     {
@@ -1362,6 +1401,7 @@ export async function updateLeadStatusOnly(
     });
   }
 
+  await assertWorkflowStillValid(context);
   await saveLeadStatusUpdate(
     updatedRow,
     {
@@ -1399,6 +1439,11 @@ export async function processScheduleRows(
 
   const timeConflictGroups = findTimeConflictGroups(rows);
   const conflictRowIds = new Set(timeConflictGroups.flatMap((group) => group.rowIds));
+  const assertStillCurrent = () => assertWorkflowStillValid(options?.sheetContext);
+  const notifyScheduleRowProcessed = async (row: ExcelRow, index: number) => {
+    await assertStillCurrent();
+    await options?.onRowProcessed?.(row, index);
+  };
 
   const validateScheduleDateTime = (dateValue: unknown, timeValue: unknown) => {
     const startTime = parseExcelDateTime(dateValue, timeValue);
@@ -1409,6 +1454,7 @@ export async function processScheduleRows(
   };
 
   for (let index = 0; index < rows.length; index++) {
+    await assertStillCurrent();
     const row = rows[index];
     const rowEmail = row.email || 'missing-email';
     console.log(`Processing row ${index + 1}/${rows.length}: ${rowEmail}`);
@@ -1420,12 +1466,13 @@ export async function processScheduleRows(
     const forceNewSchedule = !!options?.forceNewSchedule;
     if (conflictRowIds.has(row.id)) {
       const updatedRow = failureRow(row, TIME_CONFLICT_REMARK);
+      await assertStillCurrent();
       await saveLeadScheduleFailure(updatedRow, TIME_CONFLICT_REMARK);
       results.push(updatedRow);
       summary.failed++;
       summary.timeConflicts = (summary.timeConflicts || 0) + 1;
       logResult('Failed');
-      await options?.onRowProcessed?.(updatedRow, index);
+      await notifyScheduleRowProcessed(updatedRow, index);
       if (index < rows.length - 1) await delay(1000);
       continue;
     }
@@ -1438,7 +1485,7 @@ export async function processScheduleRows(
       results.push(row);
       summary.skipped++;
       logResult('Skipped');
-      await options?.onRowProcessed?.(row, index);
+      await notifyScheduleRowProcessed(row, index);
       if (index < rows.length - 1) await delay(1000);
       continue;
     }
@@ -1449,11 +1496,12 @@ export async function processScheduleRows(
         __schedulerStatus: 'Failed',
         Remarks: 'Email is invalid. Add a valid recipient email before scheduling.'
       };
+      await assertStillCurrent();
       await saveLeadScheduleFailure(updatedRow, updatedRow.Remarks || 'Email is invalid');
       results.push(updatedRow);
       summary.failed++;
       logResult('Failed');
-      await options?.onRowProcessed?.(updatedRow, index);
+      await notifyScheduleRowProcessed(updatedRow, index);
       if (index < rows.length - 1) await delay(1000);
       continue;
     }
@@ -1463,11 +1511,12 @@ export async function processScheduleRows(
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Date or time is invalid.';
       const updatedRow: ExcelRow = { ...row, __schedulerStatus: 'Failed', Remarks: message };
+      await assertStillCurrent();
       await saveLeadScheduleFailure(updatedRow, message);
       results.push(updatedRow);
       summary.failed++;
       logResult('Failed');
-      await options?.onRowProcessed?.(updatedRow, index);
+      await notifyScheduleRowProcessed(updatedRow, index);
       if (index < rows.length - 1) await delay(1000);
       continue;
     }
@@ -1478,6 +1527,7 @@ export async function processScheduleRows(
       sheetName: row.__sheetName,
       headers: row.__originalColumns
     };
+    await assertStillCurrent();
     const eventState = await getEmailEventState({
       row,
       context: sheetContext,
@@ -1503,7 +1553,7 @@ export async function processScheduleRows(
       results.push(updatedRow);
       summary.skipped++;
       logResult('Skipped');
-      await options?.onRowProcessed?.(updatedRow, index);
+      await notifyScheduleRowProcessed(updatedRow, index);
       if (index < rows.length - 1) await delay(1000);
       continue;
     }
@@ -1517,7 +1567,7 @@ export async function processScheduleRows(
       results.push(updatedRow);
       summary.skipped++;
       logResult('Skipped');
-      await options?.onRowProcessed?.(updatedRow, index);
+      await notifyScheduleRowProcessed(updatedRow, index);
       if (index < rows.length - 1) await delay(1000);
       continue;
     }
@@ -1531,12 +1581,13 @@ export async function processScheduleRows(
       results.push(updatedRow);
       summary.skipped++;
       logResult('Skipped');
-      await options?.onRowProcessed?.(updatedRow, index);
+      await notifyScheduleRowProcessed(updatedRow, index);
       if (index < rows.length - 1) await delay(1000);
       continue;
     }
 
     try {
+      await assertStillCurrent();
       const activeDemo = await assertCanCreateOrReuseActiveDemo(row);
       let meetLink = existingMeetLink;
       let calendarEventId = activeDemo?.state.calendarEventId || '';
@@ -1571,11 +1622,13 @@ export async function processScheduleRows(
             throw new Error(calendarBlockedMessage());
           }
 
+          await assertStillCurrent();
           const scheduleResult = await scheduleMeeting(row, sheetContext.emailBrand);
           meetLink = scheduleResult.meetLink;
           calendarEventId = scheduleResult.eventId;
           startTime = scheduleResult.startTime;
 
+          await assertStillCurrent();
           await saveLeadScheduleSuccess(
             { ...row, 'Meeting Details': meetLink },
             {
@@ -1590,6 +1643,7 @@ export async function processScheduleRows(
             }
           );
 
+          await assertStillCurrent();
           await ensureScheduledDemoHistory(
             { ...row, 'Meeting Details': meetLink },
             {
@@ -1662,6 +1716,7 @@ export async function processScheduleRows(
         __emailDeliveryId: emailResult.deliveryId
       };
 
+      await assertStillCurrent();
       await saveLeadScheduleSuccess(
         updatedRow,
         {
@@ -1677,6 +1732,7 @@ export async function processScheduleRows(
         }
       );
 
+      await assertStillCurrent();
       await ensureScheduledDemoHistory(
         updatedRow,
         {
@@ -1690,15 +1746,18 @@ export async function processScheduleRows(
         }
       );
       if (emailResult.sent) {
+        await assertStillCurrent();
         await markScheduledEmailSent(updatedRow);
       }
 
+      await assertStillCurrent();
       addScheduledReminder(updatedRow, meetLink, startTime);
       results.push(updatedRow);
       summary.scheduled++;
       logResult('Scheduled');
-      await options?.onRowProcessed?.(updatedRow, index);
+      await notifyScheduleRowProcessed(updatedRow, index);
     } catch (err: unknown) {
+      if (isStaleWorkflowGenerationError(err)) throw err;
       const failureMessage =
         err instanceof Error ? err.message : 'Scheduling failed: Google API transaction did not complete.';
       if (isCalendarQuotaBlocked(failureMessage)) {
@@ -1712,6 +1771,7 @@ export async function processScheduleRows(
         __schedulerStatus: 'Failed',
         Remarks: failureMessage
       };
+      await assertStillCurrent();
       await saveLeadScheduleFailure(updatedRow, failureMessage, {
         sourceType: options?.sheetContext?.sourceType || row.__sourceType,
         sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
@@ -1721,7 +1781,7 @@ export async function processScheduleRows(
       results.push(updatedRow);
       summary.failed++;
       logResult('Failed');
-      await options?.onRowProcessed?.(updatedRow, index);
+      await notifyScheduleRowProcessed(updatedRow, index);
     }
 
     if (index < rows.length - 1) await delay(1000);

@@ -19,7 +19,7 @@ import { ensureRequiredColumns, friendlySheetsError } from '../googleSheets';
 import { processLeadsByStatus } from '../leadWorkflow';
 import { applyDbTruthToRows } from '../scheduleDb';
 import { withWorkflowActivity } from '../workflowActivity';
-import { assertWorkflowGenerationCurrent } from '../workflowControl';
+import { assertWorkflowGenerationCurrent, isStaleWorkflowGenerationError } from '../workflowControl';
 
 dotenv.config();
 
@@ -129,12 +129,19 @@ export function startProcessLeadWorker() {
       } catch (err: any) {
         const message = err instanceof Error ? err.message : 'Lead processing job failed.';
         const friendly = friendlySheetsError(err);
-        await markProcessLeadJobFailed(jobId, friendly?.message || message).catch((error) => {
-          console.error('PROCESS_LEAD_JOB_MARK_FAILED_ERROR', {
-            processJobId: jobId,
-            message: error instanceof Error ? error.message : String(error)
+        if (!isStaleWorkflowGenerationError(err)) {
+          await (async () => {
+            const currentJob = await getProcessLeadJob(jobId);
+            if (!currentJob) return;
+            await assertWorkflowGenerationCurrent(currentJob.generation);
+            await markProcessLeadJobFailed(jobId, friendly?.message || message);
+          })().catch((error) => {
+            console.error('PROCESS_LEAD_JOB_MARK_FAILED_ERROR', {
+              processJobId: jobId,
+              message: error instanceof Error ? error.message : String(error)
+            });
           });
-        });
+        }
         throw err;
       }
     },
