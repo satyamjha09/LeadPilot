@@ -9,7 +9,8 @@ export async function resetDemoTestData() {
       public."CustomerDemoState",
       public."DemoHistory",
       public."EmailDelivery",
-      public."SheetSyncJob"
+      public."SheetSyncJob",
+      public."ProcessLeadJob"
     RESTART IDENTITY CASCADE
   `);
 }
