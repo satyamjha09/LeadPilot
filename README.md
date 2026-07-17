@@ -1,37 +1,202 @@
-# Excel Meet Scheduler
+# LeadPilot - Excel & Google Sheet Meet Scheduler
 
-Upload an Excel sheet or import a Google Sheets URL, create Google Calendar events with Google Meet links, send Gmail invitations, and update the source sheet or export Excel.
+LeadPilot imports leads from Excel or Google Sheets, creates Google Calendar meetings with Google Meet links, sends Gmail templates, updates the source sheet, and prevents duplicate emails using PostgreSQL state.
+
+The current production setup supports two brands:
+
+- **TallyKonnect** using `demo.tallykonnect@gmail.com`
+- **AnyWhereTally** using `info.anywheretally@gmail.com`
+
+The workflow stays the same for both brands. The selected brand changes the sender account, logo, company name, website, contact email, calendar copy, and email template content.
+
+## Current Status
+
+Final application behavior matches the intended workflow:
+
+- Excel import uses multipart upload with `multer`.
+- Google Sheet import reads directly from Google Sheets.
+- Google OAuth tokens are stored in PostgreSQL via Prisma, not local token files.
+- Processing preview shows total, skipped, new scheduled emails, reschedules, demo-done emails, invalid rows, and time conflicts.
+- Background processing uses BullMQ + Redis when `PROCESS_QUEUE_ENABLED=true`.
+- Duplicate prevention uses `automation_id`, `LeadSchedule`, `CustomerDemoState`, `DemoHistory`, and `EmailDelivery`.
+- Old Demo Scheduled rows with existing Meet links are skipped.
+- `Reschedule` rows are processed even when an old Meet link exists.
+- AnyWhereTally has all three main templates:
+  - Demo Scheduled
+  - Demo Done / Thank You
+  - Reschedule Demo
+
+## Main Workflow
+
+1. User imports an Excel file or Google Sheet URL.
+2. App normalizes rows and lead statuses.
+3. App restores missing `automation_id` from PostgreSQL when possible.
+4. User selects rows and clicks Process Leads.
+5. Preview dialog shows what will happen before sending.
+6. User selects brand: TallyKonnect or AnyWhereTally.
+7. Backend processes only actionable rows.
+8. App creates/updates Google Calendar events and Google Meet links.
+9. App sends the correct email template from the correct Google account.
+10. Google Sheet rows are updated directly, or Excel results can be exported.
+
+## Supported Lead Statuses
+
+Recommended values:
+
+- `Demo Scheduled`
+- `Reschedule`
+- `Demo Done`
+- `Not Attended`
+- `Follow Up`
+- `To be called`
+- `not required`
+- `Repeated`
+
+Notes:
+
+- `No Response` is accepted as an alias, but the app normalizes it to `Not Attended`.
+- `Demo Scheduled` creates a meeting and sends the scheduled-demo email.
+- `Reschedule` updates the existing calendar event and sends the reschedule email.
+- `Demo Done` sends the thank-you/demo-done email.
+- `Not Attended` sends the not-attended email.
+- Status-only rows do not create a new meeting.
+
+## Required Sheet Columns
+
+The app supports flexible header names, but these are recommended:
+
+- `full_name`
+- `email`
+- `Date of Demo`
+- `Time of Demo`
+- `Meeting Details`
+- `lead_status`
+- `Remarks`
+- `automation_id`
+
+Google Sheet processing updates:
+
+- `Meeting Details`
+- `lead_status`
+- `Remarks`
+- `automation_id`
+
+## Duplicate Prevention
+
+The duplicate-safety design depends on stable lead identity.
+
+Important rules:
+
+- `automation_id` is treated like a permanent ID for each lead row.
+- If a Google Sheet row loses its `automation_id`, the app tries to restore it from PostgreSQL.
+- Existing Demo Scheduled rows with a Google Meet link are skipped.
+- Existing email deliveries are checked before Gmail sends again.
+- Failed rows can be retried safely.
+- `Reschedule` is intentionally not skipped because it means update date/time and notify the customer.
+
+Database tables involved:
+
+- `LeadSchedule`
+- `CustomerDemoState`
+- `DemoHistory`
+- `EmailDelivery`
+- `SheetLeadState`
+- `SheetSyncJob`
+- `GoogleAuth`
+- `ProcessLeadJob`
+
+## Brand & Email Account Behavior
+
+Brand selection is made in the process preview dialog before final processing.
+
+### TallyKonnect
+
+- Sender/auth email: `demo.tallykonnect@gmail.com`
+- Website: `https://tallykonnect.com`
+- Logo: `public/images/logo.png`
+- Demo focus: Smart TDS / TallyKonnect
+
+### AnyWhereTally
+
+- Sender/auth email: `info.anywheretally@gmail.com`
+- Website: `https://anywheretally.com`
+- Logo: `public/images/anywheretally.png`
+- Demo focus: Tally Mobile App / AnyWhereTally
+
+AnyWhereTally templates present in code:
+
+- `buildAnyWhereTallyScheduledHtml`
+- `buildAnyWhereTallyThankYouHtml`
+- `buildAnyWhereTallyRescheduleHtml`
+
+These are used by:
+
+- `buildMeetingInviteEmail`
+- `buildThankYouEmail`
+- `buildRescheduleEmail`
+
+The lead workflow passes `emailBrand` into Calendar, Gmail, Google Sheets, queued jobs, and manual processing paths.
 
 ## Local Setup
 
-1. Install dependencies:
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-2. Create `.env` from `.env.example` and fill in:
+Create `.env` from `.env.example`:
+
+```bash
+copy .env.example .env
+```
+
+Fill in local values:
 
 ```env
+APP_URL=http://localhost:3000
+
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_REDIRECT_URI=http://localhost:3000/api/auth/callback/google
-GOOGLE_REFRESH_TOKEN=
-DATABASE_URL="postgresql://postgres:your_password@localhost:5432/tallykonnect_dev?schema=public"
+GOOGLE_AUTH_EMAIL=demo.tallykonnect@gmail.com
+GMAIL_FROM_EMAIL=demo.tallykonnect@gmail.com
+GMAIL_FROM_NAME=TallyKonnect
+
+GOOGLE_ANYWHERETALLY_CLIENT_ID=
+GOOGLE_ANYWHERETALLY_CLIENT_SECRET=
+GOOGLE_ANYWHERETALLY_REDIRECT_URI=http://localhost:3000/api/auth/callback/google
+GOOGLE_ANYWHERETALLY_AUTH_EMAIL=info.anywheretally@gmail.com
+GMAIL_ANYWHERETALLY_FROM_EMAIL=info.anywheretally@gmail.com
+
+DATABASE_URL="postgresql://postgres:your_password@localhost:5432/leadpilot_dev?schema=public"
+
+PROCESS_QUEUE_ENABLED=false
+PROCESS_QUEUE_CONCURRENCY=1
+REDIS_URL=redis://localhost:6379
 ```
 
-`GOOGLE_REFRESH_TOKEN` is optional. If you use it, **Clear Session** in the app disables that env token for the current local session until you link Google again.
-
-Do not use `file:./dev.db` for this app in production. The demo workflow needs persistent database state for active sessions, demo history, and idempotent email delivery.
-
-3. Initialize the database:
+Run database migrations:
 
 ```bash
-npx prisma migrate dev
-npx prisma generate
+npm run db:migrate
 ```
 
-4. In Google Cloud Console, enable:
+Start local development:
+
+```bash
+npm run dev
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+## Google Cloud Setup
+
+Enable these APIs in Google Cloud:
 
 - Google Calendar API
 - Gmail API
@@ -43,112 +208,207 @@ Required OAuth scopes:
 - `https://www.googleapis.com/auth/gmail.send`
 - `https://www.googleapis.com/auth/spreadsheets`
 
-**Important:** After adding or changing OAuth scopes, reconnect Google in the app or regenerate your refresh token so the saved token includes Calendar, Gmail, and Sheets access.
-
-**Production security:** Do not commit `.env`, `data/google_tokens.json`, refresh tokens, client secrets, or local database files. If any Google client secret or refresh token was exposed during local testing, rotate it before production use.
-
-5. Add this OAuth redirect URI in Google Cloud Console:
+Local redirect URI:
 
 ```text
 http://localhost:3000/api/auth/callback/google
 ```
 
-6. Start the app:
-
-```bash
-npm run dev
-```
-
-7. Open:
+VPS redirect URI:
 
 ```text
-http://localhost:3000
+http://YOUR_SERVER_IP/api/auth/callback/google
 ```
 
-## Google Sheets import
-
-1. Choose **Google Sheet Link** in the import panel.
-2. Paste a sheet URL (with or without `gid` for a specific tab).
-3. Preview rows, select pending rows, and click **Schedule & Send Selected**.
-4. The backend updates **Meeting Details**, **lead_status**, and **remarks** on the same Google Sheet rows.
-
-Supported URL formats include:
-
-- `https://docs.google.com/spreadsheets/d/{id}/edit#gid={gid}`
-- `https://docs.google.com/spreadsheets/d/{id}/edit?gid={gid}`
-- `https://docs.google.com/spreadsheets/d/{id}` (first tab)
-
-## Render + PostgreSQL
-
-Use Render Postgres for production. In Render environment variables, set `DATABASE_URL` to the Render Postgres internal database URL without quotes:
+For the current IP-only VPS deployment, the redirect URI is:
 
 ```text
-DATABASE_URL=postgresql://user:password@host:5432/dbname
+http://200.97.174.49/api/auth/callback/google
 ```
 
-Recommended Render commands:
+Important:
+
+- Add the redirect URI to both OAuth clients if both brands use separate Google OAuth clients.
+- After changing scopes or redirect URIs, reconnect Google from the app.
+- AnyWhereTally must be connected separately while the AnyWhereTally brand is selected.
+- The selected Google account must have edit access to the Google Sheet.
+
+## Running With BullMQ
+
+For small local testing, queue mode can stay disabled:
+
+```env
+PROCESS_QUEUE_ENABLED=false
+```
+
+For production/background processing:
+
+```env
+PROCESS_QUEUE_ENABLED=true
+PROCESS_QUEUE_CONCURRENCY=1
+REDIS_URL=redis://127.0.0.1:6379
+```
+
+Run web server:
 
 ```bash
-# Build command
-npm install && npx prisma generate && npm run build
-
-# Pre-deploy command
-npx prisma migrate deploy
-
-# Start command
 npm start
 ```
 
-## Duplicate prevention (Prisma + PostgreSQL)
+Run worker:
 
-The app stores each lead schedule in PostgreSQL using a unique key:
+```bash
+npm run worker:process-leads
+```
 
-`email` + `dateOfDemo` + `timeOfDemo` (normalized, email lowercased)
+Queue flow:
 
-Before creating a Calendar event or email:
+1. Frontend calls `POST /api/process-leads/jobs`.
+2. Backend stores `ProcessLeadJob` in PostgreSQL.
+3. Backend enqueues the job in Redis/BullMQ.
+4. Worker processes rows in the background.
+5. Frontend polls `GET /api/process-leads/jobs/:jobId`.
 
-- If a row is already **Demo Scheduled** with a Meet link in the database, Calendar and Gmail are skipped and the existing link is reused.
-- If a matching email log already exists for **Demo Scheduled** or **Demo Done**, the duplicate email is skipped.
-- If a prior attempt **Failed**, scheduling is retried on the next run.
-- Excel and Google Sheet files remain the display source; the database is the source of truth for duplicates.
+## Production Build
 
-## Excel columns
+Build the app:
 
-Required input columns can use flexible names. Recommended:
+```bash
+npm run build
+```
 
-- `full_name`
-- `email`
-- `Date of Demo`
-- `Time of Demo`
-- `Meeting Details`
-- `lead_status`
-- `Remarks`
+Run migrations:
 
-Export preserves original Excel columns and only updates:
+```bash
+npm run db:deploy
+```
 
-- `Meeting Details`
-- `lead_status`
-- `Remarks`
+Start server:
 
-Rows that already contain a `meet.google.com` link in **Meeting Details** are skipped. Google Sheet imports update these same three columns directly in the sheet.
+```bash
+npm start
+```
 
-## Email brand selection
+## Hostinger VPS Deployment
 
-Before final processing, the preview dialog lets you choose the email brand:
+Current production style:
 
-- `TallyKonnect`
-- `AnyWhereTally`
+- Ubuntu 24.04
+- Node.js 22
+- PostgreSQL
+- Redis
+- Nginx reverse proxy
+- PM2 for web + worker
 
-The scheduling workflow, duplicate prevention, Google Meet creation, and Google Sheet updates stay the same. The selected brand changes the email logo, company name, website, contact email, footer, and sender display name.
+Typical app path:
 
-## Redis + BullMQ background processing
+```text
+/var/www/leadpilot
+```
 
-Inline processing remains available through `POST /api/process-leads`.
+PM2 process names:
 
-When `PROCESS_QUEUE_ENABLED=true`, the frontend uses the background queue:
+```text
+leadpilot-web
+leadpilot-worker
+```
 
-1. `POST /api/process-leads/jobs` stores a durable job in PostgreSQL and enqueues it in BullMQ.
-2. `npm run worker:process-leads` processes the job in the background.
-3. `GET /api/process-leads/jobs/:jobId` returns status, progress, rows, and summary for frontend polling.
+Useful commands:
 
-Redis runs the queue. PostgreSQL remains the durable source for job progress/results and duplicate prevention.
+```bash
+pm2 status
+pm2 logs leadpilot-web
+pm2 logs leadpilot-worker
+systemctl status nginx
+systemctl status postgresql
+systemctl status redis-server
+```
+
+Deploy latest `main` on VPS:
+
+```bash
+cd /var/www/leadpilot
+git fetch origin main
+git reset --hard origin/main
+npm ci
+npm run db:deploy
+npm run build
+pm2 restart leadpilot-web --update-env
+pm2 restart leadpilot-worker --update-env
+pm2 save
+```
+
+Health check:
+
+```text
+http://YOUR_SERVER_IP/api/health
+```
+
+## API Overview
+
+Core endpoints:
+
+- `GET /api/health`
+- `GET /api/auth/status?brand=tallykonnect`
+- `GET /api/auth/status?brand=anywheretally`
+- `POST /api/auth/clear`
+- `GET /api/auth/callback/google`
+- `POST /api/preview`
+- `POST /api/sheets/import`
+- `POST /api/sheets/sync`
+- `POST /api/process-leads/preview`
+- `POST /api/process-leads`
+- `POST /api/process-leads/jobs`
+- `GET /api/process-leads/jobs/:jobId`
+- `POST /api/reconcile`
+- `POST /api/export`
+
+Manual review/retry endpoints:
+
+- `POST /api/email-deliveries/:deliveryId/retry`
+- `POST /api/email-deliveries/:deliveryId/mark-sent`
+- `POST /api/email-deliveries/:deliveryId/mark-failed`
+- `POST /api/sheet-sync/jobs/:jobId/retry`
+
+## Important Safety Notes
+
+- Never commit `.env`.
+- Never commit Google OAuth client secrets or refresh tokens.
+- Rotate secrets if they are exposed in chat, screenshots, logs, or commits.
+- Use HTTPS and a domain before wider production use.
+- Keep queue concurrency at `1` unless Gmail/Calendar quota behavior is fully tested.
+- Make database backups before production data migrations.
+
+## Verification Commands
+
+Run TypeScript checks:
+
+```bash
+npm run lint
+```
+
+Run production build:
+
+```bash
+npm run build
+```
+
+Check git state:
+
+```bash
+git status --short --branch
+```
+
+## Final Functional Checklist
+
+- TallyKonnect scheduled-demo email works.
+- TallyKonnect demo-done email works.
+- TallyKonnect reschedule email works.
+- AnyWhereTally scheduled-demo email template exists and is wired.
+- AnyWhereTally demo-done/thank-you email template exists and is wired.
+- AnyWhereTally reschedule email template exists and is wired.
+- Brand selector controls template, sender email, Calendar auth, Gmail auth, and Sheets auth.
+- Google Sheet rows can be imported, previewed, processed, and updated.
+- Excel rows can be imported, processed, and exported.
+- Duplicate prevention skips old scheduled rows and avoids repeated emails.
+- BullMQ worker can process large batches without holding the browser request open.
