@@ -180,7 +180,7 @@ export default function SettingsPanel({
           </p>
           <Button type="button" variant="destructive" onClick={() => setConfirmResetOpen(true)}>
             <Trash2 className="h-4 w-4" />
-            Reset Workflow
+            Reset App Workflow
           </Button>
         </CardContent>
       </Card>
@@ -189,8 +189,19 @@ export default function SettingsPanel({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Reset app workflow data?</DialogTitle>
-            <DialogDescription>
-              This will permanently delete schedules, email logs, sheet state, active sessions, demo history, and delivery records. It will also clear imported rows from this browser.
+            <DialogDescription className="space-y-3">
+              <span className="block">
+                This will clear application workflow data and imported browser data.
+              </span>
+              <span className="block">
+                It will not:
+              </span>
+              <span className="block">
+                • Delete Google Sheet rows<br />
+                • Delete Google Calendar events<br />
+                • Disconnect Google accounts<br />
+                • Undo previously sent emails
+              </span>
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
