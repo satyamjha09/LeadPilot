@@ -1,5 +1,6 @@
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
+import { createWorkflowBusyError } from './workflowActivity';
 
 export const PROCESS_LEAD_QUEUE_NAME = 'process-lead-jobs';
 
@@ -66,9 +67,7 @@ export async function prepareProcessQueueForReset() {
   const activeCount = await processQueue.getActiveCount();
   if (activeCount > 0) {
     await processQueue.resume();
-    const error = new Error('A lead workflow is currently running. Wait for it to finish before resetting.');
-    (error as Error & { statusCode?: number }).statusCode = 409;
-    throw error;
+    throw createWorkflowBusyError();
   }
 
   await processQueue.drain(true);

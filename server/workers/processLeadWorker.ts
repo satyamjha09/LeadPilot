@@ -18,6 +18,7 @@ import {
 import { ensureRequiredColumns, friendlySheetsError } from '../googleSheets';
 import { processLeadsByStatus } from '../leadWorkflow';
 import { applyDbTruthToRows } from '../scheduleDb';
+import { withWorkflowActivity } from '../workflowActivity';
 
 dotenv.config();
 
@@ -48,27 +49,29 @@ async function processLeadJob(jobId: string) {
   await markProcessLeadJobRunning(jobId, input.rows.length);
   const dbRows = await applyDbTruthToRows(input.rows);
 
-  const result = await processLeadsByStatus(dbRows, {
-    sourceType: input.sourceType,
-    spreadsheetId: input.spreadsheetId,
-    sheetName: input.sheetName,
-    headers,
-    emailBrand: input.emailBrand,
-    onRowProcessed: async (row, rowSummary) => {
-      progress.processed += 1;
-      progress.success =
-        rowSummary.demoScheduled +
-        rowSummary.demoDone +
-        rowSummary.noResponse +
-        rowSummary.statusOnly +
-        rowSummary.reschedule;
-      progress.failed = rowSummary.failed;
-      progress.skipped = rowSummary.skipped;
-      progress.currentName = String(row.full_name || '');
-      progress.currentEmail = row.email ? String(row.email) : undefined;
-      await updateProcessLeadJobProgress(jobId, progress);
-    }
-  });
+  const result = await withWorkflowActivity('lead-processing', async () =>
+    processLeadsByStatus(dbRows, {
+      sourceType: input.sourceType,
+      spreadsheetId: input.spreadsheetId,
+      sheetName: input.sheetName,
+      headers,
+      emailBrand: input.emailBrand,
+      onRowProcessed: async (row, rowSummary) => {
+        progress.processed += 1;
+        progress.success =
+          rowSummary.demoScheduled +
+          rowSummary.demoDone +
+          rowSummary.noResponse +
+          rowSummary.statusOnly +
+          rowSummary.reschedule;
+        progress.failed = rowSummary.failed;
+        progress.skipped = rowSummary.skipped;
+        progress.currentName = String(row.full_name || '');
+        progress.currentEmail = row.email ? String(row.email) : undefined;
+        await updateProcessLeadJobProgress(jobId, progress);
+      }
+    })
+  );
 
   const finalProgress: ProcessLeadJobProgress = {
     ...progress,

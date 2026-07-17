@@ -46,6 +46,7 @@ import {
 import { enqueueProcessLeadJob, isProcessQueueEnabled, prepareProcessQueueForReset } from '../processLeadQueue';
 import { buildExportRow, normalizeRows, reconcileScheduledRows } from '../services/rowTransforms';
 import { normalizeEmailBrand, type EmailBrandKey } from '../emailTemplates';
+import { beginResetGuard, withWorkflowActivity } from '../workflowActivity';
 
 type SheetSyncRunner = (
   spreadsheetId: string,
@@ -79,12 +80,14 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/admin/reset-demo-test-data', async (req, res) => {
     let resumeQueue: (() => Promise<void>) | null = null;
+    let finishResetGuard: (() => void) | null = null;
 
     try {
       if (!isAdminResetAuthorized(req)) {
         return res.status(403).json({ error: 'Invalid admin reset key.' });
       }
 
+      finishResetGuard = beginResetGuard();
       resumeQueue = await prepareProcessQueueForReset();
       await resetDemoTestData();
       return res.json({ success: true, message: 'Workflow database and pending process jobs cleared.' });
@@ -92,6 +95,9 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       console.error('Database reset failed:', err);
       return res.status(err.statusCode || 500).json({ error: err.message || 'Database reset failed' });
     } finally {
+      if (finishResetGuard) {
+        finishResetGuard();
+      }
       if (resumeQueue) {
         await resumeQueue().catch((error) => {
           console.error('Could not resume process queue:', error);
@@ -120,29 +126,34 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheets/import', async (req, res) => {
     try {
-      const { sheetUrl, emailBrand } = req.body as { sheetUrl?: string; emailBrand?: any };
-      const brand = normalizeEmailBrand(emailBrand);
-      if (!sheetUrl) {
-        return res.status(400).json({ error: 'Google Sheet URL is required.' });
-      }
+      return await withWorkflowActivity('sheet-sync', async () => {
+        const { sheetUrl, emailBrand } = req.body as { sheetUrl?: string; emailBrand?: any };
+        const brand = normalizeEmailBrand(emailBrand);
+        if (!sheetUrl) {
+          return res.status(400).json({ error: 'Google Sheet URL is required.' });
+        }
 
-      const { spreadsheetId, gid } = extractSheetInfo(sheetUrl);
-      const sheetName = await getSheetTitleByGid(spreadsheetId, gid, brand);
-      const syncResult = await options.runSheetSync(spreadsheetId, sheetName, undefined, brand);
+        const { spreadsheetId, gid } = extractSheetInfo(sheetUrl);
+        const sheetName = await getSheetTitleByGid(spreadsheetId, gid, brand);
+        const syncResult = await options.runSheetSync(spreadsheetId, sheetName, undefined, brand);
 
-      return res.json({
-        source: 'google-sheet',
-        spreadsheetId,
-        gid,
-        sheetName,
-        rows: syncResult.rows,
-        headers: syncResult.headers,
-        summary: syncResult.summary,
-        groups: syncResult.groups,
-        skippedDueToLock: syncResult.skippedDueToLock
+        return res.json({
+          source: 'google-sheet',
+          spreadsheetId,
+          gid,
+          sheetName,
+          rows: syncResult.rows,
+          headers: syncResult.headers,
+          summary: syncResult.summary,
+          groups: syncResult.groups,
+          skippedDueToLock: syncResult.skippedDueToLock
+        });
       });
     } catch (err: any) {
       console.error('Google Sheets import failed:', err);
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({ error: err.message });
+      }
       const friendlyError = friendlySheetsError(err);
       return res.status(friendlyError.status).json({ error: friendlyError.message });
     }
@@ -150,22 +161,27 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheets/sync', async (req, res) => {
     try {
-      const { spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
-        spreadsheetId?: string;
-        sheetName?: string;
-        headers?: string[];
-        emailBrand?: any;
-      };
-      const brand = normalizeEmailBrand(emailBrand);
+      return await withWorkflowActivity('sheet-sync', async () => {
+        const { spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
+          spreadsheetId?: string;
+          sheetName?: string;
+          headers?: string[];
+          emailBrand?: any;
+        };
+        const brand = normalizeEmailBrand(emailBrand);
 
-      if (!spreadsheetId || !sheetName) {
-        return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
-      }
+        if (!spreadsheetId || !sheetName) {
+          return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
+        }
 
-      const result = await options.runSheetSync(spreadsheetId, sheetName, incomingHeaders, brand);
-      return res.json(result);
+        const result = await options.runSheetSync(spreadsheetId, sheetName, incomingHeaders, brand);
+        return res.json(result);
+      });
     } catch (err: any) {
       console.error('Google Sheets sync failed:', err);
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({ error: err.message });
+      }
       const friendlyError = friendlySheetsError(err);
       return res.status(friendlyError.status).json({ error: friendlyError.message });
     }
@@ -173,62 +189,71 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/schedule', async (req, res) => {
     try {
-      const { rows } = req.body as { rows: ExcelRow[] };
-      if (!rows || !Array.isArray(rows)) {
-        return res.status(400).json({ error: 'Valid rows list must be supplied.' });
-      }
+      return await withWorkflowActivity('lead-processing', async () => {
+        const { rows } = req.body as { rows: ExcelRow[] };
+        if (!rows || !Array.isArray(rows)) {
+          return res.status(400).json({ error: 'Valid rows list must be supplied.' });
+        }
 
-      console.log(`Received request to schedule ${rows.length} rows...`);
-      const { rows: results, summary } = await processScheduleRows(rows);
-      return res.json({ rows: results, summary });
+        console.log(`Received request to schedule ${rows.length} rows...`);
+        const { rows: results, summary } = await processScheduleRows(rows);
+        return res.json({ rows: results, summary });
+      });
     } catch (err: any) {
       console.error('Schedule batch failed:', err);
-      return res.status(500).json({ error: `Batch processing crashed: ${err.message}` });
+      return res.status(err.statusCode || 500).json({
+        error: err.statusCode ? err.message : `Batch processing crashed: ${err.message}`
+      });
     }
   });
 
   app.post('/api/sheets/schedule', async (req, res) => {
     try {
-      const { spreadsheetId, sheetName, headers: incomingHeaders, rows, emailBrand } = req.body as {
-        spreadsheetId?: string;
-        sheetName?: string;
-        headers?: string[];
-        rows?: ExcelRow[];
-        emailBrand?: any;
-      };
-      const brand = normalizeEmailBrand(emailBrand);
+      return await withWorkflowActivity('lead-processing', async () => {
+        const { spreadsheetId, sheetName, headers: incomingHeaders, rows, emailBrand } = req.body as {
+          spreadsheetId?: string;
+          sheetName?: string;
+          headers?: string[];
+          rows?: ExcelRow[];
+          emailBrand?: any;
+        };
+        const brand = normalizeEmailBrand(emailBrand);
 
-      if (!spreadsheetId || !sheetName) {
-        return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
-      }
-      if (!rows || !Array.isArray(rows)) {
-        return res.status(400).json({ error: 'Valid rows list must be supplied.' });
-      }
-      if (!incomingHeaders || !Array.isArray(incomingHeaders) || incomingHeaders.length === 0) {
-        return res.status(400).json({ error: 'Google Sheet headers are required.' });
-      }
+        if (!spreadsheetId || !sheetName) {
+          return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
+        }
+        if (!rows || !Array.isArray(rows)) {
+          return res.status(400).json({ error: 'Valid rows list must be supplied.' });
+        }
+        if (!incomingHeaders || !Array.isArray(incomingHeaders) || incomingHeaders.length === 0) {
+          return res.status(400).json({ error: 'Google Sheet headers are required.' });
+        }
 
-      console.log(`Received request to schedule ${rows.length} Google Sheet rows...`);
-      const { headers } = await ensureRequiredColumns(spreadsheetId, sheetName, incomingHeaders, brand);
-      const preparedRows = rows.map((row) => ({
-        ...row,
-        __sourceType: 'google-sheet' as const,
-        __spreadsheetId: spreadsheetId,
-        __sheetName: sheetName,
-        __originalColumns: headers
-      }));
-      const dbRows = await applyDbTruthToRows(preparedRows);
-      const result = await processLeadsByStatus(dbRows, {
-        sourceType: 'google-sheet',
-        spreadsheetId,
-        sheetName,
-        headers,
-        emailBrand: brand
+        console.log(`Received request to schedule ${rows.length} Google Sheet rows...`);
+        const { headers } = await ensureRequiredColumns(spreadsheetId, sheetName, incomingHeaders, brand);
+        const preparedRows = rows.map((row) => ({
+          ...row,
+          __sourceType: 'google-sheet' as const,
+          __spreadsheetId: spreadsheetId,
+          __sheetName: sheetName,
+          __originalColumns: headers
+        }));
+        const dbRows = await applyDbTruthToRows(preparedRows);
+        const result = await processLeadsByStatus(dbRows, {
+          sourceType: 'google-sheet',
+          spreadsheetId,
+          sheetName,
+          headers,
+          emailBrand: brand
+        });
+
+        return res.json({ ...result, headers });
       });
-
-      return res.json({ ...result, headers });
     } catch (err: any) {
       console.error('Google Sheets schedule failed:', err);
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({ error: err.message });
+      }
       const friendlyError = friendlySheetsError(err);
       return res.status(friendlyError.status).json({ error: friendlyError.message });
     }
@@ -236,203 +261,211 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/send-thank-you', async (req, res) => {
     try {
-      const { row, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
-        row?: ExcelRow;
-        sourceType?: 'excel' | 'google-sheet';
-        spreadsheetId?: string;
-        sheetName?: string;
-        headers?: string[];
-        emailBrand?: any;
-      };
-      if (!row) return res.status(400).json({ error: 'Row is required.' });
+      return await withWorkflowActivity('lead-processing', async () => {
+        const { row, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
+          row?: ExcelRow;
+          sourceType?: 'excel' | 'google-sheet';
+          spreadsheetId?: string;
+          sheetName?: string;
+          headers?: string[];
+          emailBrand?: any;
+        };
+        if (!row) return res.status(400).json({ error: 'Row is required.' });
 
-      const [dbRow] = await applyDbTruthToRows([row]);
-      if (dbRow.__dbFinalState) {
+        const [dbRow] = await applyDbTruthToRows([row]);
+        if (dbRow.__dbFinalState) {
+          return res.json({
+            success: true,
+            row: dbRow,
+            skipped: true,
+            message: dbRow.Remarks || 'Lead already finalized in database.'
+          });
+        }
+
+        const result = await sendThankYouForRow(dbRow, {
+          sourceType: sourceType || 'excel',
+          spreadsheetId,
+          sheetName,
+          headers,
+          emailBrand
+        });
+
         return res.json({
           success: true,
-          row: dbRow,
-          skipped: true,
-          message: dbRow.Remarks || 'Lead already finalized in database.'
+          row: result.row,
+          skipped: result.skipped,
+          message: result.message
         });
-      }
-
-      const result = await sendThankYouForRow(dbRow, {
-        sourceType: sourceType || 'excel',
-        spreadsheetId,
-        sheetName,
-        headers,
-        emailBrand
-      });
-
-      return res.json({
-        success: true,
-        row: result.row,
-        skipped: result.skipped,
-        message: result.message
       });
     } catch (err: any) {
       console.error('Thank-you email failed:', err);
-      return res.status(500).json({ error: err.message || 'Thank-you email failed' });
+      return res.status(err.statusCode || 500).json({ error: err.message || 'Thank-you email failed' });
     }
   });
 
   app.post('/api/send-thank-you/batch', async (req, res) => {
     try {
-      const { rows, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
-        rows?: ExcelRow[];
-        sourceType?: 'excel' | 'google-sheet';
-        spreadsheetId?: string;
-        sheetName?: string;
-        headers?: string[];
-        emailBrand?: any;
-      };
-      if (!rows || !Array.isArray(rows)) {
-        return res.status(400).json({ error: 'Valid rows list must be supplied.' });
-      }
+      return await withWorkflowActivity('lead-processing', async () => {
+        const { rows, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
+          rows?: ExcelRow[];
+          sourceType?: 'excel' | 'google-sheet';
+          spreadsheetId?: string;
+          sheetName?: string;
+          headers?: string[];
+          emailBrand?: any;
+        };
+        if (!rows || !Array.isArray(rows)) {
+          return res.status(400).json({ error: 'Valid rows list must be supplied.' });
+        }
 
-      const context = {
-        sourceType: (sourceType || 'excel') as 'excel' | 'google-sheet',
-        spreadsheetId,
-        sheetName,
-        headers,
-        emailBrand
-      };
+        const context = {
+          sourceType: (sourceType || 'excel') as 'excel' | 'google-sheet',
+          spreadsheetId,
+          sheetName,
+          headers,
+          emailBrand
+        };
 
-      const results: Array<{
-        id: string;
-        success: boolean;
-        row?: ExcelRow;
-        skipped?: boolean;
-        message?: string;
-        error?: string;
-      }> = [];
+        const results: Array<{
+          id: string;
+          success: boolean;
+          row?: ExcelRow;
+          skipped?: boolean;
+          message?: string;
+          error?: string;
+        }> = [];
 
-      for (let i = 0; i < rows.length; i++) {
-        const [row] = await applyDbTruthToRows([rows[i]]);
-        try {
-          if (row.__dbFinalState) {
+        for (let i = 0; i < rows.length; i++) {
+          const [row] = await applyDbTruthToRows([rows[i]]);
+          try {
+            if (row.__dbFinalState) {
+              results.push({
+                id: row.id,
+                success: true,
+                row,
+                skipped: true,
+                message: row.Remarks || 'Lead already finalized in database.'
+              });
+              continue;
+            }
+            const result = await sendThankYouForRow(row, context);
             results.push({
               id: row.id,
               success: true,
-              row,
-              skipped: true,
-              message: row.Remarks || 'Lead already finalized in database.'
+              row: result.row,
+              skipped: result.skipped,
+              message: result.message
             });
-            continue;
+          } catch (err: any) {
+            results.push({
+              id: row.id,
+              success: false,
+              error: err.message || 'Thank-you email failed',
+              row
+            });
           }
-          const result = await sendThankYouForRow(row, context);
-          results.push({
-            id: row.id,
-            success: true,
-            row: result.row,
-            skipped: result.skipped,
-            message: result.message
-          });
-        } catch (err: any) {
-          results.push({
-            id: row.id,
-            success: false,
-            error: err.message || 'Thank-you email failed',
-            row
-          });
+          if (i < rows.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
         }
-        if (i < rows.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-      }
 
-      return res.json({ results });
+        return res.json({ results });
+      });
     } catch (err: any) {
       console.error('Thank-you batch failed:', err);
-      return res.status(500).json({ error: err.message || 'Thank-you batch failed' });
+      return res.status(err.statusCode || 500).json({ error: err.message || 'Thank-you batch failed' });
     }
   });
 
   app.post('/api/lead-status/update', async (req, res) => {
     try {
-      const { row, status, remarks, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
-        row?: ExcelRow;
-        status?: string;
-        remarks?: string;
-        sourceType?: 'excel' | 'google-sheet';
-        spreadsheetId?: string;
-        sheetName?: string;
-        headers?: string[];
-        emailBrand?: any;
-      };
-      const brand = normalizeEmailBrand(emailBrand);
+      return await withWorkflowActivity('lead-processing', async () => {
+        const { row, status, remarks, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
+          row?: ExcelRow;
+          status?: string;
+          remarks?: string;
+          sourceType?: 'excel' | 'google-sheet';
+          spreadsheetId?: string;
+          sheetName?: string;
+          headers?: string[];
+          emailBrand?: any;
+        };
+        const brand = normalizeEmailBrand(emailBrand);
 
-      if (!row || !status) {
-        return res.status(400).json({ error: 'Row and status are required.' });
-      }
+        if (!row || !status) {
+          return res.status(400).json({ error: 'Row and status are required.' });
+        }
 
-      const normalized = normalizeLeadStatus(status);
-      if (normalized === LEAD_STATUS.DEMO_SCHEDULED) {
-        return res.status(400).json({ error: 'Use scheduling endpoint for Demo Scheduled' });
-      }
-      if (normalized === LEAD_STATUS.DEMO_DONE) {
-        return res.status(400).json({ error: 'Use thank-you endpoint for Demo Done' });
-      }
-      if (normalized === LEAD_STATUS.RESCHEDULE) {
-        return res.status(400).json({ error: 'Use lead processing endpoint for Reschedule' });
-      }
-      if (normalized === LEAD_STATUS.NO_RESPONSE) {
-        return res.status(400).json({ error: 'Use lead processing endpoint for Not Attended' });
-      }
-      if (!isValidLeadStatus(status)) {
-        return res.status(400).json({ error: 'Invalid lead_status value.' });
-      }
+        const normalized = normalizeLeadStatus(status);
+        if (normalized === LEAD_STATUS.DEMO_SCHEDULED) {
+          return res.status(400).json({ error: 'Use scheduling endpoint for Demo Scheduled' });
+        }
+        if (normalized === LEAD_STATUS.DEMO_DONE) {
+          return res.status(400).json({ error: 'Use thank-you endpoint for Demo Done' });
+        }
+        if (normalized === LEAD_STATUS.RESCHEDULE) {
+          return res.status(400).json({ error: 'Use lead processing endpoint for Reschedule' });
+        }
+        if (normalized === LEAD_STATUS.NO_RESPONSE) {
+          return res.status(400).json({ error: 'Use lead processing endpoint for Not Attended' });
+        }
+        if (!isValidLeadStatus(status)) {
+          return res.status(400).json({ error: 'Invalid lead_status value.' });
+        }
 
-      const updatedRow = await updateLeadStatusOnly(
-        row,
-        status,
-        {
-          sourceType: sourceType || 'excel',
-          spreadsheetId,
-          sheetName,
-          headers,
-          emailBrand: brand
-        },
-        remarks
-      );
+        const updatedRow = await updateLeadStatusOnly(
+          row,
+          status,
+          {
+            sourceType: sourceType || 'excel',
+            spreadsheetId,
+            sheetName,
+            headers,
+            emailBrand: brand
+          },
+          remarks
+        );
 
-      return res.json({ success: true, row: updatedRow });
+        return res.json({ success: true, row: updatedRow });
+      });
     } catch (err: any) {
       console.error('Lead status update failed:', err);
-      return res.status(500).json({ error: err.message || 'Lead status update failed' });
+      return res.status(err.statusCode || 500).json({ error: err.message || 'Lead status update failed' });
     }
   });
 
   app.post('/api/active-demo/force-close', async (req, res) => {
     try {
-      const { row, remarks, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
-        row?: ExcelRow;
-        remarks?: string;
-        sourceType?: 'excel' | 'google-sheet';
-        spreadsheetId?: string;
-        sheetName?: string;
-        headers?: string[];
-        emailBrand?: any;
-      };
-      const brand = normalizeEmailBrand(emailBrand);
+      return await withWorkflowActivity('lead-processing', async () => {
+        const { row, remarks, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
+          row?: ExcelRow;
+          remarks?: string;
+          sourceType?: 'excel' | 'google-sheet';
+          spreadsheetId?: string;
+          sheetName?: string;
+          headers?: string[];
+          emailBrand?: any;
+        };
+        const brand = normalizeEmailBrand(emailBrand);
 
-      if (!row) {
-        return res.status(400).json({ error: 'Row is required.' });
-      }
+        if (!row) {
+          return res.status(400).json({ error: 'Row is required.' });
+        }
 
-      const updatedRow = await forceCloseActiveDemoForRow(row, remarks);
-      if (sourceType === 'google-sheet' && spreadsheetId && sheetName && headers?.length && row.__sheetRowNumber) {
-        await updateGoogleSheetRow(spreadsheetId, sheetName, row.__sheetRowNumber, headers, {
-          'Meeting Details': '',
-          lead_status: String(updatedRow.lead_status || LEAD_STATUS.DEMO_SCHEDULED),
-          Remarks: String(updatedRow.Remarks || '')
-        }, brand);
-      }
+        const updatedRow = await forceCloseActiveDemoForRow(row, remarks);
+        if (sourceType === 'google-sheet' && spreadsheetId && sheetName && headers?.length && row.__sheetRowNumber) {
+          await updateGoogleSheetRow(spreadsheetId, sheetName, row.__sheetRowNumber, headers, {
+            'Meeting Details': '',
+            lead_status: String(updatedRow.lead_status || LEAD_STATUS.DEMO_SCHEDULED),
+            Remarks: String(updatedRow.Remarks || '')
+          }, brand);
+        }
 
-      return res.json({ success: true, row: updatedRow });
+        return res.json({ success: true, row: updatedRow });
+      });
     } catch (err: any) {
       console.error('Force close active demo failed:', err);
-      return res.status(500).json({ error: err.message || 'Force close active demo failed' });
+      return res.status(err.statusCode || 500).json({ error: err.message || 'Force close active demo failed' });
     }
   });
 
@@ -474,42 +507,44 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/email-deliveries/:deliveryId/retry', async (req, res) => {
     try {
-      const { deliveryId } = req.params;
-      const delivery = await findEmailDeliveryById(deliveryId);
-      if (!delivery) return res.status(404).json({ error: 'Email delivery was not found.' });
-      if (delivery.status !== 'UNKNOWN') {
-        return res.status(400).json({ error: 'Only Needs Review email deliveries can be retried manually.' });
-      }
-      if (!delivery.subject || !delivery.textBody || !delivery.htmlBody) {
-        return res.status(400).json({ error: 'Stored email payload is missing, so this delivery cannot be retried.' });
-      }
+      return await withWorkflowActivity('lead-processing', async () => {
+        const { deliveryId } = req.params;
+        const delivery = await findEmailDeliveryById(deliveryId);
+        if (!delivery) return res.status(404).json({ error: 'Email delivery was not found.' });
+        if (delivery.status !== 'UNKNOWN') {
+          return res.status(400).json({ error: 'Only Needs Review email deliveries can be retried manually.' });
+        }
+        if (!delivery.subject || !delivery.textBody || !delivery.htmlBody) {
+          return res.status(400).json({ error: 'Stored email payload is missing, so this delivery cannot be retried.' });
+        }
 
-      const claimed = await claimUnknownEmailDeliveryForManualRetry(deliveryId);
-      if (!claimed) {
-        return res.status(409).json({ error: 'This email delivery was already reviewed or claimed.' });
-      }
+        const claimed = await claimUnknownEmailDeliveryForManualRetry(deliveryId);
+        if (!claimed) {
+          return res.status(409).json({ error: 'This email delivery was already reviewed or claimed.' });
+        }
 
-      try {
-        const result = await sendGmailTemplate(delivery.recipient, {
-          subject: delivery.subject,
-          text: delivery.textBody,
-          html: delivery.htmlBody
-        });
-        await markEmailDeliverySent({ deliveryId, providerMessageId: result.messageId });
-        const updated = await findEmailDeliveryById(deliveryId);
-        return res.json({ success: true, delivery: serializeDelivery(updated) });
-      } catch (error) {
-        const classification = await markEmailDeliveryFailed({ deliveryId, error });
-        const updated = await findEmailDeliveryById(deliveryId);
-        return res.status(502).json({
-          error: error instanceof Error ? error.message : 'Manual retry failed',
-          classification,
-          delivery: serializeDelivery(updated)
-        });
-      }
+        try {
+          const result = await sendGmailTemplate(delivery.recipient, {
+            subject: delivery.subject,
+            text: delivery.textBody,
+            html: delivery.htmlBody
+          });
+          await markEmailDeliverySent({ deliveryId, providerMessageId: result.messageId });
+          const updated = await findEmailDeliveryById(deliveryId);
+          return res.json({ success: true, delivery: serializeDelivery(updated) });
+        } catch (error) {
+          const classification = await markEmailDeliveryFailed({ deliveryId, error });
+          const updated = await findEmailDeliveryById(deliveryId);
+          return res.status(502).json({
+            error: error instanceof Error ? error.message : 'Manual retry failed',
+            classification,
+            delivery: serializeDelivery(updated)
+          });
+        }
+      });
     } catch (err: any) {
       console.error('Manual email retry failed:', err);
-      return res.status(500).json({ error: err.message || 'Manual email retry failed' });
+      return res.status(err.statusCode || 500).json({ error: err.message || 'Manual email retry failed' });
     }
   });
 
@@ -534,43 +569,45 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheet-sync/jobs/:jobId/retry', async (req, res) => {
     try {
-      const { jobId } = req.params;
-      const job = await findSheetSyncJobById(jobId);
-      if (!job) return res.status(404).json({ error: 'Sheet sync job was not found.' });
-      if (job.status === 'SYNCED') {
-        return res.json({ success: true, job: serializeSheetSyncJob(job), skipped: true });
-      }
-
-      await markSheetSyncJobRetryNow(jobId);
-
-      try {
-        const headers = JSON.parse(job.headersJson) as string[];
-        const values = JSON.parse(job.valuesJson) as Record<string, any>;
-        const [result] = await updateGoogleSheetRowsResilient(
-          job.spreadsheetId,
-          job.sheetName,
-          headers,
-          [{ rowNumber: job.rowNumber, values, emailDeliveryId: job.emailDeliveryId || undefined }]
-        );
-
-        if (!result?.success) {
-          throw new Error(result?.error || 'Google Sheet row update failed');
+      return await withWorkflowActivity('sheet-sync', async () => {
+        const { jobId } = req.params;
+        const job = await findSheetSyncJobById(jobId);
+        if (!job) return res.status(404).json({ error: 'Sheet sync job was not found.' });
+        if (job.status === 'SYNCED') {
+          return res.json({ success: true, job: serializeSheetSyncJob(job), skipped: true });
         }
 
-        await markSheetSyncJobSucceeded(jobId);
-        const updated = await findSheetSyncJobById(jobId);
-        return res.json({ success: true, job: serializeSheetSyncJob(updated) });
-      } catch (error) {
-        await markSheetSyncJobFailed(jobId, error);
-        const updated = await findSheetSyncJobById(jobId);
-        return res.status(502).json({
-          error: error instanceof Error ? error.message : 'Sheet sync retry failed',
-          job: serializeSheetSyncJob(updated)
-        });
-      }
+        await markSheetSyncJobRetryNow(jobId);
+
+        try {
+          const headers = JSON.parse(job.headersJson) as string[];
+          const values = JSON.parse(job.valuesJson) as Record<string, any>;
+          const [result] = await updateGoogleSheetRowsResilient(
+            job.spreadsheetId,
+            job.sheetName,
+            headers,
+            [{ rowNumber: job.rowNumber, values, emailDeliveryId: job.emailDeliveryId || undefined }]
+          );
+
+          if (!result?.success) {
+            throw new Error(result?.error || 'Google Sheet row update failed');
+          }
+
+          await markSheetSyncJobSucceeded(jobId);
+          const updated = await findSheetSyncJobById(jobId);
+          return res.json({ success: true, job: serializeSheetSyncJob(updated) });
+        } catch (error) {
+          await markSheetSyncJobFailed(jobId, error);
+          const updated = await findSheetSyncJobById(jobId);
+          return res.status(502).json({
+            error: error instanceof Error ? error.message : 'Sheet sync retry failed',
+            job: serializeSheetSyncJob(updated)
+          });
+        }
+      });
     } catch (err: any) {
       console.error('Sheet sync retry failed:', err);
-      return res.status(500).json({ error: err.message || 'Sheet sync retry failed' });
+      return res.status(err.statusCode || 500).json({ error: err.message || 'Sheet sync retry failed' });
     }
   });
 
@@ -680,53 +717,58 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/process-leads/jobs', async (req, res) => {
     try {
-      if (!isProcessQueueEnabled()) {
-        return res.status(409).json({ error: 'Process queue is disabled.' });
-      }
-
-      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
-        rows?: ExcelRow[];
-        sourceType?: 'excel' | 'google-sheet';
-        spreadsheetId?: string;
-        sheetName?: string;
-        headers?: string[];
-        emailBrand?: any;
-      };
-      const brand = normalizeEmailBrand(emailBrand);
-
-      if (!rows || !Array.isArray(rows)) {
-        return res.status(400).json({ error: 'Valid rows list must be supplied.' });
-      }
-
-      let headers = incomingHeaders || [];
-      if (sourceType === 'google-sheet') {
-        if (!spreadsheetId || !sheetName) {
-          return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
+      return await withWorkflowActivity('lead-processing', async () => {
+        if (!isProcessQueueEnabled()) {
+          return res.status(409).json({ error: 'Process queue is disabled.' });
         }
-        if (!headers.length) {
-          return res.status(400).json({ error: 'Google Sheet headers are required.' });
+
+        const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
+          rows?: ExcelRow[];
+          sourceType?: 'excel' | 'google-sheet';
+          spreadsheetId?: string;
+          sheetName?: string;
+          headers?: string[];
+          emailBrand?: any;
+        };
+        const brand = normalizeEmailBrand(emailBrand);
+
+        if (!rows || !Array.isArray(rows)) {
+          return res.status(400).json({ error: 'Valid rows list must be supplied.' });
         }
-        const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, brand);
-        headers = ensured.headers;
-      }
 
-      const dbRows = await applyDbTruthToRows(rows);
-      const job = await createProcessLeadJob({
-        sourceType: sourceType || 'excel',
-        spreadsheetId,
-        sheetName,
-        headers,
-        emailBrand: brand,
-        rows: dbRows
-      });
-      await enqueueProcessLeadJob(job.id);
+        let headers = incomingHeaders || [];
+        if (sourceType === 'google-sheet') {
+          if (!spreadsheetId || !sheetName) {
+            return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
+          }
+          if (!headers.length) {
+            return res.status(400).json({ error: 'Google Sheet headers are required.' });
+          }
+          const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, brand);
+          headers = ensured.headers;
+        }
 
-      return res.status(202).json({
-        jobId: job.id,
-        status: job.status
+        const dbRows = await applyDbTruthToRows(rows);
+        const job = await createProcessLeadJob({
+          sourceType: sourceType || 'excel',
+          spreadsheetId,
+          sheetName,
+          headers,
+          emailBrand: brand,
+          rows: dbRows
+        });
+        await enqueueProcessLeadJob(job.id);
+
+        return res.status(202).json({
+          jobId: job.id,
+          status: job.status
+        });
       });
     } catch (err: any) {
       console.error('Lead processing job enqueue failed:', err);
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({ error: err.message });
+      }
       const friendlyError = friendlySheetsError(err);
       if (req.body?.sourceType === 'google-sheet') {
         return res.status(friendlyError.status).json({ error: friendlyError.message });
@@ -748,44 +790,49 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/process-leads', async (req, res) => {
     try {
-      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
-        rows?: ExcelRow[];
-        sourceType?: 'excel' | 'google-sheet';
-        spreadsheetId?: string;
-        sheetName?: string;
-        headers?: string[];
-        emailBrand?: any;
-      };
-      const brand = normalizeEmailBrand(emailBrand);
+      return await withWorkflowActivity('lead-processing', async () => {
+        const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
+          rows?: ExcelRow[];
+          sourceType?: 'excel' | 'google-sheet';
+          spreadsheetId?: string;
+          sheetName?: string;
+          headers?: string[];
+          emailBrand?: any;
+        };
+        const brand = normalizeEmailBrand(emailBrand);
 
-      if (!rows || !Array.isArray(rows)) {
-        return res.status(400).json({ error: 'Valid rows list must be supplied.' });
-      }
-
-      let headers = incomingHeaders || [];
-      if (sourceType === 'google-sheet') {
-        if (!spreadsheetId || !sheetName) {
-          return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
+        if (!rows || !Array.isArray(rows)) {
+          return res.status(400).json({ error: 'Valid rows list must be supplied.' });
         }
-        if (!headers.length) {
-          return res.status(400).json({ error: 'Google Sheet headers are required.' });
-        }
-        const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, brand);
-        headers = ensured.headers;
-      }
 
-      const dbRows = await applyDbTruthToRows(rows);
-      const result = await processLeadsByStatus(dbRows, {
-        sourceType: sourceType || 'excel',
-        spreadsheetId,
-        sheetName,
-        headers,
-        emailBrand: brand
+        let headers = incomingHeaders || [];
+        if (sourceType === 'google-sheet') {
+          if (!spreadsheetId || !sheetName) {
+            return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
+          }
+          if (!headers.length) {
+            return res.status(400).json({ error: 'Google Sheet headers are required.' });
+          }
+          const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, brand);
+          headers = ensured.headers;
+        }
+
+        const dbRows = await applyDbTruthToRows(rows);
+        const result = await processLeadsByStatus(dbRows, {
+          sourceType: sourceType || 'excel',
+          spreadsheetId,
+          sheetName,
+          headers,
+          emailBrand: brand
+        });
+
+        return res.json({ ...result, headers });
       });
-
-      return res.json({ ...result, headers });
     } catch (err: any) {
       console.error('Lead processing failed:', err);
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({ error: err.message });
+      }
       const friendlyError = friendlySheetsError(err);
       if (req.body?.sourceType === 'google-sheet') {
         return res.status(friendlyError.status).json({ error: friendlyError.message });
