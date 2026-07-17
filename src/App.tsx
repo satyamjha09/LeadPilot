@@ -14,9 +14,11 @@ import { AlertTriangle, CheckCircle2, Clock3, Mail, Send, Users } from 'lucide-r
 import AppShell from '@/src/components/layout/AppShell';
 import DashboardOverview from '@/src/components/dashboard/DashboardOverview';
 import ActivityView from '@/src/components/dashboard/ActivityView';
+import EmailLogsView from '@/src/components/dashboard/EmailLogsView';
 import ImportPanel from '@/src/components/dashboard/ImportPanel';
 import ActionToolbar from '@/src/components/dashboard/ActionToolbar';
 import LeadsTable from '@/src/components/dashboard/LeadsTable';
+import ManualReviewView from '@/src/components/dashboard/ManualReviewView';
 import ProcessingPanel from '@/src/components/dashboard/ProcessingPanel';
 import SettingsPanel from '@/src/components/dashboard/SettingsPanel';
 import {
@@ -188,6 +190,8 @@ export default function App() {
     () => filterRowsByView(rows, activeView, searchQuery, statusFilter),
     [rows, activeView, searchQuery, statusFilter]
   );
+  const manualReviewRows = useMemo(() => rows.filter((row) => needsManualReview(row)), [rows]);
+  const emailLogRows = useMemo(() => rows.filter((row) => hasEmailActivity(row)), [rows]);
 
   const processTargetFromSelection = useMemo(
     () => rows.filter((row) => selectedRowIds.has(row.id) && canProcessLead(row)),
@@ -803,8 +807,8 @@ export default function App() {
   };
 
   const isAuthActive = !!(authStatus && authStatus.authenticated);
-  const showLeadsSection = rows.length > 0 && activeView !== 'settings' && activeView !== 'import' && activeView !== 'activity';
-  const showImport = activeView === 'dashboard' || activeView === 'import' || rows.length === 0;
+  const showLeadsSection = rows.length > 0 && activeView === 'leads';
+  const showImport = activeView === 'dashboard' || activeView === 'import';
   const viewCopy = getViewCopy(activeView);
 
   return (
@@ -831,7 +835,7 @@ export default function App() {
           <SettingsPanel />
         ) : (
           <>
-            {rows.length > 0 && activeView !== 'import' && activeView !== 'activity' && (
+            {rows.length > 0 && activeView === 'dashboard' && (
               <DashboardOverview
                 rows={rows}
                 stats={stats}
@@ -842,6 +846,10 @@ export default function App() {
             )}
 
             {activeView === 'activity' && <ActivityView rows={rows} />}
+            {activeView === 'manual-review' && <ManualReviewView rows={manualReviewRows} />}
+            {activeView === 'email-logs' && (
+              <EmailLogsView rows={emailLogRows} emailBrand={selectedEmailBrand} />
+            )}
 
             {showImport && (
               <div ref={importRef}>
@@ -899,7 +907,11 @@ export default function App() {
               </>
             )}
 
-            {rows.length === 0 && activeView !== 'import' && activeView !== 'settings' && (
+            {rows.length === 0 &&
+              activeView !== 'import' &&
+              activeView !== 'settings' &&
+              activeView !== 'manual-review' &&
+              activeView !== 'email-logs' && (
               <LeadsTable
                 rows={[]}
                 filteredRows={[]}

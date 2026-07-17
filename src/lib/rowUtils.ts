@@ -140,10 +140,14 @@ export const canProcessLead = (row: ExcelRow) =>
 export const needsManualReview = (row: ExcelRow) => {
   const remarks = String(row.Remarks || '');
   const emailStatus = String(row.email_status || row.__emailStatus || '').toLowerCase();
+  const sheetStatus = String(row.__sheetSyncStatus || row.sheet_sync_status || '').toLowerCase();
+  const emailError = String(row.email_last_error || '').trim();
   return (
     getLeadStatus(row) === 'Failed' ||
-    emailStatus === 'unknown' ||
-    /manual review|needs review|unknown result|unclear|already has an active demo/i.test(remarks)
+    ['unknown', 'failed', 'retry_pending'].includes(emailStatus) ||
+    Boolean(emailError) ||
+    /pending|failed/.test(sheetStatus) ||
+    /manual review|needs review|unknown result|unclear|already has an active demo|sheet sync pending|sheet update pending|sheet sync retry|email pending|retry pending|rate limit|429/i.test(remarks)
   );
 };
 
@@ -153,6 +157,8 @@ export const hasEmailActivity = (row: ExcelRow) => {
     row.gmail_message_id ||
       row.email_sent_at ||
       row.email_status ||
+      row.email_last_error ||
+      row.email_retry_count !== undefined ||
       /email|sent|gmail|thank-you|response|invite|retry|manual review/i.test(remarks)
   );
 };

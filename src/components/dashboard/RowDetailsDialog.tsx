@@ -13,33 +13,19 @@ import {
   SheetTitle
 } from '@/components/ui/sheet';
 import StatusBadge from '@/src/components/dashboard/StatusBadge';
+import {
+  formatDateTime,
+  formatLogType,
+  formatSheetSyncStatus,
+  formatSource,
+  formatStatus,
+  isNeedsReviewStatus,
+  isSentStatus,
+  type EmailHistoryLog,
+  type SheetSyncJob
+} from '@/src/components/dashboard/reviewTypes';
 import { getLeadStatus, hasMeetLink } from '@/src/lib/rowUtils';
 import { ExcelRow } from '@/src/types';
-
-type EmailHistoryLog = {
-  id: string;
-  source?: string;
-  type: string;
-  status: string;
-  recipient?: string | null;
-  messageId?: string | null;
-  error?: string | null;
-  sentAt?: string | null;
-  createdAt: string;
-  updatedAt?: string;
-  attemptCount?: number;
-};
-
-type SheetSyncJob = {
-  id: string;
-  status: string;
-  retryCount: number;
-  maxRetries: number;
-  nextRetryAt?: string | null;
-  lastError?: string | null;
-  updatedAt?: string;
-  createdAt: string;
-};
 
 interface RowDetailsDialogProps {
   row: ExcelRow | null;
@@ -441,48 +427,4 @@ function HistoryEmpty({ icon, text }: { icon: ReactNode; text: string }) {
       <span>{text}</span>
     </div>
   );
-}
-
-function formatLogType(type: string) {
-  if (type === 'DEMO_SCHEDULED') return 'Meeting invite';
-  if (type === 'DEMO_RESCHEDULED') return 'Reschedule email';
-  if (type === 'DEMO_DONE') return 'Thank-you email';
-  if (type === 'DEMO_DONE_THANK_YOU') return 'Thank-you email';
-  if (type === 'NO_RESPONSE') return 'Not Attended email';
-  return type.replace(/_/g, ' ').toLowerCase();
-}
-
-function isSentStatus(status: string) {
-  return status.toLowerCase() === 'sent';
-}
-
-function isNeedsReviewStatus(status: string) {
-  return status.toUpperCase() === 'UNKNOWN';
-}
-
-function formatStatus(status: string) {
-  if (isNeedsReviewStatus(status)) return 'needs review';
-  return status.replace(/_/g, ' ').toLowerCase();
-}
-
-function formatSource(source: string) {
-  if (source === 'EmailDelivery') return 'Delivery log';
-  if (source === 'EmailLog') return 'Legacy email log';
-  return source;
-}
-
-function formatSheetSyncStatus(status: string) {
-  if (status === 'PENDING') return 'Sheet Sync Pending';
-  if (status === 'FAILED') return 'Sheet Sync Failed';
-  if (status === 'SYNCED') return 'Sheet Synced';
-  return status.replace(/_/g, ' ').toLowerCase();
-}
-
-function formatDateTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short'
-  }).format(date);
 }
