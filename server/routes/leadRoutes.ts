@@ -1,4 +1,5 @@
-import type { Express, Request } from 'express';
+import { timingSafeEqual } from 'crypto';
+import type { Express, NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import xlsx from 'xlsx';
 import { ExcelRow } from '../../src/types';
@@ -60,17 +61,66 @@ type SheetSyncRunner = (
   emailBrand?: EmailBrandKey
 ) => Promise<any>;
 
-function isAdminResetAuthorized(req: Request) {
-  const configuredToken = String(process.env.ADMIN_RESET_TOKEN || '').trim();
-  if (!configuredToken) return process.env.NODE_ENV !== 'production';
-
-  const providedToken = String(
+function getProvidedAdminResetToken(req: Request) {
+  return String(
     req.get('x-admin-reset-token') ||
     (req.body as { adminResetToken?: string } | undefined)?.adminResetToken ||
     ''
   ).trim();
+}
 
-  return providedToken === configuredToken;
+function adminTokensMatch(configuredToken: string, providedToken: string) {
+  if (!configuredToken || !providedToken) return false;
+  const configured = Buffer.from(configuredToken);
+  const provided = Buffer.from(providedToken);
+  return configured.length === provided.length && timingSafeEqual(configured, provided);
+}
+
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const configuredToken = String(process.env.ADMIN_RESET_TOKEN || '').trim();
+  if (!configuredToken) {
+    console.error('ADMIN_RESET_TOKEN is required before reset workflow can be used.');
+    return res.status(503).json({ error: 'Admin reset is not configured.' });
+  }
+
+  if (!adminTokensMatch(configuredToken, getProvidedAdminResetToken(req))) {
+    return res.status(403).json({ error: 'Invalid admin reset key.' });
+  }
+
+  return next();
+}
+
+async function resetDemoDataHandler(_req: Request, res: Response) {
+  let resumeQueue: (() => Promise<void>) | null = null;
+  let finishResetGuard: (() => void) | null = null;
+  let workflowResetWindowStarted = false;
+
+  try {
+    finishResetGuard = beginResetGuard();
+    await beginWorkflowResetWindow();
+    workflowResetWindowStarted = true;
+    resumeQueue = await prepareProcessQueueForReset();
+    await advanceWorkflowGenerationForReset();
+    await resetDemoTestData();
+    return res.json({ success: true, message: 'Workflow database and pending process jobs cleared.' });
+  } catch (err: any) {
+    console.error('Database reset failed:', err);
+    return res.status(err.statusCode || 500).json({ error: err.message || 'Database reset failed' });
+  } finally {
+    if (finishResetGuard) {
+      finishResetGuard();
+    }
+    if (workflowResetWindowStarted) {
+      await finishWorkflowResetWindow().catch((error) => {
+        console.error('Could not finish workflow reset window:', error);
+      });
+    }
+    if (resumeQueue) {
+      await resumeQueue().catch((error) => {
+        console.error('Could not resume process queue:', error);
+      });
+    }
+  }
 }
 
 export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetSyncRunner }) {
@@ -83,42 +133,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     res.json({ status: 'ok', time: new Date().toISOString() });
   });
 
-  app.post('/api/admin/reset-demo-test-data', async (req, res) => {
-    let resumeQueue: (() => Promise<void>) | null = null;
-    let finishResetGuard: (() => void) | null = null;
-    let workflowResetWindowStarted = false;
-
-    try {
-      if (!isAdminResetAuthorized(req)) {
-        return res.status(403).json({ error: 'Invalid admin reset key.' });
-      }
-
-      finishResetGuard = beginResetGuard();
-      await beginWorkflowResetWindow();
-      workflowResetWindowStarted = true;
-      resumeQueue = await prepareProcessQueueForReset();
-      await advanceWorkflowGenerationForReset();
-      await resetDemoTestData();
-      return res.json({ success: true, message: 'Workflow database and pending process jobs cleared.' });
-    } catch (err: any) {
-      console.error('Database reset failed:', err);
-      return res.status(err.statusCode || 500).json({ error: err.message || 'Database reset failed' });
-    } finally {
-      if (finishResetGuard) {
-        finishResetGuard();
-      }
-      if (workflowResetWindowStarted) {
-        await finishWorkflowResetWindow().catch((error) => {
-          console.error('Could not finish workflow reset window:', error);
-        });
-      }
-      if (resumeQueue) {
-        await resumeQueue().catch((error) => {
-          console.error('Could not resume process queue:', error);
-        });
-      }
-    }
-  });
+  app.post('/api/admin/reset-demo-test-data', requireAdmin, resetDemoDataHandler);
 
   app.post('/api/preview', upload.single('file'), (req, res) => {
     try {
