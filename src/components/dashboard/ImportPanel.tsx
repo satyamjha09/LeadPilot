@@ -8,6 +8,7 @@ import { ExcelRow, SheetSource } from '@/src/types';
 interface ImportPanelProps {
   onExcelParsed: (rows: ExcelRow[]) => void | Promise<void>;
   onGoogleSheetParsed: (rows: ExcelRow[], source: SheetSource) => void | Promise<void>;
+  emailBrand: 'tallykonnect' | 'anywheretally';
   isLoading: boolean;
   setIsLoading: (val: boolean) => void;
   uploadedFileName: string | null;
@@ -18,6 +19,7 @@ interface ImportPanelProps {
 export default function ImportPanel({
   onExcelParsed,
   onGoogleSheetParsed,
+  emailBrand,
   isLoading,
   setIsLoading,
   uploadedFileName,
@@ -56,6 +58,7 @@ export default function ImportPanel({
           <TabsContent value="google-sheet" className="mt-4">
             <GoogleSheetImport
               onDataParsed={onGoogleSheetParsed}
+              emailBrand={emailBrand}
               isLoading={isLoading}
               setIsLoading={setIsLoading}
             />

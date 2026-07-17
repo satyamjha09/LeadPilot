@@ -81,6 +81,8 @@ export interface NotificationCounts {
 }
 
 export interface AuthStatus {
+  brand?: 'tallykonnect' | 'anywheretally';
+  email?: string;
   authenticated: boolean;
   configured: boolean;
   clientId?: string;

@@ -4,6 +4,7 @@ import { getOAuthClient } from './googleAuth';
 import { getLeadStatusParse, isValidLeadStatus, normalizeHeader } from './leadStatus';
 import { createNewAutomationId } from './emailIdentity';
 import { normalizeDisplayDate } from '../src/lib/dateFormat';
+import type { EmailBrandKey } from './emailTemplates';
 
 const REQUIRED_UPDATE_COLUMNS = ['Meeting Details', 'lead_status', 'Remarks', 'automation_id'];
 const SHEET_BATCH_SIZE = 20;
@@ -47,13 +48,13 @@ export function extractSheetInfo(sheetUrl: string) {
   return { spreadsheetId, gid };
 }
 
-export async function getSheetsClient() {
-  const oauth2Client = await getOAuthClient();
+export async function getSheetsClient(brand?: EmailBrandKey) {
+  const oauth2Client = await getOAuthClient(brand);
   return google.sheets({ version: 'v4', auth: oauth2Client });
 }
 
-export async function getSheetTitleByGid(spreadsheetId: string, gid?: string) {
-  const sheets = await getSheetsClient();
+export async function getSheetTitleByGid(spreadsheetId: string, gid?: string, brand?: EmailBrandKey) {
+  const sheets = await getSheetsClient(brand);
   const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
   const sheetTabs = spreadsheet.data.sheets || [];
 
@@ -77,8 +78,8 @@ export async function getSheetTitleByGid(spreadsheetId: string, gid?: string) {
   return firstTitle;
 }
 
-export async function readSheetRows(spreadsheetId: string, sheetName: string) {
-  const sheets = await getSheetsClient();
+export async function readSheetRows(spreadsheetId: string, sheetName: string, brand?: EmailBrandKey) {
+  const sheets = await getSheetsClient(brand);
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `${quoteSheetName(sheetName)}!A:Z`
@@ -158,8 +159,8 @@ export async function readSheetRows(spreadsheetId: string, sheetName: string) {
   return { headers, rows };
 }
 
-export async function ensureRequiredColumns(spreadsheetId: string, sheetName: string, headers: string[]) {
-  const sheets = await getSheetsClient();
+export async function ensureRequiredColumns(spreadsheetId: string, sheetName: string, headers: string[], brand?: EmailBrandKey) {
+  const sheets = await getSheetsClient(brand);
   const updatedHeaders = [...headers];
   let changed = false;
 
@@ -191,22 +192,24 @@ export async function updateGoogleSheetRow(
   sheetName: string,
   rowNumber: number,
   headers: string[],
-  updates: Record<string, any>
+  updates: Record<string, any>,
+  brand?: EmailBrandKey
 ) {
   await updateGoogleSheetRowsBatch(spreadsheetId, sheetName, headers, [
     { rowNumber, values: updates }
-  ]);
+  ], brand);
 }
 
 export async function updateGoogleSheetRowsBatch(
   spreadsheetId: string,
   sheetName: string,
   headers: string[],
-  updates: GoogleSheetRowUpdate[]
+  updates: GoogleSheetRowUpdate[],
+  brand?: EmailBrandKey
 ) {
   const results = await updateGoogleSheetRowsResilient(spreadsheetId, sheetName, headers, updates, {
     throwOnFailure: true
-  });
+  }, brand);
   const firstFailure = results.find((result) => !result.success);
   if (firstFailure) throw new Error(firstFailure.error || 'Google Sheet row update failed');
 }
@@ -216,11 +219,12 @@ export async function updateGoogleSheetRowsResilient(
   sheetName: string,
   headers: string[],
   updates: GoogleSheetRowUpdate[],
-  options: { throwOnFailure?: boolean } = {}
+  options: { throwOnFailure?: boolean } = {},
+  brand?: EmailBrandKey
 ): Promise<GoogleSheetRowUpdateResult[]> {
   if (!updates.length) return [];
 
-  const sheets = await getSheetsClient();
+  const sheets = await getSheetsClient(brand);
   const columnIndexMap = buildColumnIndexMap(headers);
   const validUpdates = updates.filter((update) => update.rowNumber >= 2);
   const results: GoogleSheetRowUpdateResult[] = [];
@@ -311,7 +315,8 @@ export async function ensureSheetAutomationIds(
   spreadsheetId: string,
   sheetName: string,
   headers: string[],
-  rows: ExcelRow[]
+  rows: ExcelRow[],
+  brand?: EmailBrandKey
 ) {
   const updates: Array<{ rowNumber: number; values: Record<string, any> }> = [];
 
@@ -337,7 +342,7 @@ export async function ensureSheetAutomationIds(
 
   if (updates.length > 0) {
     try {
-      await updateGoogleSheetRowsBatch(spreadsheetId, sheetName, headers, updates);
+      await updateGoogleSheetRowsBatch(spreadsheetId, sheetName, headers, updates, brand);
     } catch (err) {
       const friendly = friendlySheetsError(err);
       console.warn('GOOGLE_SHEETS_AUTOMATION_ID_SYNC_SKIPPED', {

@@ -33,7 +33,7 @@ async function processLeadJob(jobId: string) {
     if (!headers.length) {
       throw new Error('Google Sheet headers are required.');
     }
-    const ensured = await ensureRequiredColumns(input.spreadsheetId, input.sheetName, headers);
+    const ensured = await ensureRequiredColumns(input.spreadsheetId, input.sheetName, headers, input.emailBrand);
     headers = ensured.headers;
   }
 

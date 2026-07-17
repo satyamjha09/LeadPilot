@@ -37,15 +37,33 @@ type StoredGoogleTokens = {
   expiry_date?: number | null;
 };
 
-function getGoogleAuthEmail() {
+function authStatePathForBrand(brand: EmailBrandKey) {
+  return brand === 'tallykonnect'
+    ? AUTH_STATE_PATH
+    : path.join(dataDir, `auth_state_${brand}.json`);
+}
+
+export function getGoogleAuthEmail(brand?: EmailBrandKey) {
+  const normalized = normalizeEmailBrand(brand);
+  if (normalized === 'anywheretally') {
+    return (
+      process.env.GOOGLE_ANYWHERETALLY_AUTH_EMAIL ||
+      process.env.GMAIL_ANYWHERETALLY_FROM_EMAIL ||
+      'info.anywheretally@gmail.com'
+    ).trim().toLowerCase();
+  }
+
   return (
+    process.env.GOOGLE_TALLYKONNECT_AUTH_EMAIL ||
     process.env.GOOGLE_AUTH_EMAIL ||
+    process.env.GMAIL_TALLYKONNECT_FROM_EMAIL ||
     process.env.GMAIL_FROM_EMAIL ||
     'demo.tallykonnect@gmail.com'
   ).trim().toLowerCase();
 }
 
-function readLegacySavedTokens(): StoredGoogleTokens | null {
+function readLegacySavedTokens(brand?: EmailBrandKey): StoredGoogleTokens | null {
+  if (normalizeEmailBrand(brand) !== 'tallykonnect') return null;
   if (!fs.existsSync(TOKENS_PATH)) return null;
   try {
     return JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf-8'));
@@ -55,8 +73,8 @@ function readLegacySavedTokens(): StoredGoogleTokens | null {
   }
 }
 
-async function saveTokens(tokens: StoredGoogleTokens) {
-  const email = getGoogleAuthEmail();
+async function saveTokens(tokens: StoredGoogleTokens, brand?: EmailBrandKey) {
+  const email = getGoogleAuthEmail(brand);
   const existing = await prisma.googleAuth.findUnique({ where: { email } });
   const refreshToken = tokens.refresh_token || existing?.refreshToken || null;
 
@@ -76,8 +94,8 @@ async function saveTokens(tokens: StoredGoogleTokens) {
   });
 }
 
-async function readSavedTokens(): Promise<StoredGoogleTokens | null> {
-  const email = getGoogleAuthEmail();
+async function readSavedTokens(brand?: EmailBrandKey): Promise<StoredGoogleTokens | null> {
+  const email = getGoogleAuthEmail(brand);
   const record = await prisma.googleAuth.findUnique({ where: { email } });
   if (record) {
     return {
@@ -87,9 +105,9 @@ async function readSavedTokens(): Promise<StoredGoogleTokens | null> {
     };
   }
 
-  const legacyTokens = readLegacySavedTokens();
+  const legacyTokens = readLegacySavedTokens(brand);
   if (legacyTokens?.refresh_token || legacyTokens?.access_token) {
-    await saveTokens(legacyTokens);
+    await saveTokens(legacyTokens, brand);
     return legacyTokens;
   }
 
@@ -97,8 +115,14 @@ async function readSavedTokens(): Promise<StoredGoogleTokens | null> {
 }
 
 // Get credentials from env or fallback configuration
-export function getCredentials() {
-  const configuredRedirectUri = (process.env.GOOGLE_REDIRECT_URI || '').trim();
+export function getCredentials(brand?: EmailBrandKey) {
+  const normalized = normalizeEmailBrand(brand);
+  const isAnyWhereTally = normalized === 'anywheretally';
+  const configuredRedirectUri = (
+    (isAnyWhereTally ? process.env.GOOGLE_ANYWHERETALLY_REDIRECT_URI : process.env.GOOGLE_TALLYKONNECT_REDIRECT_URI) ||
+    process.env.GOOGLE_REDIRECT_URI ||
+    ''
+  ).trim();
   let baseUri = process.env.APP_URL && process.env.APP_URL !== 'MY_APP_URL' ? process.env.APP_URL : '';
   let redirectUri = configuredRedirectUri;
 
@@ -113,17 +137,34 @@ export function getCredentials() {
   }
 
   return {
-    clientId: (process.env.GOOGLE_CLIENT_ID || '').trim(),
-    clientSecret: (process.env.GOOGLE_CLIENT_SECRET || '').trim().split(/\s+/)[0] || '',
+    brand: normalized,
+    authEmail: getGoogleAuthEmail(normalized),
+    clientId: (
+      (isAnyWhereTally
+        ? process.env.GOOGLE_ANYWHERETALLY_CLIENT_ID
+        : process.env.GOOGLE_TALLYKONNECT_CLIENT_ID || process.env.GOOGLE_CLIENT_ID) ||
+      ''
+    ).trim(),
+    clientSecret: (
+      (isAnyWhereTally
+        ? process.env.GOOGLE_ANYWHERETALLY_CLIENT_SECRET
+        : process.env.GOOGLE_TALLYKONNECT_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET) ||
+      ''
+    ).trim().split(/\s+/)[0] || '',
     redirectUri: redirectUri,
-    envRefreshToken: process.env.GOOGLE_REFRESH_TOKEN || ''
+    envRefreshToken: (
+      (isAnyWhereTally ? process.env.GOOGLE_ANYWHERETALLY_REFRESH_TOKEN : process.env.GOOGLE_TALLYKONNECT_REFRESH_TOKEN) ||
+      (isAnyWhereTally ? '' : process.env.GOOGLE_REFRESH_TOKEN) ||
+      ''
+    )
   };
 }
 
-function isEnvTokenSuppressed() {
-  if (!fs.existsSync(AUTH_STATE_PATH)) return false;
+function isEnvTokenSuppressed(brand?: EmailBrandKey) {
+  const statePath = authStatePathForBrand(normalizeEmailBrand(brand));
+  if (!fs.existsSync(statePath)) return false;
   try {
-    const state = JSON.parse(fs.readFileSync(AUTH_STATE_PATH, 'utf-8'));
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     return !!state.suppressEnvRefreshToken;
   } catch (err) {
     console.error('Failed to parse auth state:', err);
@@ -131,10 +172,11 @@ function isEnvTokenSuppressed() {
   }
 }
 
-function setEnvTokenSuppressed(suppressed: boolean) {
+function setEnvTokenSuppressed(suppressed: boolean, brand?: EmailBrandKey) {
+  const statePath = authStatePathForBrand(normalizeEmailBrand(brand));
   if (suppressed) {
     fs.writeFileSync(
-      AUTH_STATE_PATH,
+      statePath,
       JSON.stringify({
         suppressEnvRefreshToken: true,
         updatedAt: new Date().toISOString()
@@ -144,13 +186,13 @@ function setEnvTokenSuppressed(suppressed: boolean) {
     return;
   }
 
-  if (fs.existsSync(AUTH_STATE_PATH)) {
-    fs.unlinkSync(AUTH_STATE_PATH);
+  if (fs.existsSync(statePath)) {
+    fs.unlinkSync(statePath);
   }
 }
 
-export async function getOAuthClient() {
-  const { clientId, clientSecret, redirectUri, envRefreshToken } = getCredentials();
+export async function getOAuthClient(brand?: EmailBrandKey) {
+  const { clientId, clientSecret, redirectUri, envRefreshToken } = getCredentials(brand);
   
   const oauth2Client = new google.auth.OAuth2(
     clientId,
@@ -158,7 +200,7 @@ export async function getOAuthClient() {
     redirectUri
   );
 
-  const savedTokens = await readSavedTokens();
+  const savedTokens = await readSavedTokens(brand);
 
   if (savedTokens && savedTokens.refresh_token) {
     oauth2Client.setCredentials({
@@ -166,7 +208,7 @@ export async function getOAuthClient() {
       access_token: savedTokens.access_token || undefined,
       expiry_date: savedTokens.expiry_date || undefined
     });
-  } else if (envRefreshToken && !isEnvTokenSuppressed()) {
+  } else if (envRefreshToken && !isEnvTokenSuppressed(brand)) {
     oauth2Client.setCredentials({
       refresh_token: envRefreshToken
     });
@@ -175,14 +217,14 @@ export async function getOAuthClient() {
   // Handle token refreshing events to automatically persist them
   oauth2Client.on('tokens', async (tokens) => {
     try {
-      const existing = await readSavedTokens();
+      const existing = await readSavedTokens(brand);
       const updated = {
         ...existing,
         ...tokens,
         // Make sure refresh_token is kept if the refresh event doesn't supply a new one
         refresh_token: tokens.refresh_token || existing?.refresh_token || envRefreshToken
       };
-      await saveTokens(updated);
+      await saveTokens(updated, brand);
       console.log('Successfully refreshed and saved Google Auth tokens to database.');
     } catch (err) {
       console.error('Failed to persist refreshed Google Auth tokens:', err);
@@ -363,8 +405,8 @@ async function withCalendarRetry<T>(action: () => Promise<T>, maxAttempts = 4): 
   throw lastError;
 }
 
-async function sendRawGmailMessage(raw: string) {
-  const oauth2Client = await getOAuthClient();
+async function sendRawGmailMessage(raw: string, brand?: EmailBrandKey) {
+  const oauth2Client = await getOAuthClient(brand);
   const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
   const response = await gmail.users.messages.send({
@@ -385,18 +427,28 @@ async function sendRawGmailMessage(raw: string) {
 
 export async function sendGmailTemplate(
   to: string,
-  template: { subject: string; text: string; html: string }
+  template: { subject: string; text: string; html: string },
+  brand?: EmailBrandKey
 ) {
   try {
+    const emailBrand = brand || inferEmailBrandFromTemplate(template);
     const encodedMessage = buildRawEmail({
       to,
+      fromEmail: getGoogleAuthEmail(emailBrand),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage);
+    return await sendRawGmailMessage(encodedMessage, emailBrand);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail email retry'));
   }
+}
+
+function inferEmailBrandFromTemplate(template: { subject?: string; text?: string; html?: string }): EmailBrandKey {
+  const content = `${template.subject || ''}\n${template.text || ''}\n${template.html || ''}`;
+  return /AnyWhereTally|anywheretally\.com|info@anywheretally\.com/i.test(content)
+    ? 'anywheretally'
+    : 'tallykonnect';
 }
 
 function calendarBrandCopy(brand?: EmailBrandKey) {
@@ -416,7 +468,7 @@ function calendarBrandCopy(brand?: EmailBrandKey) {
 
 export async function scheduleMeeting(row: ExcelRow, brand?: EmailBrandKey) {
   try {
-    const oauth2Client = await getOAuthClient();
+    const oauth2Client = await getOAuthClient(brand);
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     
     const dateVal = row['Date of Demo'];
@@ -482,7 +534,7 @@ export async function updateCalendarMeeting(row: ExcelRow, calendarEventId: stri
   }
 
   try {
-    const oauth2Client = await getOAuthClient();
+    const oauth2Client = await getOAuthClient(brand);
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
     const startTime = parseExcelDateTime(row['Date of Demo'], row['Time of Demo']);
@@ -530,10 +582,11 @@ export async function sendThankYouEmail(row: ExcelRow, brand?: EmailBrandKey) {
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
+      fromEmail: getGoogleAuthEmail(brand),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage);
+    return await sendRawGmailMessage(encodedMessage, brand);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail thank-you email'));
   }
@@ -547,10 +600,11 @@ export async function sendNoResponseEmail(row: ExcelRow, brand?: EmailBrandKey) 
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
+      fromEmail: getGoogleAuthEmail(brand),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage);
+    return await sendRawGmailMessage(encodedMessage, brand);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail Not Attended email'));
   }
@@ -567,10 +621,11 @@ export async function sendGmailInvite(row: ExcelRow, meetLink: string, brand?: E
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
+      fromEmail: getGoogleAuthEmail(brand),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage);
+    return await sendRawGmailMessage(encodedMessage, brand);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail invitation'));
   }
@@ -594,10 +649,11 @@ export async function sendGmailRescheduleInvite(
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
+      fromEmail: getGoogleAuthEmail(brand),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage);
+    return await sendRawGmailMessage(encodedMessage, brand);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail reschedule invitation'));
   }
@@ -614,25 +670,27 @@ export async function sendGmailReminder(fullName: string, email: string, dateStr
     });
     const encodedMessage = buildRawEmail({
       to: email,
+      fromEmail: getGoogleAuthEmail(brand),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage);
+    return await sendRawGmailMessage(encodedMessage, brand);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail reminder email'));
   }
 }
 
 // Check tokens save status to determine authorization validity
-export async function getAuthStatus() {
-  const { clientId, clientSecret, redirectUri, envRefreshToken } = getCredentials();
+export async function getAuthStatus(brand?: EmailBrandKey) {
+  const normalizedBrand = normalizeEmailBrand(brand);
+  const { clientId, clientSecret, redirectUri, envRefreshToken, authEmail } = getCredentials(normalizedBrand);
   const configured = !!(clientId && clientSecret);
-  const envTokenSuppressed = isEnvTokenSuppressed();
+  const envTokenSuppressed = isEnvTokenSuppressed(normalizedBrand);
   
   let authenticated = false;
   let isUsingEnvToken = false;
 
-  const savedTokens = await readSavedTokens();
+  const savedTokens = await readSavedTokens(normalizedBrand);
   authenticated = !!savedTokens?.refresh_token;
 
   if (!authenticated && envRefreshToken && !envTokenSuppressed) {
@@ -646,11 +704,14 @@ export async function getAuthStatus() {
     authUrl = oauth2Client.generateAuthUrl({
       access_type: 'offline',
       scope: GOOGLE_OAUTH_SCOPES,
+      state: normalizedBrand,
       prompt: 'consent'
     });
   }
 
   return {
+    brand: normalizedBrand,
+    email: authEmail,
     configured,
     authenticated,
     clientId: clientId ? `${clientId.slice(0, 10)}...` : undefined,
@@ -662,30 +723,32 @@ export async function getAuthStatus() {
 }
 
 // Exchange callback authorization code for tokens and save
-export async function exchangeCodeAndSave(code: string) {
-  const { clientId, clientSecret, redirectUri } = getCredentials();
+export async function exchangeCodeAndSave(code: string, brand?: EmailBrandKey) {
+  const normalizedBrand = normalizeEmailBrand(brand);
+  const { clientId, clientSecret, redirectUri } = getCredentials(normalizedBrand);
   const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
   
   const { tokens } = await oauth2Client.getToken(code);
   
-  const existing = await readSavedTokens();
+  const existing = await readSavedTokens(normalizedBrand);
   const updated: StoredGoogleTokens = {
     ...existing,
     ...tokens
   };
 
-  await saveTokens(updated);
-  setEnvTokenSuppressed(false);
-  console.log('Saved Google Auth tokens directly from exchangeCodeAndSave.');
+  await saveTokens(updated, normalizedBrand);
+  setEnvTokenSuppressed(false, normalizedBrand);
+  console.log(`Saved Google Auth tokens for ${getGoogleAuthEmail(normalizedBrand)} directly from exchangeCodeAndSave.`);
   return updated;
 }
 
-export async function clearCredentials() {
-  await prisma.googleAuth.deleteMany({ where: { email: getGoogleAuthEmail() } });
-  if (fs.existsSync(TOKENS_PATH)) {
+export async function clearCredentials(brand?: EmailBrandKey) {
+  const normalizedBrand = normalizeEmailBrand(brand);
+  await prisma.googleAuth.deleteMany({ where: { email: getGoogleAuthEmail(normalizedBrand) } });
+  if (normalizedBrand === 'tallykonnect' && fs.existsSync(TOKENS_PATH)) {
     fs.unlinkSync(TOKENS_PATH);
   }
   console.log('Google Auth tokens cleared.');
-  setEnvTokenSuppressed(true);
+  setEnvTokenSuppressed(true, normalizedBrand);
   console.log('Environment refresh token disabled for this local session.');
 }

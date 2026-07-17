@@ -45,11 +45,13 @@ import {
 } from '../processLeadJobs';
 import { enqueueProcessLeadJob, isProcessQueueEnabled } from '../processLeadQueue';
 import { buildExportRow, normalizeRows, reconcileScheduledRows } from '../services/rowTransforms';
+import { normalizeEmailBrand, type EmailBrandKey } from '../emailTemplates';
 
 type SheetSyncRunner = (
   spreadsheetId: string,
   sheetName: string,
-  incomingHeaders?: string[]
+  incomingHeaders?: string[],
+  emailBrand?: EmailBrandKey
 ) => Promise<any>;
 
 export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetSyncRunner }) {
@@ -92,14 +94,15 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheets/import', async (req, res) => {
     try {
-      const { sheetUrl } = req.body as { sheetUrl?: string };
+      const { sheetUrl, emailBrand } = req.body as { sheetUrl?: string; emailBrand?: any };
+      const brand = normalizeEmailBrand(emailBrand);
       if (!sheetUrl) {
         return res.status(400).json({ error: 'Google Sheet URL is required.' });
       }
 
       const { spreadsheetId, gid } = extractSheetInfo(sheetUrl);
-      const sheetName = await getSheetTitleByGid(spreadsheetId, gid);
-      const syncResult = await options.runSheetSync(spreadsheetId, sheetName);
+      const sheetName = await getSheetTitleByGid(spreadsheetId, gid, brand);
+      const syncResult = await options.runSheetSync(spreadsheetId, sheetName, undefined, brand);
 
       return res.json({
         source: 'google-sheet',
@@ -121,17 +124,19 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheets/sync', async (req, res) => {
     try {
-      const { spreadsheetId, sheetName, headers: incomingHeaders } = req.body as {
+      const { spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
+        emailBrand?: any;
       };
+      const brand = normalizeEmailBrand(emailBrand);
 
       if (!spreadsheetId || !sheetName) {
         return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
       }
 
-      const result = await options.runSheetSync(spreadsheetId, sheetName, incomingHeaders);
+      const result = await options.runSheetSync(spreadsheetId, sheetName, incomingHeaders, brand);
       return res.json(result);
     } catch (err: any) {
       console.error('Google Sheets sync failed:', err);
@@ -158,12 +163,14 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheets/schedule', async (req, res) => {
     try {
-      const { spreadsheetId, sheetName, headers: incomingHeaders, rows } = req.body as {
+      const { spreadsheetId, sheetName, headers: incomingHeaders, rows, emailBrand } = req.body as {
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
         rows?: ExcelRow[];
+        emailBrand?: any;
       };
+      const brand = normalizeEmailBrand(emailBrand);
 
       if (!spreadsheetId || !sheetName) {
         return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
@@ -176,7 +183,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       }
 
       console.log(`Received request to schedule ${rows.length} Google Sheet rows...`);
-      const { headers } = await ensureRequiredColumns(spreadsheetId, sheetName, incomingHeaders);
+      const { headers } = await ensureRequiredColumns(spreadsheetId, sheetName, incomingHeaders, brand);
       const preparedRows = rows.map((row) => ({
         ...row,
         __sourceType: 'google-sheet' as const,
@@ -189,7 +196,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         sourceType: 'google-sheet',
         spreadsheetId,
         sheetName,
-        headers
+        headers,
+        emailBrand: brand
       });
 
       return res.json({ ...result, headers });
@@ -316,7 +324,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/lead-status/update', async (req, res) => {
     try {
-      const { row, status, remarks, sourceType, spreadsheetId, sheetName, headers } = req.body as {
+      const { row, status, remarks, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
         row?: ExcelRow;
         status?: string;
         remarks?: string;
@@ -324,7 +332,9 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
+        emailBrand?: any;
       };
+      const brand = normalizeEmailBrand(emailBrand);
 
       if (!row || !status) {
         return res.status(400).json({ error: 'Row and status are required.' });
@@ -354,7 +364,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           sourceType: sourceType || 'excel',
           spreadsheetId,
           sheetName,
-          headers
+          headers,
+          emailBrand: brand
         },
         remarks
       );
@@ -368,14 +379,16 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/active-demo/force-close', async (req, res) => {
     try {
-      const { row, remarks, sourceType, spreadsheetId, sheetName, headers } = req.body as {
+      const { row, remarks, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
         row?: ExcelRow;
         remarks?: string;
         sourceType?: 'excel' | 'google-sheet';
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
+        emailBrand?: any;
       };
+      const brand = normalizeEmailBrand(emailBrand);
 
       if (!row) {
         return res.status(400).json({ error: 'Row is required.' });
@@ -387,7 +400,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           'Meeting Details': '',
           lead_status: String(updatedRow.lead_status || LEAD_STATUS.DEMO_SCHEDULED),
           Remarks: String(updatedRow.Remarks || '')
-        });
+        }, brand);
       }
 
       return res.json({ success: true, row: updatedRow });
@@ -653,6 +666,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         headers?: string[];
         emailBrand?: any;
       };
+      const brand = normalizeEmailBrand(emailBrand);
 
       if (!rows || !Array.isArray(rows)) {
         return res.status(400).json({ error: 'Valid rows list must be supplied.' });
@@ -666,7 +680,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         if (!headers.length) {
           return res.status(400).json({ error: 'Google Sheet headers are required.' });
         }
-        const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers);
+        const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, brand);
         headers = ensured.headers;
       }
 
@@ -676,7 +690,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         spreadsheetId,
         sheetName,
         headers,
-        emailBrand,
+        emailBrand: brand,
         rows: dbRows
       });
       await enqueueProcessLeadJob(job.id);
@@ -716,6 +730,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         headers?: string[];
         emailBrand?: any;
       };
+      const brand = normalizeEmailBrand(emailBrand);
 
       if (!rows || !Array.isArray(rows)) {
         return res.status(400).json({ error: 'Valid rows list must be supplied.' });
@@ -729,7 +744,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         if (!headers.length) {
           return res.status(400).json({ error: 'Google Sheet headers are required.' });
         }
-        const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers);
+        const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, brand);
         headers = ensured.headers;
       }
 
@@ -739,7 +754,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         spreadsheetId,
         sheetName,
         headers,
-        emailBrand
+        emailBrand: brand
       });
 
       return res.json({ ...result, headers });

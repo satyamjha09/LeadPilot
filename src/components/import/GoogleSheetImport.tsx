@@ -8,11 +8,12 @@ import { ExcelRow, SheetSource } from '@/src/types';
 
 interface GoogleSheetImportProps {
   onDataParsed: (rows: ExcelRow[], source: SheetSource) => void | Promise<void>;
+  emailBrand: 'tallykonnect' | 'anywheretally';
   isLoading: boolean;
   setIsLoading: (val: boolean) => void;
 }
 
-export default function GoogleSheetImport({ onDataParsed, isLoading, setIsLoading }: GoogleSheetImportProps) {
+export default function GoogleSheetImport({ onDataParsed, emailBrand, isLoading, setIsLoading }: GoogleSheetImportProps) {
   const [sheetUrl, setSheetUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -30,7 +31,7 @@ export default function GoogleSheetImport({ onDataParsed, isLoading, setIsLoadin
       const response = await fetch('/api/sheets/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheetUrl: trimmedUrl })
+        body: JSON.stringify({ sheetUrl: trimmedUrl, emailBrand })
       });
 
       if (!response.ok) {

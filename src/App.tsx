@@ -251,7 +251,7 @@ export default function App() {
 
   const fetchAuthStatus = async () => {
     try {
-      const res = await fetch('/api/auth/status');
+      const res = await fetch(`/api/auth/status?brand=${encodeURIComponent(selectedEmailBrand)}`);
       if (!res.ok) throw new Error('Status server unreachable');
       const data = await res.json();
       setAuthStatus(data);
@@ -288,7 +288,7 @@ export default function App() {
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  }, [selectedEmailBrand]);
 
   useEffect(() => {
     try {
@@ -386,7 +386,8 @@ export default function App() {
         body: JSON.stringify({
           spreadsheetId: source.spreadsheetId,
           sheetName: source.sheetName,
-          headers: source.headers
+          headers: source.headers,
+          emailBrand: selectedEmailBrand
         })
       });
       const data = await res.json();
@@ -734,7 +735,11 @@ export default function App() {
   const handleClearAuth = async () => {
     setConfirmClearAuthOpen(false);
     try {
-      const res = await fetch('/api/auth/clear', { method: 'POST' });
+      const res = await fetch('/api/auth/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brand: selectedEmailBrand })
+      });
       if (!res.ok) throw new Error('Server failure rejecting disconnect command.');
       const data = await res.json();
       if (data.status) setAuthStatus(data.status);
@@ -848,6 +853,7 @@ export default function App() {
                   uploadedFileName={uploadedFileName}
                   setUploadedFileName={setUploadedFileName}
                   defaultTab={source.type === 'google-sheet' ? 'google-sheet' : 'excel'}
+                  emailBrand={selectedEmailBrand}
                 />
               </div>
             )}

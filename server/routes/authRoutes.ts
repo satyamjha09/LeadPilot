@@ -1,10 +1,11 @@
 import type { Express } from 'express';
 import { clearCredentials, exchangeCodeAndSave, getAuthStatus } from '../googleAuth';
+import { normalizeEmailBrand } from '../emailTemplates';
 
 export function registerAuthRoutes(app: Express) {
   app.get('/api/auth/status', async (req, res) => {
     try {
-      const status = await getAuthStatus();
+      const status = await getAuthStatus(normalizeEmailBrand(req.query.brand));
       return res.json(status);
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -13,8 +14,9 @@ export function registerAuthRoutes(app: Express) {
 
   app.post('/api/auth/clear', async (req, res) => {
     try {
-      await clearCredentials();
-      const status = await getAuthStatus();
+      const brand = normalizeEmailBrand((req.body as any)?.brand || req.query.brand);
+      await clearCredentials(brand);
+      const status = await getAuthStatus(brand);
       return res.json({ success: true, message: 'Google authentication cleared.', status });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -28,7 +30,7 @@ export function registerAuthRoutes(app: Express) {
         return res.status(400).send('Missing authorization code.');
       }
 
-      await exchangeCodeAndSave(String(code));
+      await exchangeCodeAndSave(String(code), normalizeEmailBrand(req.query.brand || req.query.state));
 
       return res.send(`
         <html>

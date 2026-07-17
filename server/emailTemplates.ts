@@ -1,6 +1,7 @@
 type EmailMessage = {
   to: string;
   cc?: string;
+  fromEmail?: string;
   fromName?: string;
   subject: string;
   text: string;
@@ -94,10 +95,17 @@ function safeHeader(value: string) {
   return String(value || '').replace(/[\r\n]+/g, ' ').trim();
 }
 
-function senderHeader(fromName?: string) {
-  const fromEmail = safeHeader(process.env.GMAIL_FROM_EMAIL || 'demo.tallykonnect@gmail.com');
+function senderEmailForName(fromName?: string) {
+  if (/anywhere\s*tally|anywheretally/i.test(String(fromName || ''))) {
+    return process.env.GMAIL_ANYWHERETALLY_FROM_EMAIL || 'info.anywheretally@gmail.com';
+  }
+  return process.env.GMAIL_TALLYKONNECT_FROM_EMAIL || process.env.GMAIL_FROM_EMAIL || 'demo.tallykonnect@gmail.com';
+}
+
+function senderHeader(fromName?: string, fromEmail?: string) {
+  const senderEmail = safeHeader(fromEmail || senderEmailForName(fromName));
   const displayName = safeHeader(fromName || process.env.GMAIL_FROM_NAME || BRAND_NAME);
-  return `${displayName} <${fromEmail}>`;
+  return `${displayName} <${senderEmail}>`;
 }
 
 function escapeHtml(value: unknown) {
@@ -2092,7 +2100,7 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
 export function buildRawEmail(message: EmailMessage) {
   const boundary = `tallykonnect_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const headers = [
-    `From: ${senderHeader(message.fromName)}`,
+    `From: ${senderHeader(message.fromName, message.fromEmail)}`,
     `To: ${safeHeader(message.to)}`,
     message.cc ? `Cc: ${safeHeader(message.cc)}` : '',
     `Subject: ${safeHeader(message.subject)}`,

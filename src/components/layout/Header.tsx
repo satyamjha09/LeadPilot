@@ -113,7 +113,7 @@ export default function Header({
             {authStatus?.authenticated ? (
               <Badge variant="outline" className="hidden h-10 gap-1 rounded-xl border-emerald-200 bg-emerald-50 px-3 text-emerald-800 sm:inline-flex dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
                 <ShieldCheck className="h-3.5 w-3.5" />
-                Google Connected
+                {authStatus.email || 'Google Connected'}
               </Badge>
             ) : authStatus?.configured ? (
               <Button type="button" size="sm" onClick={handleAuthClick}>

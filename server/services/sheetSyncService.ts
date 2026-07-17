@@ -2,20 +2,22 @@ import { ExcelRow } from '../../src/types';
 import { ensureRequiredColumns, ensureSheetAutomationIds, readSheetRows } from '../googleSheets';
 import { buildProcessLeadPlan } from '../leadWorkflow';
 import { applyDbTruthToRows } from '../scheduleDb';
+import type { EmailBrandKey } from '../emailTemplates';
 
 export function createSheetSyncService() {
   const sheetProcessingLocks = new Set<string>();
 
   return {
-    async runSheetSync(spreadsheetId: string, sheetName: string, incomingHeaders?: string[]) {
+    async runSheetSync(spreadsheetId: string, sheetName: string, incomingHeaders?: string[], emailBrand?: EmailBrandKey) {
       const lockKey = `${spreadsheetId}|${sheetName}`;
       if (sheetProcessingLocks.has(lockKey)) {
-        const freshRows = await readSheetRows(spreadsheetId, sheetName);
+        const freshRows = await readSheetRows(spreadsheetId, sheetName, emailBrand);
         const dbRows = await applyDbTruthToRows(freshRows.rows);
         const { headers } = await ensureRequiredColumns(
           spreadsheetId,
           sheetName,
-          incomingHeaders?.length ? incomingHeaders : freshRows.headers
+          incomingHeaders?.length ? incomingHeaders : freshRows.headers,
+          emailBrand
         );
         return {
           skippedDueToLock: true,
@@ -46,11 +48,12 @@ export function createSheetSyncService() {
 
       sheetProcessingLocks.add(lockKey);
       try {
-        const sheetData = await readSheetRows(spreadsheetId, sheetName);
+        const sheetData = await readSheetRows(spreadsheetId, sheetName, emailBrand);
         const { headers } = await ensureRequiredColumns(
           spreadsheetId,
           sheetName,
-          incomingHeaders?.length ? incomingHeaders : sheetData.headers
+          incomingHeaders?.length ? incomingHeaders : sheetData.headers,
+          emailBrand
         );
         const dbRows = await applyDbTruthToRows(sheetData.rows.map((row) => ({
           ...row,
@@ -62,7 +65,8 @@ export function createSheetSyncService() {
           spreadsheetId,
           sheetName,
           headers,
-          dbRows
+          dbRows,
+          emailBrand
         );
         const plan = await buildProcessLeadPlan(rows);
         return {

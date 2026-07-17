@@ -923,7 +923,9 @@ export async function processLeadsByStatus(
         context.spreadsheetId,
         context.sheetName,
         context.headers,
-        sheetUpdates
+        sheetUpdates,
+        {},
+        context.emailBrand
       );
 
       const failedResults = sheetResults.filter((result) => !result.success);
@@ -1006,7 +1008,8 @@ export async function syncSheetRow(
     context.sheetName,
     sheetRowNumber,
     context.headers,
-    payload
+    payload,
+    context.emailBrand
   );
 }
 
