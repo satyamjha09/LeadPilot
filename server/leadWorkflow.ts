@@ -44,6 +44,7 @@ import {
   markEmailDeliverySent
 } from './emailDelivery';
 import { enqueueSheetSyncJob } from './sheetSyncQueue';
+import { isStaleWorkflowGenerationError } from './workflowControl';
 import {
   createEmailEventKey,
   createEmailPayloadHash,
@@ -77,6 +78,7 @@ export type SheetContext = {
   sheetName?: string;
   headers?: string[];
   emailBrand?: EmailBrandKey;
+  assertStillCurrent?: () => void | Promise<void>;
   onRowProcessed?: (row: ExcelRow, summary: ProcessLeadsResult['summary']) => void | Promise<void>;
 };
 
@@ -695,11 +697,16 @@ export async function processLeadsByStatus(
     skipped: plan.skippedRows.length,
     timeConflicts: plan.summary.timeConflicts
   };
+  const assertStillCurrent = async () => {
+    await context.assertStillCurrent?.();
+  };
   const notifyRowProcessed = async (row: ExcelRow) => {
+    await assertStillCurrent();
     await context.onRowProcessed?.(row, summary);
   };
 
   for (const item of plan.invalidRows) {
+    await assertStillCurrent();
     resultsById.set(item.row.id, item.row);
     collectSheetUpdate(sheetUpdates, item.row, {
       lead_status: item.row.lead_status || '',
@@ -709,6 +716,7 @@ export async function processLeadsByStatus(
   }
 
   for (const item of plan.skippedRows) {
+    await assertStillCurrent();
     resultsById.set(item.row.id, item.row);
     collectSheetUpdate(sheetUpdates, item.row, {
       'Meeting Details': item.row['Meeting Details'] || '',
@@ -720,6 +728,7 @@ export async function processLeadsByStatus(
 
   for (let index = 0; index < plan.demoScheduledRows.length; index++) {
     const row = plan.demoScheduledRows[index];
+    await assertStillCurrent();
     try {
       const { rows: processedRows, summary: rowSummary } = await processScheduleRows([row], {
         sheetContext: context
@@ -737,6 +746,7 @@ export async function processLeadsByStatus(
       await saveSheetLeadState(processedRow, { lastAction: 'DEMO_SCHEDULED', lastActionStatus: 'success' });
       await notifyRowProcessed(processedRow);
     } catch (err: unknown) {
+      if (isStaleWorkflowGenerationError(err)) throw err;
       const message = err instanceof Error ? err.message : 'Scheduling failed.';
       const failedRow = failureRow(row, message);
       resultsById.set(row.id, failedRow);
@@ -756,6 +766,7 @@ export async function processLeadsByStatus(
 
   for (let index = 0; index < plan.rescheduleRows.length; index++) {
     const row = plan.rescheduleRows[index];
+    await assertStillCurrent();
     const currentMeetingDate = normalizeLeadDate(row['Date of Demo']);
     const currentMeetingTime = normalizeLeadTime(row['Time of Demo']);
     try {
@@ -808,6 +819,7 @@ export async function processLeadsByStatus(
       });
       await notifyRowProcessed(processedRow);
     } catch (err: unknown) {
+      if (isStaleWorkflowGenerationError(err)) throw err;
       const message = err instanceof Error ? err.message : 'Reschedule failed.';
       const failedRow = failureRow(row, message);
       resultsById.set(row.id, failedRow);
@@ -835,6 +847,7 @@ export async function processLeadsByStatus(
 
   for (let index = 0; index < plan.demoDoneRows.length; index++) {
     const row = plan.demoDoneRows[index];
+    await assertStillCurrent();
     try {
       const result = await sendThankYouForRow(row, context, { skipSheetSync: true });
       resultsById.set(row.id, result.row);
@@ -850,6 +863,7 @@ export async function processLeadsByStatus(
       });
       await notifyRowProcessed(result.row);
     } catch (err: unknown) {
+      if (isStaleWorkflowGenerationError(err)) throw err;
       const message = err instanceof Error ? err.message : 'Thank-you email failed.';
       const failedRow = failureRow(row, message);
       resultsById.set(row.id, failedRow);
@@ -868,6 +882,7 @@ export async function processLeadsByStatus(
   }
 
   for (const row of plan.statusOnlyRows) {
+    await assertStillCurrent();
     try {
       const isNoResponse = normalizeLeadStatus(row.lead_status) === LEAD_STATUS.NO_RESPONSE;
       const result =
@@ -899,6 +914,7 @@ export async function processLeadsByStatus(
       });
       await notifyRowProcessed(updatedRow);
     } catch (err: unknown) {
+      if (isStaleWorkflowGenerationError(err)) throw err;
       const message = err instanceof Error ? err.message : 'Status update failed.';
       const failedRow = failureRow(row, message);
       resultsById.set(row.id, failedRow);
@@ -918,6 +934,7 @@ export async function processLeadsByStatus(
     context.sheetName &&
     context.headers?.length
   ) {
+    await assertStillCurrent();
     try {
       const sheetResults = await updateGoogleSheetRowsResilient(
         context.spreadsheetId,

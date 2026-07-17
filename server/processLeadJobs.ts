@@ -1,6 +1,7 @@
 import { ExcelRow } from '../src/types';
 import { prisma } from './db';
 import { normalizeEmailBrand, type EmailBrandKey } from './emailTemplates';
+import { getWorkflowGenerationForNewJob } from './workflowControl';
 
 export type ProcessLeadJobStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 
@@ -41,9 +42,12 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
 }
 
 export async function createProcessLeadJob(input: ProcessLeadJobInput) {
+  const generation = await getWorkflowGenerationForNewJob();
+
   return prisma.processLeadJob.create({
     data: {
       status: 'QUEUED',
+      generation,
       sourceType: input.sourceType,
       emailBrand: normalizeEmailBrand(input.emailBrand),
       spreadsheetId: input.spreadsheetId || null,
@@ -129,6 +133,7 @@ export function serializeProcessLeadJob(job: Awaited<ReturnType<typeof getProces
     id: job.id,
     jobId: job.id,
     status: job.status,
+    generation: job.generation,
     sourceType: job.sourceType,
     emailBrand: normalizeEmailBrand(job.emailBrand),
     spreadsheetId: job.spreadsheetId || undefined,

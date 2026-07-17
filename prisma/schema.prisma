@@ -188,9 +188,17 @@ model GoogleAuth {
   updatedAt    DateTime  @updatedAt
 }
 
+model WorkflowControl {
+  id          String   @id @default("global")
+  generation  Int      @default(1)
+  isResetting Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+}
+
 model ProcessLeadJob {
   id             String   @id @default(cuid())
   status         String   @default("QUEUED")
+  generation     Int      @default(1)
   sourceType     String
   emailBrand     String?
   spreadsheetId  String?
@@ -205,5 +213,6 @@ model ProcessLeadJob {
   updatedAt      DateTime @updatedAt
 
   @@index([status])
+  @@index([generation])
   @@index([createdAt])
 }

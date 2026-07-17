@@ -19,11 +19,20 @@ import { ensureRequiredColumns, friendlySheetsError } from '../googleSheets';
 import { processLeadsByStatus } from '../leadWorkflow';
 import { applyDbTruthToRows } from '../scheduleDb';
 import { withWorkflowActivity } from '../workflowActivity';
+import { assertWorkflowGenerationCurrent } from '../workflowControl';
 
 dotenv.config();
 
-async function processLeadJob(jobId: string) {
+async function processLeadJob(jobId: string, queuedGeneration?: number) {
   const jobRecord = await getProcessLeadJob(jobId);
+  if (!jobRecord) throw new Error('Process job not found.');
+  const jobGeneration = jobRecord.generation;
+  if (queuedGeneration && queuedGeneration !== jobGeneration) {
+    throw new Error('Process job generation does not match queued payload.');
+  }
+  const assertCurrentGeneration = () => assertWorkflowGenerationCurrent(jobGeneration);
+
+  await assertCurrentGeneration();
   const input = parseProcessLeadJobInput(jobRecord);
 
   let headers = input.headers || [];
@@ -46,6 +55,7 @@ async function processLeadJob(jobId: string) {
     skipped: 0
   };
 
+  await assertCurrentGeneration();
   await markProcessLeadJobRunning(jobId, input.rows.length);
   const dbRows = await applyDbTruthToRows(input.rows);
 
@@ -56,7 +66,9 @@ async function processLeadJob(jobId: string) {
       sheetName: input.sheetName,
       headers,
       emailBrand: input.emailBrand,
+      assertStillCurrent: assertCurrentGeneration,
       onRowProcessed: async (row, rowSummary) => {
+        await assertCurrentGeneration();
         progress.processed += 1;
         progress.success =
           rowSummary.demoScheduled +
@@ -86,6 +98,7 @@ async function processLeadJob(jobId: string) {
       result.summary.reschedule
   };
 
+  await assertCurrentGeneration();
   await markProcessLeadJobCompleted(
     jobId,
     {
@@ -108,14 +121,20 @@ export function startProcessLeadWorker() {
     PROCESS_LEAD_QUEUE_NAME,
     async (job) => {
       const jobId = String(job.data?.jobId || '');
+      const queuedGeneration = Number(job.data?.generation || 0) || undefined;
       if (!jobId) throw new Error('Missing process lead jobId.');
 
       try {
-        await processLeadJob(jobId);
+        await processLeadJob(jobId, queuedGeneration);
       } catch (err: any) {
         const message = err instanceof Error ? err.message : 'Lead processing job failed.';
         const friendly = friendlySheetsError(err);
-        await markProcessLeadJobFailed(jobId, friendly?.message || message);
+        await markProcessLeadJobFailed(jobId, friendly?.message || message).catch((error) => {
+          console.error('PROCESS_LEAD_JOB_MARK_FAILED_ERROR', {
+            processJobId: jobId,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
         throw err;
       }
     },

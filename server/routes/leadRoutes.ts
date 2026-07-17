@@ -47,6 +47,11 @@ import { enqueueProcessLeadJob, isProcessQueueEnabled, prepareProcessQueueForRes
 import { buildExportRow, normalizeRows, reconcileScheduledRows } from '../services/rowTransforms';
 import { normalizeEmailBrand, type EmailBrandKey } from '../emailTemplates';
 import { beginResetGuard, withWorkflowActivity } from '../workflowActivity';
+import {
+  advanceWorkflowGenerationForReset,
+  beginWorkflowResetWindow,
+  finishWorkflowResetWindow
+} from '../workflowControl';
 
 type SheetSyncRunner = (
   spreadsheetId: string,
@@ -81,6 +86,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
   app.post('/api/admin/reset-demo-test-data', async (req, res) => {
     let resumeQueue: (() => Promise<void>) | null = null;
     let finishResetGuard: (() => void) | null = null;
+    let workflowResetWindowStarted = false;
 
     try {
       if (!isAdminResetAuthorized(req)) {
@@ -88,7 +94,10 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       }
 
       finishResetGuard = beginResetGuard();
+      await beginWorkflowResetWindow();
+      workflowResetWindowStarted = true;
       resumeQueue = await prepareProcessQueueForReset();
+      await advanceWorkflowGenerationForReset();
       await resetDemoTestData();
       return res.json({ success: true, message: 'Workflow database and pending process jobs cleared.' });
     } catch (err: any) {
@@ -97,6 +106,11 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     } finally {
       if (finishResetGuard) {
         finishResetGuard();
+      }
+      if (workflowResetWindowStarted) {
+        await finishWorkflowResetWindow().catch((error) => {
+          console.error('Could not finish workflow reset window:', error);
+        });
       }
       if (resumeQueue) {
         await resumeQueue().catch((error) => {
@@ -757,7 +771,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           emailBrand: brand,
           rows: dbRows
         });
-        await enqueueProcessLeadJob(job.id);
+        await enqueueProcessLeadJob(job.id, job.generation);
 
         return res.status(202).json({
           jobId: job.id,

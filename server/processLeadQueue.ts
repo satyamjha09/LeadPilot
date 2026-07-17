@@ -43,11 +43,11 @@ export function getProcessLeadQueue() {
   return queue;
 }
 
-export async function enqueueProcessLeadJob(jobId: string) {
+export async function enqueueProcessLeadJob(jobId: string, generation?: number) {
   const processQueue = getProcessLeadQueue();
   return processQueue.add(
     'process-leads',
-    { jobId },
+    { jobId, generation },
     {
       jobId,
       attempts: 1,
