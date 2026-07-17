@@ -13,6 +13,8 @@ interface ExcelUploadProps {
   setUploadedFileName: (name: string | null) => void;
   getWorkspaceGeneration: () => number;
   isCurrentWorkspace: (generation: number) => boolean;
+  createWorkspaceRequestSignal: (key: 'excel-preview') => AbortSignal;
+  clearWorkspaceRequestSignal: (key: 'excel-preview', signal: AbortSignal) => void;
 }
 
 export default function ExcelUpload({
@@ -22,7 +24,9 @@ export default function ExcelUpload({
   uploadedFileName,
   setUploadedFileName,
   getWorkspaceGeneration,
-  isCurrentWorkspace
+  isCurrentWorkspace,
+  createWorkspaceRequestSignal,
+  clearWorkspaceRequestSignal
 }: ExcelUploadProps) {
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -51,12 +55,14 @@ export default function ExcelUpload({
     setError(null);
     setUploadedFileName(file.name);
 
+    const signal = createWorkspaceRequestSignal('excel-preview');
     try {
       const formData = new FormData();
       formData.append('file', file);
 
       const response = await fetch('/api/preview', {
         method: 'POST',
+        signal,
         body: formData
       });
 
@@ -73,12 +79,16 @@ export default function ExcelUpload({
       if (!isCurrentWorkspace(generation)) return;
       await onDataParsed(data.rows);
     } catch (err: unknown) {
+      if (err instanceof DOMException ? err.name === 'AbortError' : err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
       if (!isCurrentWorkspace(generation)) return;
       const message = err instanceof Error ? err.message : 'An error occurred during file parsing.';
       console.error(err);
       setError(message);
       setUploadedFileName(null);
     } finally {
+      clearWorkspaceRequestSignal('excel-preview', signal);
       if (isCurrentWorkspace(generation)) setIsLoading(false);
     }
   };

@@ -104,6 +104,15 @@ type ProcessingProgress = {
   steps?: string[];
 };
 
+type WorkspaceRequestKey =
+  | 'excel-preview'
+  | 'google-sheet-import'
+  | 'google-sheet-sync'
+  | 'process-preview'
+  | 'lead-processing'
+  | 'process-polling'
+  | 'reconcile';
+
 const loadStoredRows = (): ExcelRow[] => {
   if (typeof window === 'undefined') return [];
   try {
@@ -146,6 +155,32 @@ const loadStoredEmailBrand = (): EmailBrandKey => {
     : 'tallykonnect';
 };
 
+const isAbortError = (err: unknown) =>
+  err instanceof DOMException
+    ? err.name === 'AbortError'
+    : err instanceof Error && err.name === 'AbortError';
+
+const abortableDelay = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Request aborted', 'AbortError'));
+      return;
+    }
+
+    let timeoutId = 0;
+    const onAbort = () => {
+      window.clearTimeout(timeoutId);
+      reject(new DOMException('Request aborted', 'AbortError'));
+    };
+
+    timeoutId = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+
 export default function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [rows, setRows] = useState<ExcelRow[]>(loadStoredRows);
@@ -178,9 +213,35 @@ export default function App() {
   const didReconcileStoredRows = useRef(false);
   const importRef = useRef<HTMLDivElement>(null);
   const workspaceGenerationRef = useRef(0);
+  const workspaceRequestControllersRef = useRef<Record<WorkspaceRequestKey, AbortController | null>>({
+    'excel-preview': null,
+    'google-sheet-import': null,
+    'google-sheet-sync': null,
+    'process-preview': null,
+    'lead-processing': null,
+    'process-polling': null,
+    reconcile: null
+  });
 
   const getWorkspaceGeneration = () => workspaceGenerationRef.current;
   const isCurrentWorkspace = (generation: number) => generation === workspaceGenerationRef.current;
+  const createWorkspaceRequestSignal = (key: WorkspaceRequestKey) => {
+    workspaceRequestControllersRef.current[key]?.abort();
+    const controller = new AbortController();
+    workspaceRequestControllersRef.current[key] = controller;
+    return controller.signal;
+  };
+  const clearWorkspaceRequestSignal = (key: WorkspaceRequestKey, signal: AbortSignal) => {
+    if (workspaceRequestControllersRef.current[key]?.signal === signal) {
+      workspaceRequestControllersRef.current[key] = null;
+    }
+  };
+  const abortWorkspaceRequests = () => {
+    (Object.keys(workspaceRequestControllersRef.current) as WorkspaceRequestKey[]).forEach((key) => {
+      workspaceRequestControllersRef.current[key]?.abort();
+      workspaceRequestControllersRef.current[key] = null;
+    });
+  };
 
   const stats = useMemo(() => computeStats(rows), [rows]);
   const notificationCounts = useMemo<NotificationCounts>(
@@ -245,16 +306,22 @@ export default function App() {
     );
   };
 
-  const reconcileRows = async (rowsToReconcile: ExcelRow[]) => {
+  const reconcileRows = async (rowsToReconcile: ExcelRow[], generation = getWorkspaceGeneration()) => {
     if (rowsToReconcile.length === 0) return rowsToReconcile;
-    const res = await fetch('/api/reconcile', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rows: rowsToReconcile })
-    });
-    if (!res.ok) return rowsToReconcile;
-    const data = await res.json();
-    return Array.isArray(data.rows) ? data.rows : rowsToReconcile;
+    const signal = createWorkspaceRequestSignal('reconcile');
+    try {
+      const res = await fetch('/api/reconcile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal,
+        body: JSON.stringify({ rows: rowsToReconcile })
+      });
+      if (!res.ok || !isCurrentWorkspace(generation)) return rowsToReconcile;
+      const data = await res.json();
+      return Array.isArray(data.rows) ? data.rows : rowsToReconcile;
+    } finally {
+      clearWorkspaceRequestSignal('reconcile', signal);
+    }
   };
 
   const fetchAuthStatus = async () => {
@@ -298,6 +365,8 @@ export default function App() {
     return () => window.removeEventListener('message', handleMessage);
   }, [selectedEmailBrand]);
 
+  useEffect(() => () => abortWorkspaceRequests(), []);
+
   useEffect(() => {
     try {
       if (rows.length > 0) window.localStorage.setItem(ROWS_STORAGE_KEY, JSON.stringify(rows));
@@ -326,14 +395,18 @@ export default function App() {
   useEffect(() => {
     if (didReconcileStoredRows.current || rows.length === 0) return;
     didReconcileStoredRows.current = true;
-    reconcileRows(rows)
+    const generation = getWorkspaceGeneration();
+    reconcileRows(rows, generation)
       .then((reconciled) => {
+        if (!isCurrentWorkspace(generation)) return;
         setRows(reconciled);
         setSelectedRowIds(
           new Set(reconciled.filter((row) => canProcessLead(row)).map((row) => row.id))
         );
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        if (!isAbortError(err)) console.error(err);
+      });
   }, [rows]);
 
   useEffect(() => {
@@ -344,7 +417,11 @@ export default function App() {
 
   const handleDataParsed = async (parsedRows: ExcelRow[]) => {
     const generation = getWorkspaceGeneration();
-    const reconciledRows = await reconcileRows(parsedRows);
+    const reconciledRows = await reconcileRows(parsedRows, generation).catch((err: unknown) => {
+      if (isAbortError(err)) return null;
+      throw err;
+    });
+    if (!reconciledRows) return;
     if (!isCurrentWorkspace(generation)) return;
     setSource({ type: 'excel' });
     setRows(reconciledRows);
@@ -389,6 +466,7 @@ export default function App() {
   const syncGoogleSheet = async (showToast = false) => {
     if (source.type !== 'google-sheet' || isSyncingRef.current) return;
     const generation = getWorkspaceGeneration();
+    const signal = createWorkspaceRequestSignal('google-sheet-sync');
     isSyncingRef.current = true;
     setIsProcessing(true);
     setProcessingProgress(null);
@@ -396,6 +474,7 @@ export default function App() {
       const res = await fetch('/api/sheets/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal,
         body: JSON.stringify({
           spreadsheetId: source.spreadsheetId,
           sheetName: source.sheetName,
@@ -413,8 +492,10 @@ export default function App() {
       setSelectedRowIds(new Set(updatedRows.filter((row) => canProcessLead(row)).map((row) => row.id)));
       if (showToast) toast.success(data.skippedDueToLock ? 'Sync already running' : 'Google Sheet refreshed');
     } catch (err: unknown) {
+      if (isAbortError(err)) return;
       if (isCurrentWorkspace(generation) && showToast) toast.error(err instanceof Error ? err.message : 'Sync failed');
     } finally {
+      clearWorkspaceRequestSignal('google-sheet-sync', signal);
       if (isCurrentWorkspace(generation)) {
         setIsProcessing(false);
         isSyncingRef.current = false;
@@ -429,6 +510,7 @@ export default function App() {
     }
 
     const generation = getWorkspaceGeneration();
+    const signal = createWorkspaceRequestSignal('process-preview');
     setProcessTargetRows(targetRows);
     setProcessPreview(null);
     setIsPreflightLoading(true);
@@ -437,6 +519,7 @@ export default function App() {
       const res = await fetch('/api/process-leads/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal,
         body: JSON.stringify({ rows: targetRows, ...processRequestMeta() })
       });
       const data = await res.json();
@@ -448,6 +531,7 @@ export default function App() {
       setProcessPreview(data);
       setConfirmProcessOpen(true);
     } catch (err: unknown) {
+      if (isAbortError(err)) return;
       if (!isCurrentWorkspace(generation)) return;
       toast.error(err instanceof Error ? err.message : 'Process preview failed');
       Object.entries(statusRevertMap).forEach(([rowId, previous]) =>
@@ -455,6 +539,7 @@ export default function App() {
       );
       setStatusRevertMap({});
     } finally {
+      clearWorkspaceRequestSignal('process-preview', signal);
       if (isCurrentWorkspace(generation)) setIsPreflightLoading(false);
     }
   };
@@ -480,11 +565,11 @@ export default function App() {
     }
   };
 
-  const pollProcessJob = async (jobId: string, generation: number) => {
+  const pollProcessJob = async (jobId: string, generation: number, signal: AbortSignal) => {
     while (true) {
-      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      await abortableDelay(2000, signal);
       if (!isCurrentWorkspace(generation)) return;
-      const res = await fetch(`/api/process-leads/jobs/${encodeURIComponent(jobId)}`);
+      const res = await fetch(`/api/process-leads/jobs/${encodeURIComponent(jobId)}`, { signal });
       const data: ProcessLeadJobResponse = await res.json();
       if (!res.ok) throw new Error(data.error || 'Process job lookup failed.');
       if (!isCurrentWorkspace(generation)) return;
@@ -518,13 +603,21 @@ export default function App() {
   };
 
   const runQueuedProcessRows = async (generation: number) => {
-    const res = await fetch('/api/process-leads/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rows: processTargetRows, ...processRequestMeta() })
-    });
-    const data: ProcessLeadJobResponse = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to queue lead processing.');
+    const queueSignal = createWorkspaceRequestSignal('lead-processing');
+    let data: ProcessLeadJobResponse;
+    try {
+      const res = await fetch('/api/process-leads/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: queueSignal,
+        body: JSON.stringify({ rows: processTargetRows, ...processRequestMeta() })
+      });
+      data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to queue lead processing.');
+    } finally {
+      clearWorkspaceRequestSignal('lead-processing', queueSignal);
+    }
+
     if (!isCurrentWorkspace(generation)) return;
 
     setProcessingProgress({
@@ -539,7 +632,12 @@ export default function App() {
       steps: ['Queued', 'Processing in background', 'Updating results', 'Done']
     });
     toast.info('Processing queued in background...');
-    await pollProcessJob(data.jobId, generation);
+    const pollSignal = createWorkspaceRequestSignal('process-polling');
+    try {
+      await pollProcessJob(data.jobId, generation, pollSignal);
+    } finally {
+      clearWorkspaceRequestSignal('process-polling', pollSignal);
+    }
   };
 
   const runProcessRows = async () => {
@@ -562,6 +660,7 @@ export default function App() {
       try {
         await runQueuedProcessRows(generation);
       } catch (err: unknown) {
+        if (isAbortError(err)) return;
         if (!isCurrentWorkspace(generation)) return;
         const message = err instanceof Error ? err.message : 'Lead processing failed';
         toast.error(message);
@@ -616,10 +715,12 @@ export default function App() {
       });
     }, 1200);
 
+    const signal = createWorkspaceRequestSignal('lead-processing');
     try {
       const res = await fetch('/api/process-leads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal,
         body: JSON.stringify({ rows: processTargetRows, ...processRequestMeta() })
       });
       const data = await res.json();
@@ -629,6 +730,7 @@ export default function App() {
       const updatedRows: ExcelRow[] = Array.isArray(data.rows) ? data.rows : [];
       applyProcessResult(updatedRows, data.summary, data.headers, data.sheetSyncError);
     } catch (err: unknown) {
+      if (isAbortError(err)) return;
       if (!isCurrentWorkspace(generation)) return;
       const message = err instanceof Error ? err.message : 'Lead processing failed';
       toast.error(message);
@@ -636,6 +738,7 @@ export default function App() {
         revertRowStatus(rowId, previous as LeadStatusLabel | 'Failed' | '')
       );
     } finally {
+      clearWorkspaceRequestSignal('lead-processing', signal);
       window.clearInterval(progressTimer);
       if (isCurrentWorkspace(generation)) {
         setIsProcessing(false);
@@ -784,6 +887,7 @@ export default function App() {
 
   const clearWorkspaceState = () => {
     workspaceGenerationRef.current += 1;
+    abortWorkspaceRequests();
     isSyncingRef.current = false;
     setRows([]);
     setSelectedRowIds(new Set());
@@ -807,6 +911,20 @@ export default function App() {
       window.localStorage.removeItem(SELECTED_STORAGE_KEY);
       window.localStorage.removeItem(SOURCE_STORAGE_KEY);
     } catch {}
+  };
+
+  const cancelWorkspaceRequestsForReset = () => {
+    workspaceGenerationRef.current += 1;
+    abortWorkspaceRequests();
+    isSyncingRef.current = false;
+    setIsProcessing(false);
+    setIsLoadingFile(false);
+    setIsPreflightLoading(false);
+    setProcessingProgress(null);
+    setProcessTargetRows([]);
+    setProcessPreview(null);
+    setStatusRevertMap({});
+    setConfirmProcessOpen(false);
   };
 
   const clearWorkspace = () => {
@@ -870,6 +988,7 @@ export default function App() {
 
         {activeView === 'settings' ? (
           <SettingsPanel
+            onResetStart={cancelWorkspaceRequestsForReset}
             onResetComplete={() => {
               clearWorkspaceState();
               toast.success('Database and browser workspace reset. Import a fresh sheet to continue.');
@@ -906,6 +1025,8 @@ export default function App() {
                   emailBrand={selectedEmailBrand}
                   getWorkspaceGeneration={getWorkspaceGeneration}
                   isCurrentWorkspace={isCurrentWorkspace}
+                  createWorkspaceRequestSignal={createWorkspaceRequestSignal}
+                  clearWorkspaceRequestSignal={clearWorkspaceRequestSignal}
                 />
               </div>
             )}

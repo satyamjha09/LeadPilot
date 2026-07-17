@@ -29,7 +29,13 @@ const reminderOptions = [
   { label: '30 min before', value: '30', enabled: true, offsetMinutes: 30 }
 ];
 
-export default function SettingsPanel({ onResetComplete }: { onResetComplete?: () => void }) {
+export default function SettingsPanel({
+  onResetStart,
+  onResetComplete
+}: {
+  onResetStart?: () => void;
+  onResetComplete?: () => void;
+}) {
   const [config, setConfig] = useState<ReminderConfig>({ offsetMinutes: 120, enabled: false });
   const [reminders, setReminders] = useState<ScheduledReminder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -84,6 +90,7 @@ export default function SettingsPanel({ onResetComplete }: { onResetComplete?: (
 
   const resetDatabase = async () => {
     setIsResetting(true);
+    onResetStart?.();
     try {
       const res = await fetch('/api/admin/reset-demo-test-data', {
         method: 'POST',

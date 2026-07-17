@@ -16,6 +16,8 @@ interface ImportPanelProps {
   defaultTab?: 'excel' | 'google-sheet';
   getWorkspaceGeneration: () => number;
   isCurrentWorkspace: (generation: number) => boolean;
+  createWorkspaceRequestSignal: (key: 'excel-preview' | 'google-sheet-import') => AbortSignal;
+  clearWorkspaceRequestSignal: (key: 'excel-preview' | 'google-sheet-import', signal: AbortSignal) => void;
 }
 
 export default function ImportPanel({
@@ -28,7 +30,9 @@ export default function ImportPanel({
   setUploadedFileName,
   defaultTab = 'excel',
   getWorkspaceGeneration,
-  isCurrentWorkspace
+  isCurrentWorkspace,
+  createWorkspaceRequestSignal,
+  clearWorkspaceRequestSignal
 }: ImportPanelProps) {
   return (
     <Card id="import-panel" className="tk-hover-card">
@@ -59,6 +63,8 @@ export default function ImportPanel({
               setUploadedFileName={setUploadedFileName}
               getWorkspaceGeneration={getWorkspaceGeneration}
               isCurrentWorkspace={isCurrentWorkspace}
+              createWorkspaceRequestSignal={createWorkspaceRequestSignal}
+              clearWorkspaceRequestSignal={clearWorkspaceRequestSignal}
             />
           </TabsContent>
           <TabsContent value="google-sheet" className="mt-4">
@@ -69,6 +75,8 @@ export default function ImportPanel({
               setIsLoading={setIsLoading}
               getWorkspaceGeneration={getWorkspaceGeneration}
               isCurrentWorkspace={isCurrentWorkspace}
+              createWorkspaceRequestSignal={createWorkspaceRequestSignal}
+              clearWorkspaceRequestSignal={clearWorkspaceRequestSignal}
             />
           </TabsContent>
         </Tabs>

@@ -13,6 +13,8 @@ interface GoogleSheetImportProps {
   setIsLoading: (val: boolean) => void;
   getWorkspaceGeneration: () => number;
   isCurrentWorkspace: (generation: number) => boolean;
+  createWorkspaceRequestSignal: (key: 'google-sheet-import') => AbortSignal;
+  clearWorkspaceRequestSignal: (key: 'google-sheet-import', signal: AbortSignal) => void;
 }
 
 export default function GoogleSheetImport({
@@ -21,7 +23,9 @@ export default function GoogleSheetImport({
   isLoading,
   setIsLoading,
   getWorkspaceGeneration,
-  isCurrentWorkspace
+  isCurrentWorkspace,
+  createWorkspaceRequestSignal,
+  clearWorkspaceRequestSignal
 }: GoogleSheetImportProps) {
   const [sheetUrl, setSheetUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -37,10 +41,12 @@ export default function GoogleSheetImport({
     setIsLoading(true);
     setError(null);
 
+    const signal = createWorkspaceRequestSignal('google-sheet-import');
     try {
       const response = await fetch('/api/sheets/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal,
         body: JSON.stringify({ sheetUrl: trimmedUrl, emailBrand })
       });
 
@@ -65,11 +71,15 @@ export default function GoogleSheetImport({
       if (!isCurrentWorkspace(generation)) return;
       await onDataParsed(data.rows, source);
     } catch (err: unknown) {
+      if (err instanceof DOMException ? err.name === 'AbortError' : err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
       if (!isCurrentWorkspace(generation)) return;
       const message = err instanceof Error ? err.message : 'Google Sheet import failed.';
       console.error(err);
       setError(message);
     } finally {
+      clearWorkspaceRequestSignal('google-sheet-import', signal);
       if (isCurrentWorkspace(generation)) setIsLoading(false);
     }
   };
