@@ -754,10 +754,7 @@ export default function App() {
     }
   };
 
-  const clearWorkspace = () => {
-    const confirmed = window.confirm('Clear imported rows from this browser? This will not delete Google Sheet or database data.');
-    if (!confirmed) return;
-
+  const clearWorkspaceState = () => {
     setRows([]);
     setSelectedRowIds(new Set());
     setSource({ type: 'excel' });
@@ -776,7 +773,13 @@ export default function App() {
       window.localStorage.removeItem(SELECTED_STORAGE_KEY);
       window.localStorage.removeItem(SOURCE_STORAGE_KEY);
     } catch {}
+  };
 
+  const clearWorkspace = () => {
+    const confirmed = window.confirm('Clear imported rows from this browser? This will not delete Google Sheet or database data.');
+    if (!confirmed) return;
+
+    clearWorkspaceState();
     toast.success('Browser workspace cleared. Import a fresh sheet to test again.');
   };
 
@@ -832,7 +835,12 @@ export default function App() {
         </div>
 
         {activeView === 'settings' ? (
-          <SettingsPanel />
+          <SettingsPanel
+            onResetComplete={() => {
+              clearWorkspaceState();
+              toast.success('Database and browser workspace reset. Import a fresh sheet to continue.');
+            }}
+          />
         ) : (
           <>
             {rows.length > 0 && activeView === 'dashboard' && (

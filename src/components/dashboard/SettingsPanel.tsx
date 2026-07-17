@@ -28,7 +28,7 @@ const reminderOptions = [
   { label: '30 min before', value: '30', enabled: true, offsetMinutes: 30 }
 ];
 
-export default function SettingsPanel() {
+export default function SettingsPanel({ onResetComplete }: { onResetComplete?: () => void }) {
   const [config, setConfig] = useState<ReminderConfig>({ offsetMinutes: 120, enabled: false });
   const [reminders, setReminders] = useState<ScheduledReminder[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -88,8 +88,9 @@ export default function SettingsPanel() {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || 'Could not reset database.');
       }
-      toast.success('Demo test data deleted');
       setReminders([]);
+      if (onResetComplete) onResetComplete();
+      else toast.success('Demo test data deleted');
       setConfirmResetOpen(false);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Database reset failed');
@@ -146,19 +147,19 @@ export default function SettingsPanel() {
         </CardContent>
       </Card>
 
-      <Card className="tk-hover-card border-destructive/30 bg-destructive/5">
+      <Card className="tk-hover-card border-destructive/30 bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-destructive">
             <DatabaseZap className="h-5 w-5" />
             Reset database
           </CardTitle>
           <CardDescription>
-            Delete all demo workflow data from the database while keeping tables and schema.
+            Delete demo workflow data and clear the current browser workspace.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted-foreground">
-            Clears schedules, email history, sheet state, active demo sessions, demo history, and email delivery locks.
+            Clears schedules, email history, sheet state, active demo sessions, demo history, delivery locks, and imported rows on this browser.
           </p>
           <Button type="button" variant="destructive" onClick={() => setConfirmResetOpen(true)}>
             <Trash2 className="h-4 w-4" />
@@ -172,7 +173,7 @@ export default function SettingsPanel() {
           <DialogHeader>
             <DialogTitle>Delete all demo data?</DialogTitle>
             <DialogDescription>
-              This will permanently delete schedules, email logs, sheet state, active sessions, demo history, and delivery records.
+              This will permanently delete schedules, email logs, sheet state, active sessions, demo history, and delivery records. It will also clear imported rows from this browser.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
