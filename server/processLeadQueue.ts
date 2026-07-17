@@ -3,6 +3,7 @@ import IORedis from 'ioredis';
 import { createWorkflowBusyError } from './workflowActivity';
 
 export const PROCESS_LEAD_QUEUE_NAME = 'process-lead-jobs';
+const PROCESS_QUEUE_RESET_COUNT = 1000;
 
 let connection: IORedis | null = null;
 let queue: Queue | null = null;
@@ -56,6 +57,13 @@ export async function enqueueProcessLeadJob(jobId: string) {
   );
 }
 
+export async function clearProcessQueueResetData(processQueue = getProcessLeadQueue()) {
+  await processQueue.obliterate({
+    force: false,
+    count: PROCESS_QUEUE_RESET_COUNT
+  });
+}
+
 export async function prepareProcessQueueForReset() {
   if (!isProcessQueueEnabled()) {
     return async () => {};
@@ -70,7 +78,7 @@ export async function prepareProcessQueueForReset() {
     throw createWorkflowBusyError();
   }
 
-  await processQueue.drain(true);
+  await clearProcessQueueResetData(processQueue);
 
   return async () => {
     await processQueue.resume();
