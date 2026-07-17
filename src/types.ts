@@ -90,4 +90,6 @@ export interface AuthStatus {
   authUrl?: string;
   isUsingEnvToken: boolean;
   envTokenSuppressed?: boolean;
+  requiresReconnect?: boolean;
+  authError?: string;
 }

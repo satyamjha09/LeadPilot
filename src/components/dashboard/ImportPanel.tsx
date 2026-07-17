@@ -14,6 +14,8 @@ interface ImportPanelProps {
   uploadedFileName: string | null;
   setUploadedFileName: (name: string | null) => void;
   defaultTab?: 'excel' | 'google-sheet';
+  getWorkspaceGeneration: () => number;
+  isCurrentWorkspace: (generation: number) => boolean;
 }
 
 export default function ImportPanel({
@@ -24,7 +26,9 @@ export default function ImportPanel({
   setIsLoading,
   uploadedFileName,
   setUploadedFileName,
-  defaultTab = 'excel'
+  defaultTab = 'excel',
+  getWorkspaceGeneration,
+  isCurrentWorkspace
 }: ImportPanelProps) {
   return (
     <Card id="import-panel" className="tk-hover-card">
@@ -53,6 +57,8 @@ export default function ImportPanel({
               setIsLoading={setIsLoading}
               uploadedFileName={uploadedFileName}
               setUploadedFileName={setUploadedFileName}
+              getWorkspaceGeneration={getWorkspaceGeneration}
+              isCurrentWorkspace={isCurrentWorkspace}
             />
           </TabsContent>
           <TabsContent value="google-sheet" className="mt-4">
@@ -61,6 +67,8 @@ export default function ImportPanel({
               emailBrand={emailBrand}
               isLoading={isLoading}
               setIsLoading={setIsLoading}
+              getWorkspaceGeneration={getWorkspaceGeneration}
+              isCurrentWorkspace={isCurrentWorkspace}
             />
           </TabsContent>
         </Tabs>

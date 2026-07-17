@@ -309,6 +309,9 @@ function friendlyGoogleError(err: any, action: string): string {
     || err?.errors?.[0]?.message
     || err?.message;
 
+  if (isInvalidGrantError(err)) {
+    return `${action} failed: Google authorization expired or was revoked. Reconnect the Google account and try again.`;
+  }
   if (status === 401) {
     return `${action} failed: Google authorization expired. Reconnect the Google account and try again.`;
   }
@@ -369,6 +372,27 @@ function getGoogleErrorDetails(error: unknown) {
       googleError.message ??
       'Unknown Google API error'
   };
+}
+
+export function isInvalidGrantError(error: any) {
+  const responseData = error?.response?.data;
+  const rawOAuthError = responseData?.error;
+  const oauthError =
+    typeof rawOAuthError === 'string'
+      ? rawOAuthError
+      : rawOAuthError?.status || rawOAuthError?.message || '';
+  const description = [
+    responseData?.error_description,
+    typeof rawOAuthError === 'object' ? rawOAuthError?.message : '',
+    error?.message
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    oauthError === 'invalid_grant' ||
+    /invalid_grant|expired or revoked|token has been expired/i.test(description)
+  );
 }
 
 async function withCalendarRetry<T>(action: () => Promise<T>, maxAttempts = 4): Promise<T> {
@@ -689,13 +713,28 @@ export async function getAuthStatus(brand?: EmailBrandKey) {
   
   let authenticated = false;
   let isUsingEnvToken = false;
+  let requiresReconnect = false;
+  let authError: string | undefined;
 
   const savedTokens = await readSavedTokens(normalizedBrand);
-  authenticated = !!savedTokens?.refresh_token;
+  const hasSavedToken = !!savedTokens?.refresh_token;
+  const hasEnvToken = !!(envRefreshToken && !envTokenSuppressed);
 
-  if (!authenticated && envRefreshToken && !envTokenSuppressed) {
-    authenticated = true;
-    isUsingEnvToken = true;
+  if (configured && (hasSavedToken || hasEnvToken)) {
+    try {
+      const oauth2Client = await getOAuthClient(normalizedBrand);
+      await oauth2Client.getAccessToken();
+      authenticated = true;
+      isUsingEnvToken = !hasSavedToken && hasEnvToken;
+    } catch (error: any) {
+      if (isInvalidGrantError(error)) {
+        await clearCredentials(normalizedBrand);
+        requiresReconnect = true;
+        authError = 'Google authorization expired or was revoked. Connect Google again.';
+      } else {
+        authError = error?.message || 'Google authentication check failed.';
+      }
+    }
   }
 
   let authUrl = '';
@@ -718,7 +757,9 @@ export async function getAuthStatus(brand?: EmailBrandKey) {
     redirectUri,
     authUrl,
     isUsingEnvToken,
-    envTokenSuppressed
+    envTokenSuppressed,
+    requiresReconnect,
+    authError
   };
 }
 

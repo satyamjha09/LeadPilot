@@ -1,6 +1,6 @@
 import { google } from 'googleapis';
 import { ExcelRow } from '../src/types';
-import { getOAuthClient } from './googleAuth';
+import { getOAuthClient, isInvalidGrantError } from './googleAuth';
 import { getLeadStatusParse, isValidLeadStatus, normalizeHeader } from './leadStatus';
 import { createNewAutomationId } from './emailIdentity';
 import { normalizeDisplayDate } from '../src/lib/dateFormat';
@@ -385,6 +385,12 @@ export function friendlySheetsError(err: any) {
   const detail = err?.response?.data?.error?.message || err?.message || '';
   if (!err?.__sheetsLogged) logSheetsFailure(err);
 
+  if (isInvalidGrantError(err)) {
+    return {
+      status: 401,
+      message: 'Google authorization expired or was revoked. Disconnect and reconnect this Google account.'
+    };
+  }
   if (/Invalid Google Sheets URL/i.test(detail)) {
     return { status: 400, message: 'Invalid Google Sheets URL' };
   }

@@ -11,6 +11,8 @@ interface ExcelUploadProps {
   setIsLoading: (val: boolean) => void;
   uploadedFileName: string | null;
   setUploadedFileName: (name: string | null) => void;
+  getWorkspaceGeneration: () => number;
+  isCurrentWorkspace: (generation: number) => boolean;
 }
 
 export default function ExcelUpload({
@@ -18,7 +20,9 @@ export default function ExcelUpload({
   isLoading,
   setIsLoading,
   uploadedFileName,
-  setUploadedFileName
+  setUploadedFileName,
+  getWorkspaceGeneration,
+  isCurrentWorkspace
 }: ExcelUploadProps) {
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -26,6 +30,7 @@ export default function ExcelUpload({
   const maxFileSizeBytes = 10 * 1024 * 1024;
 
   const handleExcelFile = async (file: File) => {
+    const generation = getWorkspaceGeneration();
     const isExcel =
       file.name.endsWith('.xlsx') ||
       file.name.endsWith('.xls') ||
@@ -65,14 +70,16 @@ export default function ExcelUpload({
         throw new Error('Server returned invalid row data.');
       }
 
+      if (!isCurrentWorkspace(generation)) return;
       await onDataParsed(data.rows);
     } catch (err: unknown) {
+      if (!isCurrentWorkspace(generation)) return;
       const message = err instanceof Error ? err.message : 'An error occurred during file parsing.';
       console.error(err);
       setError(message);
       setUploadedFileName(null);
     } finally {
-      setIsLoading(false);
+      if (isCurrentWorkspace(generation)) setIsLoading(false);
     }
   };
 

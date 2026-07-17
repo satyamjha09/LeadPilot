@@ -19,6 +19,7 @@ import {
   SelectValue
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { ReminderConfig, ScheduledReminder } from '@/src/types';
 
 const reminderOptions = [
@@ -35,6 +36,7 @@ export default function SettingsPanel({ onResetComplete }: { onResetComplete?: (
   const [isSaving, setIsSaving] = useState(false);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [adminResetToken, setAdminResetToken] = useState('');
 
   const loadStatus = async () => {
     try {
@@ -83,7 +85,14 @@ export default function SettingsPanel({ onResetComplete }: { onResetComplete?: (
   const resetDatabase = async () => {
     setIsResetting(true);
     try {
-      const res = await fetch('/api/admin/reset-demo-test-data', { method: 'POST' });
+      const res = await fetch('/api/admin/reset-demo-test-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Reset-Token': adminResetToken.trim()
+        },
+        body: JSON.stringify({ adminResetToken: adminResetToken.trim() })
+      });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || 'Could not reset database.');
@@ -92,6 +101,7 @@ export default function SettingsPanel({ onResetComplete }: { onResetComplete?: (
       if (onResetComplete) onResetComplete();
       else toast.success('Demo test data deleted');
       setConfirmResetOpen(false);
+      setAdminResetToken('');
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Database reset failed');
     } finally {
@@ -151,7 +161,7 @@ export default function SettingsPanel({ onResetComplete }: { onResetComplete?: (
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-destructive">
             <DatabaseZap className="h-5 w-5" />
-            Reset database
+            Reset App Workflow Data
           </CardTitle>
           <CardDescription>
             Delete demo workflow data and clear the current browser workspace.
@@ -163,7 +173,7 @@ export default function SettingsPanel({ onResetComplete }: { onResetComplete?: (
           </p>
           <Button type="button" variant="destructive" onClick={() => setConfirmResetOpen(true)}>
             <Trash2 className="h-4 w-4" />
-            Reset Data
+            Reset Workflow
           </Button>
         </CardContent>
       </Card>
@@ -171,17 +181,36 @@ export default function SettingsPanel({ onResetComplete }: { onResetComplete?: (
       <Dialog open={confirmResetOpen} onOpenChange={setConfirmResetOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete all demo data?</DialogTitle>
+            <DialogTitle>Reset app workflow data?</DialogTitle>
             <DialogDescription>
               This will permanently delete schedules, email logs, sheet state, active sessions, demo history, and delivery records. It will also clear imported rows from this browser.
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="admin-reset-token">Admin reset key</Label>
+            <Input
+              id="admin-reset-token"
+              type="password"
+              value={adminResetToken}
+              onChange={(event) => setAdminResetToken(event.target.value)}
+              placeholder="Enter admin reset key"
+              autoComplete="off"
+            />
+          </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setConfirmResetOpen(false)} disabled={isResetting}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setConfirmResetOpen(false);
+                setAdminResetToken('');
+              }}
+              disabled={isResetting}
+            >
               Cancel
             </Button>
-            <Button type="button" variant="destructive" onClick={resetDatabase} disabled={isResetting}>
-              {isResetting ? 'Deleting...' : 'Confirm Delete'}
+            <Button type="button" variant="destructive" onClick={resetDatabase} disabled={isResetting || !adminResetToken.trim()}>
+              {isResetting ? 'Resetting...' : 'Confirm Reset'}
             </Button>
           </DialogFooter>
         </DialogContent>

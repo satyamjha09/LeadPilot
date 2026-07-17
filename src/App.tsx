@@ -177,6 +177,10 @@ export default function App() {
 
   const didReconcileStoredRows = useRef(false);
   const importRef = useRef<HTMLDivElement>(null);
+  const workspaceGenerationRef = useRef(0);
+
+  const getWorkspaceGeneration = () => workspaceGenerationRef.current;
+  const isCurrentWorkspace = (generation: number) => generation === workspaceGenerationRef.current;
 
   const stats = useMemo(() => computeStats(rows), [rows]);
   const notificationCounts = useMemo<NotificationCounts>(
@@ -339,7 +343,9 @@ export default function App() {
   }, [activeView]);
 
   const handleDataParsed = async (parsedRows: ExcelRow[]) => {
+    const generation = getWorkspaceGeneration();
     const reconciledRows = await reconcileRows(parsedRows);
+    if (!isCurrentWorkspace(generation)) return;
     setSource({ type: 'excel' });
     setRows(reconciledRows);
     const initiallySelected = new Set<string>();
@@ -352,6 +358,8 @@ export default function App() {
   };
 
   const handleGoogleSheetDataParsed = async (parsedRows: ExcelRow[], sheetSource: SheetSource) => {
+    const generation = getWorkspaceGeneration();
+    if (!isCurrentWorkspace(generation)) return;
     setSource(sheetSource);
     setRows(parsedRows);
     const initiallySelected = new Set<string>();
@@ -380,6 +388,7 @@ export default function App() {
 
   const syncGoogleSheet = async (showToast = false) => {
     if (source.type !== 'google-sheet' || isSyncingRef.current) return;
+    const generation = getWorkspaceGeneration();
     isSyncingRef.current = true;
     setIsProcessing(true);
     setProcessingProgress(null);
@@ -396,6 +405,7 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Sync failed');
+      if (!isCurrentWorkspace(generation)) return;
       const updatedRows = Array.isArray(data.rows) ? data.rows : [];
       setRows(updatedRows);
       if (Array.isArray(data.headers)) setSource({ ...source, headers: data.headers });
@@ -403,10 +413,12 @@ export default function App() {
       setSelectedRowIds(new Set(updatedRows.filter((row) => canProcessLead(row)).map((row) => row.id)));
       if (showToast) toast.success(data.skippedDueToLock ? 'Sync already running' : 'Google Sheet refreshed');
     } catch (err: unknown) {
-      if (showToast) toast.error(err instanceof Error ? err.message : 'Sync failed');
+      if (isCurrentWorkspace(generation) && showToast) toast.error(err instanceof Error ? err.message : 'Sync failed');
     } finally {
-      setIsProcessing(false);
-      isSyncingRef.current = false;
+      if (isCurrentWorkspace(generation)) {
+        setIsProcessing(false);
+        isSyncingRef.current = false;
+      }
     }
   };
 
@@ -416,6 +428,7 @@ export default function App() {
       return;
     }
 
+    const generation = getWorkspaceGeneration();
     setProcessTargetRows(targetRows);
     setProcessPreview(null);
     setIsPreflightLoading(true);
@@ -431,16 +444,18 @@ export default function App() {
         throw new Error(data.error || 'Process preview failed.');
       }
 
+      if (!isCurrentWorkspace(generation)) return;
       setProcessPreview(data);
       setConfirmProcessOpen(true);
     } catch (err: unknown) {
+      if (!isCurrentWorkspace(generation)) return;
       toast.error(err instanceof Error ? err.message : 'Process preview failed');
       Object.entries(statusRevertMap).forEach(([rowId, previous]) =>
         revertRowStatus(rowId, previous as LeadStatusLabel | 'Failed' | '')
       );
       setStatusRevertMap({});
     } finally {
-      setIsPreflightLoading(false);
+      if (isCurrentWorkspace(generation)) setIsPreflightLoading(false);
     }
   };
 
@@ -465,12 +480,14 @@ export default function App() {
     }
   };
 
-  const pollProcessJob = async (jobId: string) => {
+  const pollProcessJob = async (jobId: string, generation: number) => {
     while (true) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      if (!isCurrentWorkspace(generation)) return;
       const res = await fetch(`/api/process-leads/jobs/${encodeURIComponent(jobId)}`);
       const data: ProcessLeadJobResponse = await res.json();
       if (!res.ok) throw new Error(data.error || 'Process job lookup failed.');
+      if (!isCurrentWorkspace(generation)) return;
 
       const progress = data.progress;
       if (progress) {
@@ -489,6 +506,7 @@ export default function App() {
       }
 
       if (data.status === 'COMPLETED') {
+        if (!isCurrentWorkspace(generation)) return;
         applyProcessResult(data.rows || [], data.summary, data.headers, data.sheetSyncError);
         return;
       }
@@ -499,7 +517,7 @@ export default function App() {
     }
   };
 
-  const runQueuedProcessRows = async () => {
+  const runQueuedProcessRows = async (generation: number) => {
     const res = await fetch('/api/process-leads/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -507,6 +525,7 @@ export default function App() {
     });
     const data: ProcessLeadJobResponse = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to queue lead processing.');
+    if (!isCurrentWorkspace(generation)) return;
 
     setProcessingProgress({
       current: 0,
@@ -520,7 +539,7 @@ export default function App() {
       steps: ['Queued', 'Processing in background', 'Updating results', 'Done']
     });
     toast.info('Processing queued in background...');
-    await pollProcessJob(data.jobId);
+    await pollProcessJob(data.jobId, generation);
   };
 
   const runProcessRows = async () => {
@@ -534,25 +553,29 @@ export default function App() {
       return;
     }
 
+    const generation = getWorkspaceGeneration();
     setConfirmProcessOpen(false);
     setIsProcessing(true);
     setLastSummary(null);
 
     if (processQueueEnabled) {
       try {
-        await runQueuedProcessRows();
+        await runQueuedProcessRows(generation);
       } catch (err: unknown) {
+        if (!isCurrentWorkspace(generation)) return;
         const message = err instanceof Error ? err.message : 'Lead processing failed';
         toast.error(message);
         Object.entries(statusRevertMap).forEach(([rowId, previous]) =>
           revertRowStatus(rowId, previous as LeadStatusLabel | 'Failed' | '')
         );
       } finally {
-        setIsProcessing(false);
-        setProcessingProgress(null);
-        setStatusRevertMap({});
-        setProcessTargetRows([]);
-        setProcessPreview(null);
+        if (isCurrentWorkspace(generation)) {
+          setIsProcessing(false);
+          setProcessingProgress(null);
+          setStatusRevertMap({});
+          setProcessTargetRows([]);
+          setProcessPreview(null);
+        }
       }
       return;
     }
@@ -574,6 +597,7 @@ export default function App() {
     let tick = 0;
     const progressTimer = window.setInterval(() => {
       tick += 1;
+      if (!isCurrentWorkspace(generation)) return;
       setProcessingProgress((current) => {
         if (!current) return current;
         const rowIndex = Math.min(processTargetRows.length - 1, Math.floor(tick / AUTOMATION_STEPS.length));
@@ -600,10 +624,12 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Lead processing failed.');
+      if (!isCurrentWorkspace(generation)) return;
 
       const updatedRows: ExcelRow[] = Array.isArray(data.rows) ? data.rows : [];
       applyProcessResult(updatedRows, data.summary, data.headers, data.sheetSyncError);
     } catch (err: unknown) {
+      if (!isCurrentWorkspace(generation)) return;
       const message = err instanceof Error ? err.message : 'Lead processing failed';
       toast.error(message);
       Object.entries(statusRevertMap).forEach(([rowId, previous]) =>
@@ -611,11 +637,13 @@ export default function App() {
       );
     } finally {
       window.clearInterval(progressTimer);
-      setIsProcessing(false);
-      setProcessingProgress(null);
-      setStatusRevertMap({});
-      setProcessTargetRows([]);
-      setProcessPreview(null);
+      if (isCurrentWorkspace(generation)) {
+        setIsProcessing(false);
+        setProcessingProgress(null);
+        setStatusRevertMap({});
+        setProcessTargetRows([]);
+        setProcessPreview(null);
+      }
     }
   };
 
@@ -755,6 +783,8 @@ export default function App() {
   };
 
   const clearWorkspaceState = () => {
+    workspaceGenerationRef.current += 1;
+    isSyncingRef.current = false;
     setRows([]);
     setSelectedRowIds(new Set());
     setSource({ type: 'excel' });
@@ -766,6 +796,10 @@ export default function App() {
     setProcessTargetRows([]);
     setProcessPreview(null);
     setStatusRevertMap({});
+    setIsProcessing(false);
+    setIsLoadingFile(false);
+    setIsPreflightLoading(false);
+    setConfirmProcessOpen(false);
     setActiveView('dashboard');
 
     try {
@@ -870,6 +904,8 @@ export default function App() {
                   setUploadedFileName={setUploadedFileName}
                   defaultTab={source.type === 'google-sheet' ? 'google-sheet' : 'excel'}
                   emailBrand={selectedEmailBrand}
+                  getWorkspaceGeneration={getWorkspaceGeneration}
+                  isCurrentWorkspace={isCurrentWorkspace}
                 />
               </div>
             )}

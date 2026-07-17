@@ -1,4 +1,4 @@
-import type { Express } from 'express';
+import type { Express, Request } from 'express';
 import multer from 'multer';
 import xlsx from 'xlsx';
 import { ExcelRow } from '../../src/types';
@@ -43,7 +43,7 @@ import {
   getProcessLeadJob,
   serializeProcessLeadJob
 } from '../processLeadJobs';
-import { enqueueProcessLeadJob, isProcessQueueEnabled } from '../processLeadQueue';
+import { enqueueProcessLeadJob, isProcessQueueEnabled, prepareProcessQueueForReset } from '../processLeadQueue';
 import { buildExportRow, normalizeRows, reconcileScheduledRows } from '../services/rowTransforms';
 import { normalizeEmailBrand, type EmailBrandKey } from '../emailTemplates';
 
@@ -53,6 +53,19 @@ type SheetSyncRunner = (
   incomingHeaders?: string[],
   emailBrand?: EmailBrandKey
 ) => Promise<any>;
+
+function isAdminResetAuthorized(req: Request) {
+  const configuredToken = String(process.env.ADMIN_RESET_TOKEN || '').trim();
+  if (!configuredToken) return process.env.NODE_ENV !== 'production';
+
+  const providedToken = String(
+    req.get('x-admin-reset-token') ||
+    (req.body as { adminResetToken?: string } | undefined)?.adminResetToken ||
+    ''
+  ).trim();
+
+  return providedToken === configuredToken;
+}
 
 export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetSyncRunner }) {
   const upload = multer({
@@ -65,12 +78,25 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
   });
 
   app.post('/api/admin/reset-demo-test-data', async (req, res) => {
+    let resumeQueue: (() => Promise<void>) | null = null;
+
     try {
+      if (!isAdminResetAuthorized(req)) {
+        return res.status(403).json({ error: 'Invalid admin reset key.' });
+      }
+
+      resumeQueue = await prepareProcessQueueForReset();
       await resetDemoTestData();
-      return res.json({ success: true });
+      return res.json({ success: true, message: 'Workflow database and pending process jobs cleared.' });
     } catch (err: any) {
       console.error('Database reset failed:', err);
-      return res.status(500).json({ error: err.message || 'Database reset failed' });
+      return res.status(err.statusCode || 500).json({ error: err.message || 'Database reset failed' });
+    } finally {
+      if (resumeQueue) {
+        await resumeQueue().catch((error) => {
+          console.error('Could not resume process queue:', error);
+        });
+      }
     }
   });
 

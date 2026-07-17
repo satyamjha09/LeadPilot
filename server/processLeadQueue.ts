@@ -54,3 +54,26 @@ export async function enqueueProcessLeadJob(jobId: string) {
     }
   );
 }
+
+export async function prepareProcessQueueForReset() {
+  if (!isProcessQueueEnabled()) {
+    return async () => {};
+  }
+
+  const processQueue = getProcessLeadQueue();
+  await processQueue.pause();
+
+  const activeCount = await processQueue.getActiveCount();
+  if (activeCount > 0) {
+    await processQueue.resume();
+    const error = new Error('A lead workflow is currently running. Wait for it to finish before resetting.');
+    (error as Error & { statusCode?: number }).statusCode = 409;
+    throw error;
+  }
+
+  await processQueue.drain(true);
+
+  return async () => {
+    await processQueue.resume();
+  };
+}

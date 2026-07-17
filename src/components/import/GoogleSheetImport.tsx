@@ -11,13 +11,23 @@ interface GoogleSheetImportProps {
   emailBrand: 'tallykonnect' | 'anywheretally';
   isLoading: boolean;
   setIsLoading: (val: boolean) => void;
+  getWorkspaceGeneration: () => number;
+  isCurrentWorkspace: (generation: number) => boolean;
 }
 
-export default function GoogleSheetImport({ onDataParsed, emailBrand, isLoading, setIsLoading }: GoogleSheetImportProps) {
+export default function GoogleSheetImport({
+  onDataParsed,
+  emailBrand,
+  isLoading,
+  setIsLoading,
+  getWorkspaceGeneration,
+  isCurrentWorkspace
+}: GoogleSheetImportProps) {
   const [sheetUrl, setSheetUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const handleImport = async () => {
+    const generation = getWorkspaceGeneration();
     const trimmedUrl = sheetUrl.trim();
     if (!trimmedUrl) {
       setError('Paste a Google Sheets URL first.');
@@ -52,13 +62,15 @@ export default function GoogleSheetImport({ onDataParsed, emailBrand, isLoading,
         headers: Array.isArray(data.headers) ? data.headers : []
       };
 
+      if (!isCurrentWorkspace(generation)) return;
       await onDataParsed(data.rows, source);
     } catch (err: unknown) {
+      if (!isCurrentWorkspace(generation)) return;
       const message = err instanceof Error ? err.message : 'Google Sheet import failed.';
       console.error(err);
       setError(message);
     } finally {
-      setIsLoading(false);
+      if (isCurrentWorkspace(generation)) setIsLoading(false);
     }
   };
 

@@ -116,10 +116,17 @@ export default function Header({
                 {authStatus.email || 'Google Connected'}
               </Badge>
             ) : authStatus?.configured ? (
-              <Button type="button" size="sm" onClick={handleAuthClick}>
-                <Key className="h-4 w-4" />
-                Connect Google
-              </Button>
+              <div className="flex items-center gap-2">
+                {authStatus.authError && (
+                  <Badge variant="destructive" className="hidden max-w-48 truncate sm:inline-flex" title={authStatus.authError}>
+                    {authStatus.requiresReconnect ? 'Reconnect required' : 'Google auth issue'}
+                  </Badge>
+                )}
+                <Button type="button" size="sm" onClick={handleAuthClick}>
+                  <Key className="h-4 w-4" />
+                  {authStatus.requiresReconnect ? 'Reconnect Google' : 'Connect Google'}
+                </Button>
+              </div>
             ) : (
               <Badge variant="destructive" className="hidden sm:inline-flex">Configure .env</Badge>
             )}
