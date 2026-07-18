@@ -28,6 +28,7 @@ vi.mock('./db', () => ({
 }));
 
 const {
+  assertDemoBrandOwnership,
   applyDbTruthToRows,
   findLeadSchedule,
   getCustomerDemoState,
@@ -118,6 +119,35 @@ describe('brand-scoped schedule state', () => {
     expect(anyWhereTallyRow.__emailBrand).toBeUndefined();
     expect(tallyKonnectRow['Meeting Details']).toBe('https://meet.google.com/tk-demo');
     expect(tallyKonnectRow.__emailBrand).toBe('tallykonnect');
+  });
+
+  it('throws a brand mismatch when another brand owns the active demo', async () => {
+    prismaMock.customerDemoState.findUnique.mockImplementation(async ({ where }: any) => {
+      if (where.emailBrand_userId.emailBrand !== 'tallykonnect') return null;
+      return {
+        emailBrand: 'tallykonnect',
+        userId: 'lead_123',
+        email: 'moh@example.com',
+        status: 'Demo Scheduled',
+        activeDemoSessionId: 'session-tk',
+        meetingLink: 'https://meet.google.com/tk-demo',
+        calendarEventId: 'calendar-tk',
+        demoDate: '15-06-2026',
+        demoTime: '15:30',
+        demoStartUtc: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      };
+    });
+    prismaMock.demoHistory.findUnique.mockResolvedValue({
+      sessionId: 'session-tk',
+      status: 'Demo Scheduled'
+    });
+
+    await expect(assertDemoBrandOwnership(baseRow, 'anywheretally')).rejects.toMatchObject({
+      code: 'EMAIL_BRAND_MISMATCH',
+      statusCode: 409,
+      requiredBrand: 'tallykonnect',
+      selectedBrand: 'anywheretally'
+    });
   });
 
   it('defines DemoHistory relation through the brand-specific customer state', () => {

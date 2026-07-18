@@ -14,9 +14,9 @@ import { LEAD_STATUS, isDemoScheduledStatus, normalizeLeadStatus } from './leadS
 import {
   findScheduledMeetLinkFromDb,
   assertCanCreateOrReuseActiveDemo,
+  assertDemoBrandOwnership,
   closeActiveDemoForRow,
   ensureScheduledDemoHistory,
-  getActiveDemoForRow,
   getSheetLeadState,
   markScheduledEmailSent,
   normalizeLeadDate,
@@ -27,6 +27,7 @@ import {
   saveSheetLeadState,
   saveLeadStatusUpdate
 } from './scheduleDb';
+import { assertProcessBatchBrandOwnership } from './lifecycleOwnership';
 import { addScheduledReminder, invalidateScheduledReminder } from './reminders';
 import {
   buildMeetingInviteEmail,
@@ -300,10 +301,7 @@ function hasMeetingStarted(startUtc?: string | null) {
 }
 
 async function assertManualCloseAllowed(row: ExcelRow, emailBrand: EmailBrandKey) {
-  const active = await getActiveDemoForRow(row, emailBrand);
-  if (!active?.state.activeDemoSessionId) {
-    throw new Error('No active demo session exists.');
-  }
+  const active = await assertDemoBrandOwnership(row, emailBrand);
   if (!active.state.meetingLink || !active.state.calendarEventId) {
     throw new Error('An active meeting is required to update this demo.');
   }
@@ -693,6 +691,7 @@ export async function processLeadsByStatus(
   rows: ExcelRow[],
   context: SheetContext
 ): Promise<ProcessLeadsResult> {
+  await assertProcessBatchBrandOwnership(rows, context.emailBrand);
   const plan = await buildProcessLeadPlan(rows);
   const resultsById = new Map<string, ExcelRow>();
   const sheetUpdates: GoogleSheetRowUpdate[] = [];
@@ -1066,19 +1065,26 @@ export async function sendThankYouForRow(
   const email = String(row.email || '').trim();
   if (!email) throw new Error('Email is missing.');
   if (!isValidEmail(email)) throw new Error('Email is invalid.');
-  await assertManualCloseAllowed(row, context.emailBrand);
+  const active = await assertManualCloseAllowed(row, context.emailBrand);
+  const ownerBrand = active.emailBrand;
+  const ownerContext: SheetContext = { ...context, emailBrand: ownerBrand };
+  const ownerRow: ExcelRow = {
+    ...row,
+    __emailBrand: ownerBrand,
+    'Meeting Details': active.state.meetingLink || row['Meeting Details'] || ''
+  };
 
-  const template = buildThankYouEmail({ fullName: row.full_name, brand: context.emailBrand });
+  const template = buildThankYouEmail({ fullName: ownerRow.full_name, brand: ownerBrand });
   const emailResult = await sendIdempotentEmail({
-    row,
-    context,
+    row: ownerRow,
+    context: ownerContext,
     emailType: EMAIL_TYPES.DEMO_DONE,
-    date: row['Date of Demo'],
-    time: row['Time of Demo'],
+    date: ownerRow['Date of Demo'],
+    time: ownerRow['Time of Demo'],
     subject: template.subject,
     text: template.text,
     html: template.html,
-    send: () => sendThankYouEmail(row, context.emailBrand)
+    send: () => sendThankYouEmail(ownerRow, ownerBrand)
   });
 
   if (emailResult.skipped) {
@@ -1091,56 +1097,56 @@ export async function sendThankYouForRow(
             ? 'Email result requires review'
             : 'Email failed: review delivery status';
     const updatedRow: ExcelRow = {
-      ...row,
-      __emailBrand: context.emailBrand,
+      ...ownerRow,
+      __emailBrand: ownerBrand,
       lead_status: LEAD_STATUS.DEMO_DONE,
       Remarks: message
     };
     if (!options.skipSheetSync) {
-      await syncSheetRow(row, context, {
+      await syncSheetRow(ownerRow, ownerContext, {
         lead_status: LEAD_STATUS.DEMO_DONE,
         Remarks: updatedRow.Remarks || ''
       });
     }
     if (emailResult.reason === 'ALREADY_SENT') {
-      await assertWorkflowStillValid(context);
-      await closeActiveDemoForRow(row, LEAD_STATUS.DEMO_DONE, context.emailBrand);
+      await assertWorkflowStillValid(ownerContext);
+      await closeActiveDemoForRow(ownerRow, LEAD_STATUS.DEMO_DONE, ownerBrand);
     }
     return { row: updatedRow, skipped: true, message };
   }
 
-  const keys = { email, dateOfDemo: String(row['Date of Demo'] || ''), timeOfDemo: String(row['Time of Demo'] || '') };
+  const keys = { email, dateOfDemo: String(ownerRow['Date of Demo'] || ''), timeOfDemo: String(ownerRow['Time of Demo'] || '') };
   if (keys.email && keys.dateOfDemo && keys.timeOfDemo) {
-    await assertWorkflowStillValid(context);
+    await assertWorkflowStillValid(ownerContext);
     await saveLeadScheduleSuccess(
-      row,
+      ownerRow,
       {
-        meetingLink: String(row['Meeting Details'] || ''),
+        meetingLink: String(ownerRow['Meeting Details'] || ''),
         gmailMessageId: emailResult.messageId,
         remarks: 'Thank-you email sent',
         status: LEAD_STATUS.DEMO_DONE
       },
-      { sourceType: context.sourceType, sourceId: context.spreadsheetId, emailBrand: context.emailBrand }
+      { sourceType: ownerContext.sourceType, sourceId: ownerContext.spreadsheetId, emailBrand: ownerBrand }
     );
   }
 
   const updatedRow: ExcelRow = {
-    ...row,
-    __emailBrand: context.emailBrand,
+    ...ownerRow,
+    __emailBrand: ownerBrand,
     lead_status: LEAD_STATUS.DEMO_DONE,
     Remarks: 'Thank-you email sent',
     __emailDeliveryId: emailResult.deliveryId
   };
 
   if (!options.skipSheetSync) {
-    await syncSheetRow(row, context, {
+    await syncSheetRow(ownerRow, ownerContext, {
       lead_status: LEAD_STATUS.DEMO_DONE,
       Remarks: 'Thank-you email sent'
     });
   }
 
-  await assertWorkflowStillValid(context);
-  await closeActiveDemoForRow(row, LEAD_STATUS.DEMO_DONE, context.emailBrand, {
+  await assertWorkflowStillValid(ownerContext);
+  await closeActiveDemoForRow(ownerRow, LEAD_STATUS.DEMO_DONE, ownerBrand, {
     emailSentAt: emailResult.sent ? new Date().toISOString() : undefined
   });
 
@@ -1155,19 +1161,26 @@ export async function sendNoResponseForRow(
   const email = String(row.email || '').trim();
   if (!email) throw new Error('Email is missing.');
   if (!isValidEmail(email)) throw new Error('Email is invalid.');
-  await assertManualCloseAllowed(row, context.emailBrand);
+  const active = await assertManualCloseAllowed(row, context.emailBrand);
+  const ownerBrand = active.emailBrand;
+  const ownerContext: SheetContext = { ...context, emailBrand: ownerBrand };
+  const ownerRow: ExcelRow = {
+    ...row,
+    __emailBrand: ownerBrand,
+    'Meeting Details': active.state.meetingLink || row['Meeting Details'] || ''
+  };
 
-  const template = buildNoResponseEmail({ fullName: row.full_name, brand: context.emailBrand });
+  const template = buildNoResponseEmail({ fullName: ownerRow.full_name, brand: ownerBrand });
   const emailResult = await sendIdempotentEmail({
-    row,
-    context,
+    row: ownerRow,
+    context: ownerContext,
     emailType: EMAIL_TYPES.NO_RESPONSE,
-    date: row['Date of Demo'],
-    time: row['Time of Demo'],
+    date: ownerRow['Date of Demo'],
+    time: ownerRow['Time of Demo'],
     subject: template.subject,
     text: template.text,
     html: template.html,
-    send: () => sendNoResponseEmail(row, context.emailBrand)
+    send: () => sendNoResponseEmail(ownerRow, ownerBrand)
   });
 
   if (emailResult.skipped) {
@@ -1180,43 +1193,43 @@ export async function sendNoResponseForRow(
             ? 'Email result requires review'
             : 'Email failed: review delivery status';
     const updatedRow: ExcelRow = {
-      ...row,
-      __emailBrand: context.emailBrand,
+      ...ownerRow,
+      __emailBrand: ownerBrand,
       lead_status: LEAD_STATUS.NO_RESPONSE,
       'Meeting Details': '',
       Remarks: message
     };
     if (!options.skipSheetSync) {
-      await syncSheetRow(row, context, {
+      await syncSheetRow(ownerRow, ownerContext, {
         'Meeting Details': '',
         lead_status: LEAD_STATUS.NO_RESPONSE,
         Remarks: updatedRow.Remarks || ''
       }, true);
     }
     if (emailResult.reason === 'ALREADY_SENT') {
-      await assertWorkflowStillValid(context);
-      await closeActiveDemoForRow(row, LEAD_STATUS.NO_RESPONSE, context.emailBrand);
+      await assertWorkflowStillValid(ownerContext);
+      await closeActiveDemoForRow(ownerRow, LEAD_STATUS.NO_RESPONSE, ownerBrand);
     }
-    await assertWorkflowStillValid(context);
+    await assertWorkflowStillValid(ownerContext);
     await saveLeadStatusUpdate(
       updatedRow,
       {
         status: LEAD_STATUS.NO_RESPONSE,
         remarks: message
       },
-      { sourceType: context.sourceType, sourceId: context.spreadsheetId, emailBrand: context.emailBrand }
+      { sourceType: ownerContext.sourceType, sourceId: ownerContext.spreadsheetId, emailBrand: ownerBrand }
     );
     return { row: updatedRow, skipped: true, message };
   }
 
-  await assertWorkflowStillValid(context);
-  await closeActiveDemoForRow(row, LEAD_STATUS.NO_RESPONSE, context.emailBrand, {
+  await assertWorkflowStillValid(ownerContext);
+  await closeActiveDemoForRow(ownerRow, LEAD_STATUS.NO_RESPONSE, ownerBrand, {
     emailSentAt: new Date().toISOString()
   });
 
   const updatedRow: ExcelRow = {
-    ...row,
-    __emailBrand: context.emailBrand,
+    ...ownerRow,
+    __emailBrand: ownerBrand,
     lead_status: LEAD_STATUS.NO_RESPONSE,
     'Meeting Details': '',
     Remarks: 'Not Attended email sent',
@@ -1224,21 +1237,21 @@ export async function sendNoResponseForRow(
   };
 
   if (!options.skipSheetSync) {
-    await syncSheetRow(row, context, {
+    await syncSheetRow(ownerRow, ownerContext, {
       'Meeting Details': '',
       lead_status: LEAD_STATUS.NO_RESPONSE,
       Remarks: 'Not Attended email sent'
     }, true);
   }
 
-  await assertWorkflowStillValid(context);
+  await assertWorkflowStillValid(ownerContext);
   await saveLeadStatusUpdate(
     updatedRow,
     {
       status: LEAD_STATUS.NO_RESPONSE,
       remarks: 'Not Attended email sent'
     },
-    { sourceType: context.sourceType, sourceId: context.spreadsheetId, emailBrand: context.emailBrand }
+    { sourceType: ownerContext.sourceType, sourceId: ownerContext.spreadsheetId, emailBrand: ownerBrand }
   );
 
   return { row: updatedRow, skipped: false, message: 'Not Attended email sent' };
@@ -1253,10 +1266,10 @@ export async function rescheduleDemoForRow(
   if (!email) throw new Error('Email is missing.');
   if (!isValidEmail(email)) throw new Error('Email is invalid.');
 
-  const active = await getActiveDemoForRow(row, context.emailBrand);
-  if (!active?.state.activeDemoSessionId || !active.history) {
-    throw new Error('No active demo session exists.');
-  }
+  const active = await assertDemoBrandOwnership(row, context.emailBrand);
+  const ownerBrand = active.emailBrand;
+  const ownerContext: SheetContext = { ...context, emailBrand: ownerBrand };
+  if (!active.history) throw new Error('Active demo history record was not found.');
   if (!active.state.meetingLink || !active.state.calendarEventId) {
     throw new Error('An active meeting is required to reschedule.');
   }
@@ -1266,26 +1279,26 @@ export async function rescheduleDemoForRow(
 
   const oldDate = active.state.demoDate || active.history.displayDate || undefined;
   const oldTime = active.state.demoTime || active.history.displayTime || undefined;
-  await assertWorkflowStillValid(context);
-  const calendarResult = await updateCalendarMeeting(row, active.state.calendarEventId, context.emailBrand);
+  await assertWorkflowStillValid(ownerContext);
+  const calendarResult = await updateCalendarMeeting(row, active.state.calendarEventId, ownerBrand);
   const meetLink = calendarResult.meetLink || active.state.meetingLink;
   const calendarEventId = calendarResult.eventId || active.state.calendarEventId;
 
   const updatedRow: ExcelRow = {
     ...row,
-    __emailBrand: context.emailBrand,
+    __emailBrand: ownerBrand,
     'Meeting Details': meetLink,
     lead_status: LEAD_STATUS.DEMO_SCHEDULED,
     Remarks: 'Rescheduled. Meeting updated and email sent.'
   };
 
-  await assertWorkflowStillValid(context);
+  await assertWorkflowStillValid(ownerContext);
   await rescheduleActiveDemoForRow(updatedRow, {
     meetingLink: meetLink,
     calendarEventId
-  }, context.emailBrand);
+  }, ownerBrand);
 
-  await assertWorkflowStillValid(context);
+  await assertWorkflowStillValid(ownerContext);
   await saveLeadScheduleSuccess(
     updatedRow,
     {
@@ -1295,13 +1308,13 @@ export async function rescheduleDemoForRow(
       status: LEAD_STATUS.DEMO_SCHEDULED
     },
     {
-      sourceType: context.sourceType || row.__sourceType,
-      sourceId: context.spreadsheetId || row.__spreadsheetId,
-      emailBrand: context.emailBrand
+      sourceType: ownerContext.sourceType || row.__sourceType,
+      sourceId: ownerContext.spreadsheetId || row.__spreadsheetId,
+      emailBrand: ownerBrand
     }
   );
 
-  await assertWorkflowStillValid(context);
+  await assertWorkflowStillValid(ownerContext);
   invalidateScheduledReminder(row, 'Reminder invalidated by reschedule');
   addScheduledReminder(updatedRow, meetLink, calendarResult.startTime);
 
@@ -1312,14 +1325,14 @@ export async function rescheduleDemoForRow(
     meetLink,
     oldDate,
     oldTime,
-    brand: context.emailBrand
+    brand: ownerBrand
   });
   let emailResult: Awaited<ReturnType<typeof sendIdempotentEmail>> | null = null;
   let emailError = '';
   try {
     emailResult = await sendIdempotentEmail({
       row: updatedRow,
-      context,
+      context: ownerContext,
       emailType: EMAIL_TYPES.DEMO_RESCHEDULED,
       date: row['Date of Demo'],
       time: row['Time of Demo'],
@@ -1330,7 +1343,7 @@ export async function rescheduleDemoForRow(
         sendGmailRescheduleInvite(updatedRow, meetLink, {
           date: oldDate,
           time: oldTime
-        }, context.emailBrand)
+        }, ownerBrand)
     });
   } catch (error) {
     if (isStaleWorkflowGenerationError(error)) throw error;
@@ -1351,12 +1364,12 @@ export async function rescheduleDemoForRow(
 
   const finalRow: ExcelRow = {
     ...updatedRow,
-    __emailBrand: context.emailBrand,
+    __emailBrand: ownerBrand,
     Remarks: remarks,
     __emailDeliveryId: emailResult?.deliveryId
   };
 
-  await assertWorkflowStillValid(context);
+  await assertWorkflowStillValid(ownerContext);
   await saveLeadScheduleSuccess(
     finalRow,
     {
@@ -1367,14 +1380,14 @@ export async function rescheduleDemoForRow(
       status: LEAD_STATUS.DEMO_SCHEDULED
     },
     {
-      sourceType: context.sourceType || row.__sourceType,
-      sourceId: context.spreadsheetId || row.__spreadsheetId,
-      emailBrand: context.emailBrand
+      sourceType: ownerContext.sourceType || row.__sourceType,
+      sourceId: ownerContext.spreadsheetId || row.__spreadsheetId,
+      emailBrand: ownerBrand
     }
   );
 
   if (!options.skipSheetSync) {
-    await syncSheetRow(row, context, {
+    await syncSheetRow(row, ownerContext, {
       'Meeting Details': meetLink,
       lead_status: LEAD_STATUS.DEMO_SCHEDULED,
       Remarks: remarks

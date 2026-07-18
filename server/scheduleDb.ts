@@ -4,7 +4,8 @@ import { prisma } from './db';
 import { parseExcelDateTime } from './googleAuth';
 import { LEAD_STATUS, normalizeLeadStatus } from './leadStatus';
 import { normalizeDisplayDate, normalizeIsoDate } from '../src/lib/dateFormat';
-import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
+import { coerceStoredEmailBrand, EMAIL_BRAND_KEYS, type EmailBrandKey } from '../src/lib/emailBrand';
+import { EmailBrandMismatchError } from './brandOwnership';
 
 const DEFAULT_TIMEZONE = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Kolkata';
 const DEMO_EXPIRED_STATUS = 'Expired';
@@ -192,6 +193,29 @@ export async function getActiveDemoForRow(row: ExcelRow, emailBrand: EmailBrandK
     where: { sessionId: state.activeDemoSessionId }
   });
   return { state, history };
+}
+
+export async function assertDemoBrandOwnership(row: ExcelRow, selectedBrand: EmailBrandKey) {
+  const selectedActive = await getActiveDemoForRow(row, selectedBrand);
+  if (selectedActive?.state) {
+    return {
+      ...selectedActive,
+      emailBrand: coerceStoredEmailBrand(selectedActive.state.emailBrand)
+    };
+  }
+
+  for (const brand of EMAIL_BRAND_KEYS) {
+    if (brand === selectedBrand) continue;
+    const otherActive = await getActiveDemoForRow(row, brand);
+    if (otherActive?.state) {
+      throw new EmailBrandMismatchError(
+        coerceStoredEmailBrand(otherActive.state.emailBrand),
+        selectedBrand
+      );
+    }
+  }
+
+  throw new Error('No active demo session exists.');
 }
 
 export async function assertCanCreateOrReuseActiveDemo(row: ExcelRow, emailBrand: EmailBrandKey) {
@@ -404,24 +428,14 @@ export async function forceCloseActiveDemoForRow(row: ExcelRow, remarks: string 
   const userId = getLeadUserId(row);
   if (!userId) throw new Error('Email is missing.');
 
-  const state = await prisma.customerDemoState.findUnique({
-    where: {
-      emailBrand_userId: {
-        emailBrand,
-        userId
-      }
-    }
-  });
-  if (!state?.activeDemoSessionId || !isActiveDemo(state)) {
-    throw new Error('No active demo session exists.');
-  }
+  const active = await assertDemoBrandOwnership(row, emailBrand);
 
   const message = remarks?.trim() || 'Previous active demo force closed by user.';
-  await expireActiveDemoState(state, message);
+  await expireActiveDemoState(active.state, message);
 
   return {
     ...row,
-    __emailBrand: emailBrand,
+    __emailBrand: active.emailBrand,
     'Meeting Details': '',
     lead_status: LEAD_STATUS.DEMO_SCHEDULED,
     Remarks: `${message} You can schedule this lead again.`

@@ -39,6 +39,7 @@ import {
   sendThankYouForRow,
   updateLeadStatusOnly
 } from '../leadWorkflow';
+import { assertProcessBatchBrandOwnership } from '../lifecycleOwnership';
 import {
   createProcessLeadJob,
   getProcessLeadJob,
@@ -721,6 +722,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       }
 
       const dbRows = await applyDbTruthToRows(rows, brand);
+      const ownership = await assertProcessBatchBrandOwnership(dbRows, brand);
       const plan = await buildProcessLeadPlan(dbRows);
       const flattenPlannedRows = (items: any[]) =>
         items.map((item) => ({
@@ -729,6 +731,9 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           Remarks: item.row?.Remarks || item.reason || item.Remarks || ''
         }));
       return res.json({
+        emailBrand: brand,
+        lockedEmailBrand: ownership.lockedBrand,
+        lockedBrands: ownership.lockedBrands,
         summary: plan.summary,
         timeConflictGroups: plan.timeConflictGroups.map((group) => ({
           key: group.key,
@@ -794,6 +799,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         }
 
         const dbRows = await applyDbTruthToRows(rows, brand);
+        await assertProcessBatchBrandOwnership(dbRows, brand);
         const job = await createProcessLeadJob({
           sourceType: sourceType || 'excel',
           spreadsheetId,
@@ -863,6 +869,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         }
 
         const dbRows = await applyDbTruthToRows(rows, brand);
+        await assertProcessBatchBrandOwnership(dbRows, brand);
         const result = await processLeadsByStatus(dbRows, {
           sourceType: sourceType || 'excel',
           spreadsheetId,
