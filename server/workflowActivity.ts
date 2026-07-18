@@ -1,14 +1,31 @@
+import { EMAIL_BRAND_KEYS, type EmailBrandKey } from '../src/lib/emailBrand';
+
 export const WORKFLOW_BUSY_RESET_MESSAGE =
   'A workflow is currently running. Wait for it to finish before resetting.';
 
 export type WorkflowActivityType = 'lead-processing' | 'sheet-sync';
-
-const activeCounts: Record<WorkflowActivityType, number> = {
-  'lead-processing': 0,
-  'sheet-sync': 0
+export type WorkflowActivitySnapshot = {
+  emailBrand: EmailBrandKey;
+  leadProcessing: number;
+  sheetSync: number;
+  total: number;
+  resetInProgress: boolean;
 };
 
-let resetInProgress = false;
+const createActivityCounts = (): Record<WorkflowActivityType, number> => ({
+  'lead-processing': 0,
+  'sheet-sync': 0
+});
+
+const activeCounts: Record<EmailBrandKey, Record<WorkflowActivityType, number>> = {
+  tallykonnect: createActivityCounts(),
+  anywheretally: createActivityCounts()
+};
+
+const resetInProgress: Record<EmailBrandKey, boolean> = {
+  tallykonnect: false,
+  anywheretally: false
+};
 
 export function createWorkflowBusyError() {
   const error = new Error(WORKFLOW_BUSY_RESET_MESSAGE);
@@ -16,44 +33,58 @@ export function createWorkflowBusyError() {
   return error;
 }
 
-export function getActiveWorkflowSnapshot() {
-  const leadProcessing = activeCounts['lead-processing'];
-  const sheetSync = activeCounts['sheet-sync'];
+export function getActiveWorkflowSnapshot(emailBrand: EmailBrandKey): WorkflowActivitySnapshot;
+export function getActiveWorkflowSnapshot(): Record<EmailBrandKey, WorkflowActivitySnapshot>;
+export function getActiveWorkflowSnapshot(emailBrand?: EmailBrandKey) {
+  if (!emailBrand) {
+    return EMAIL_BRAND_KEYS.reduce<Record<EmailBrandKey, WorkflowActivitySnapshot>>((acc, brand) => {
+      acc[brand] = getActiveWorkflowSnapshot(brand);
+      return acc;
+    }, {} as Record<EmailBrandKey, WorkflowActivitySnapshot>);
+  }
+
+  const leadProcessing = activeCounts[emailBrand]['lead-processing'];
+  const sheetSync = activeCounts[emailBrand]['sheet-sync'];
   return {
+    emailBrand,
     leadProcessing,
     sheetSync,
     total: leadProcessing + sheetSync,
-    resetInProgress
+    resetInProgress: resetInProgress[emailBrand]
   };
 }
 
-export function assertNoActiveWorkflow() {
-  if (getActiveWorkflowSnapshot().total > 0) {
+export function assertNoActiveWorkflow(emailBrand: EmailBrandKey) {
+  if (getActiveWorkflowSnapshot(emailBrand).total > 0) {
     throw createWorkflowBusyError();
   }
 }
 
-export function beginResetGuard() {
-  assertNoActiveWorkflow();
-  resetInProgress = true;
+export function beginResetGuard(emailBrand: EmailBrandKey) {
+  if (resetInProgress[emailBrand]) {
+    throw createWorkflowBusyError();
+  }
+  assertNoActiveWorkflow(emailBrand);
+  resetInProgress[emailBrand] = true;
 
   return () => {
-    resetInProgress = false;
+    resetInProgress[emailBrand] = false;
   };
 }
 
 export async function withWorkflowActivity<T>(
   type: WorkflowActivityType,
+  emailBrand: EmailBrandKey,
   action: () => Promise<T>
 ): Promise<T> {
-  if (resetInProgress) {
+  if (resetInProgress[emailBrand]) {
     throw createWorkflowBusyError();
   }
 
-  activeCounts[type] += 1;
+  activeCounts[emailBrand][type] += 1;
   try {
     return await action();
   } finally {
-    activeCounts[type] = Math.max(0, activeCounts[type] - 1);
+    activeCounts[emailBrand][type] = Math.max(0, activeCounts[emailBrand][type] - 1);
   }
 }

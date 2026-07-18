@@ -5,7 +5,7 @@ import {
   markSheetSyncJobFailed,
   markSheetSyncJobSucceeded
 } from './sheetSyncQueue';
-import { withWorkflowActivity } from './workflowActivity';
+import { WORKFLOW_BUSY_RESET_MESSAGE, withWorkflowActivity } from './workflowActivity';
 
 const SHEET_SYNC_SCAN_INTERVAL_MS = Number(process.env.SHEET_SYNC_SCAN_INTERVAL_MS || 60_000);
 const SHEET_SYNC_BATCH_SIZE = Number(process.env.SHEET_SYNC_BATCH_SIZE || 10);
@@ -17,10 +17,10 @@ export async function runSheetSyncScanner() {
   if (sheetSyncRunning) return;
   sheetSyncRunning = true;
   try {
-    await withWorkflowActivity('sheet-sync', async () => {
-      const jobs = await listDueSheetSyncJobs(SHEET_SYNC_BATCH_SIZE);
-      for (const job of jobs) {
-        try {
+    const jobs = await listDueSheetSyncJobs(SHEET_SYNC_BATCH_SIZE);
+    for (const job of jobs) {
+      try {
+        await withWorkflowActivity('sheet-sync', job.emailBrand, async () => {
           const headers = JSON.parse(job.headersJson) as string[];
           const values = JSON.parse(job.valuesJson) as Record<string, any>;
           const [result] = await updateGoogleSheetRowsResilient(
@@ -40,14 +40,17 @@ export async function runSheetSyncScanner() {
           if (job.emailDeliveryId) {
             await markEmailSheetSyncSucceeded(job.emailDeliveryId);
           }
-        } catch (error) {
-          await markSheetSyncJobFailed(job.id, error);
-          if (job.emailDeliveryId) {
-            await markEmailSheetSyncFailed(job.emailDeliveryId, error);
-          }
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message === WORKFLOW_BUSY_RESET_MESSAGE) {
+          continue;
+        }
+        await markSheetSyncJobFailed(job.id, error);
+        if (job.emailDeliveryId) {
+          await markEmailSheetSyncFailed(job.emailDeliveryId, error);
         }
       }
-    });
+    }
   } catch (error) {
     console.error('SHEET_SYNC_RETRY_SCAN_FAILED', error);
   } finally {

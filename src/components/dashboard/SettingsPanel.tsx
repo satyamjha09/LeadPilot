@@ -21,6 +21,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ReminderConfig, ScheduledReminder } from '@/src/types';
+import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
 
 const reminderOptions = [
   { label: 'Off', value: 'off', enabled: false, offsetMinutes: 120 },
@@ -30,9 +31,11 @@ const reminderOptions = [
 ];
 
 export default function SettingsPanel({
+  emailBrand,
   onResetStart,
   onResetComplete
 }: {
+  emailBrand: EmailBrandKey;
   onResetStart?: () => void;
   onResetComplete?: () => void;
 }) {
@@ -87,6 +90,7 @@ export default function SettingsPanel({
 
   const activeValue = config.enabled ? String(config.offsetMinutes) : 'off';
   const pendingCount = reminders.filter((r) => r.status === 'Pending' && !r.reminderSent).length;
+  const brandLabel = emailBrandLabel(emailBrand);
 
   const resetDatabase = async () => {
     setIsResetting(true);
@@ -98,7 +102,7 @@ export default function SettingsPanel({
           'Content-Type': 'application/json',
           'X-Admin-Reset-Token': adminResetToken.trim()
         },
-        body: JSON.stringify({ adminResetToken: adminResetToken.trim() })
+        body: JSON.stringify({ adminResetToken: adminResetToken.trim(), emailBrand })
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -106,7 +110,7 @@ export default function SettingsPanel({
       }
       setReminders([]);
       if (onResetComplete) onResetComplete();
-      else toast.success('Demo test data deleted');
+      else toast.success(`${brandLabel} workflow data deleted`);
       setConfirmResetOpen(false);
       setAdminResetToken('');
     } catch (err: unknown) {
@@ -168,19 +172,19 @@ export default function SettingsPanel({
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-destructive">
             <DatabaseZap className="h-5 w-5" />
-            Reset App Workflow Data
+            Reset {brandLabel} Workflow
           </CardTitle>
           <CardDescription>
-            Delete demo workflow data and clear the current browser workspace.
+            Delete demo workflow data for {brandLabel} and clear the current browser workspace.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted-foreground">
-            Clears schedules, email history, sheet state, active demo sessions, demo history, delivery locks, and imported rows on this browser.
+            Clears only {brandLabel} schedules, email history, sheet state, active demo sessions, demo history, delivery locks, and imported rows on this browser.
           </p>
           <Button type="button" variant="destructive" onClick={() => setConfirmResetOpen(true)}>
             <Trash2 className="h-4 w-4" />
-            Reset App Workflow
+            Reset {brandLabel} Workflow
           </Button>
         </CardContent>
       </Card>
@@ -188,19 +192,20 @@ export default function SettingsPanel({
       <Dialog open={confirmResetOpen} onOpenChange={setConfirmResetOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Reset app workflow data?</DialogTitle>
+            <DialogTitle>Reset {brandLabel} workflow?</DialogTitle>
             <DialogDescription className="space-y-3">
               <span className="block">
-                This will clear application workflow data and imported browser data.
+                This resets only the selected brand: {brandLabel}.
               </span>
               <span className="block">
-                It will not:
+                It also clears imported browser data after the reset succeeds.
               </span>
               <span className="block">
-                • Delete Google Sheet rows<br />
-                • Delete Google Calendar events<br />
-                • Disconnect Google accounts<br />
-                • Undo previously sent emails
+                It does not:<br />
+                - Delete Google Sheet rows<br />
+                - Delete Google Calendar events<br />
+                - Disconnect either Google account<br />
+                - Undo previously sent emails
               </span>
             </DialogDescription>
           </DialogHeader>

@@ -22,7 +22,7 @@ const emailDeliveryMock = vi.hoisted(() => ({
 vi.mock('./emailDelivery', () => emailDeliveryMock);
 
 vi.mock('./workflowActivity', () => ({
-  withWorkflowActivity: (_type: string, action: () => unknown) => action()
+  withWorkflowActivity: (_type: string, _emailBrand: string, action: () => unknown) => action()
 }));
 
 const { runSheetSyncScanner } = await import('./sheetSyncWorker');

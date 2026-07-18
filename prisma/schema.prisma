@@ -219,7 +219,7 @@ model GoogleAuth {
 }
 
 model WorkflowControl {
-  id          String   @id @default("global")
+  id          String   @id
   generation  Int      @default(1)
   isResetting Boolean  @default(false)
   updatedAt   DateTime @updatedAt

@@ -92,19 +92,29 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
   return next();
 }
 
-async function resetDemoDataHandler(_req: Request, res: Response) {
+async function resetDemoDataHandler(req: Request, res: Response) {
   let resumeQueue: (() => Promise<void>) | null = null;
   let finishResetGuard: (() => void) | null = null;
   let workflowResetWindowStarted = false;
+  let resetBrand: EmailBrandKey | null = null;
 
   try {
-    finishResetGuard = beginResetGuard();
-    await beginWorkflowResetWindow();
+    const { emailBrand } = req.body as { emailBrand?: any };
+    const brand = parseEmailBrand(emailBrand);
+    resetBrand = brand;
+    finishResetGuard = beginResetGuard(brand);
+    await beginWorkflowResetWindow(brand);
     workflowResetWindowStarted = true;
-    resumeQueue = await prepareProcessQueueForReset();
-    await advanceWorkflowGenerationForReset();
-    await resetDemoTestData();
-    return res.json({ success: true, message: 'Workflow database and pending process jobs cleared.' });
+    resumeQueue = await prepareProcessQueueForReset(brand);
+    const workflowControl = await advanceWorkflowGenerationForReset(brand);
+    const deletedCounts = await resetDemoTestData(brand);
+    return res.json({
+      success: true,
+      emailBrand: brand,
+      generation: workflowControl.generation,
+      deletedCounts,
+      message: 'Selected brand workflow database and pending process jobs cleared.'
+    });
   } catch (err: any) {
     console.error('Database reset failed:', err);
     return sendRouteError(res, err, 'Database reset failed');
@@ -113,7 +123,7 @@ async function resetDemoDataHandler(_req: Request, res: Response) {
       finishResetGuard();
     }
     if (workflowResetWindowStarted) {
-      await finishWorkflowResetWindow().catch((error) => {
+      if (resetBrand) await finishWorkflowResetWindow(resetBrand).catch((error) => {
         console.error('Could not finish workflow reset window:', error);
       });
     }
@@ -157,9 +167,9 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheets/import', async (req, res) => {
     try {
-      return await withWorkflowActivity('sheet-sync', async () => {
-        const { sheetUrl, emailBrand } = req.body as { sheetUrl?: string; emailBrand?: any };
-        const brand = parseEmailBrand(emailBrand);
+      const { sheetUrl, emailBrand } = req.body as { sheetUrl?: string; emailBrand?: any };
+      const brand = parseEmailBrand(emailBrand);
+      return await withWorkflowActivity('sheet-sync', brand, async () => {
         if (!sheetUrl) {
           return res.status(400).json({ error: 'Google Sheet URL is required.' });
         }
@@ -192,14 +202,14 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheets/sync', async (req, res) => {
     try {
-      return await withWorkflowActivity('sheet-sync', async () => {
-        const { spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
-          spreadsheetId?: string;
-          sheetName?: string;
-          headers?: string[];
-          emailBrand?: any;
-        };
-        const brand = parseEmailBrand(emailBrand);
+      const { spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
+        spreadsheetId?: string;
+        sheetName?: string;
+        headers?: string[];
+        emailBrand?: any;
+      };
+      const brand = parseEmailBrand(emailBrand);
+      return await withWorkflowActivity('sheet-sync', brand, async () => {
 
         if (!spreadsheetId || !sheetName) {
           return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
@@ -220,9 +230,9 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/schedule', async (req, res) => {
     try {
-      return await withWorkflowActivity('lead-processing', async () => {
-        const { rows, emailBrand } = req.body as { rows: ExcelRow[]; emailBrand?: any };
-        const brand = parseEmailBrand(emailBrand);
+      const { rows, emailBrand } = req.body as { rows: ExcelRow[]; emailBrand?: any };
+      const brand = parseEmailBrand(emailBrand);
+      return await withWorkflowActivity('lead-processing', brand, async () => {
         if (!rows || !Array.isArray(rows)) {
           return res.status(400).json({ error: 'Valid rows list must be supplied.' });
         }
@@ -244,15 +254,15 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheets/schedule', async (req, res) => {
     try {
-      return await withWorkflowActivity('lead-processing', async () => {
-        const { spreadsheetId, sheetName, headers: incomingHeaders, rows, emailBrand } = req.body as {
-          spreadsheetId?: string;
-          sheetName?: string;
-          headers?: string[];
-          rows?: ExcelRow[];
-          emailBrand?: any;
-        };
-        const brand = parseEmailBrand(emailBrand);
+      const { spreadsheetId, sheetName, headers: incomingHeaders, rows, emailBrand } = req.body as {
+        spreadsheetId?: string;
+        sheetName?: string;
+        headers?: string[];
+        rows?: ExcelRow[];
+        emailBrand?: any;
+      };
+      const brand = parseEmailBrand(emailBrand);
+      return await withWorkflowActivity('lead-processing', brand, async () => {
 
         if (!spreadsheetId || !sheetName) {
           return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
@@ -296,16 +306,16 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/send-thank-you', async (req, res) => {
     try {
-      return await withWorkflowActivity('lead-processing', async () => {
-        const { row, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
-          row?: ExcelRow;
-          sourceType?: 'excel' | 'google-sheet';
-          spreadsheetId?: string;
-          sheetName?: string;
-          headers?: string[];
-          emailBrand?: any;
-        };
-        const brand = parseEmailBrand(emailBrand);
+      const { row, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
+        row?: ExcelRow;
+        sourceType?: 'excel' | 'google-sheet';
+        spreadsheetId?: string;
+        sheetName?: string;
+        headers?: string[];
+        emailBrand?: any;
+      };
+      const brand = parseEmailBrand(emailBrand);
+      return await withWorkflowActivity('lead-processing', brand, async () => {
         if (!row) return res.status(400).json({ error: 'Row is required.' });
 
         const [dbRow] = await applyDbTruthToRows([row], brand);
@@ -341,16 +351,16 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/send-thank-you/batch', async (req, res) => {
     try {
-      return await withWorkflowActivity('lead-processing', async () => {
-        const { rows, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
-          rows?: ExcelRow[];
-          sourceType?: 'excel' | 'google-sheet';
-          spreadsheetId?: string;
-          sheetName?: string;
-          headers?: string[];
-          emailBrand?: any;
-        };
-        const brand = parseEmailBrand(emailBrand);
+      const { rows, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
+        rows?: ExcelRow[];
+        sourceType?: 'excel' | 'google-sheet';
+        spreadsheetId?: string;
+        sheetName?: string;
+        headers?: string[];
+        emailBrand?: any;
+      };
+      const brand = parseEmailBrand(emailBrand);
+      return await withWorkflowActivity('lead-processing', brand, async () => {
         if (!rows || !Array.isArray(rows)) {
           return res.status(400).json({ error: 'Valid rows list must be supplied.' });
         }
@@ -416,18 +426,18 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/lead-status/update', async (req, res) => {
     try {
-      return await withWorkflowActivity('lead-processing', async () => {
-        const { row, status, remarks, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
-          row?: ExcelRow;
-          status?: string;
-          remarks?: string;
-          sourceType?: 'excel' | 'google-sheet';
-          spreadsheetId?: string;
-          sheetName?: string;
-          headers?: string[];
-          emailBrand?: any;
-        };
-        const brand = parseEmailBrand(emailBrand);
+      const { row, status, remarks, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
+        row?: ExcelRow;
+        status?: string;
+        remarks?: string;
+        sourceType?: 'excel' | 'google-sheet';
+        spreadsheetId?: string;
+        sheetName?: string;
+        headers?: string[];
+        emailBrand?: any;
+      };
+      const brand = parseEmailBrand(emailBrand);
+      return await withWorkflowActivity('lead-processing', brand, async () => {
 
         if (!row || !status) {
           return res.status(400).json({ error: 'Row and status are required.' });
@@ -473,17 +483,17 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/active-demo/force-close', async (req, res) => {
     try {
-      return await withWorkflowActivity('lead-processing', async () => {
-        const { row, remarks, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
-          row?: ExcelRow;
-          remarks?: string;
-          sourceType?: 'excel' | 'google-sheet';
-          spreadsheetId?: string;
-          sheetName?: string;
-          headers?: string[];
-          emailBrand?: any;
-        };
-        const brand = parseEmailBrand(emailBrand);
+      const { row, remarks, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
+        row?: ExcelRow;
+        remarks?: string;
+        sourceType?: 'excel' | 'google-sheet';
+        spreadsheetId?: string;
+        sheetName?: string;
+        headers?: string[];
+        emailBrand?: any;
+      };
+      const brand = parseEmailBrand(emailBrand);
+      return await withWorkflowActivity('lead-processing', brand, async () => {
 
         if (!row) {
           return res.status(400).json({ error: 'Row is required.' });
@@ -544,10 +554,10 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/email-deliveries/:deliveryId/retry', async (req, res) => {
     try {
-      return await withWorkflowActivity('lead-processing', async () => {
-        const { deliveryId } = req.params;
-        const delivery = await findEmailDeliveryById(deliveryId);
-        if (!delivery) return res.status(404).json({ error: 'Email delivery was not found.' });
+      const { deliveryId } = req.params;
+      const delivery = await findEmailDeliveryById(deliveryId);
+      if (!delivery) return res.status(404).json({ error: 'Email delivery was not found.' });
+      return await withWorkflowActivity('lead-processing', delivery.emailBrand, async () => {
         if (delivery.status !== 'UNKNOWN') {
           return res.status(400).json({ error: 'Only Needs Review email deliveries can be retried manually.' });
         }
@@ -609,10 +619,10 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheet-sync/jobs/:jobId/retry', async (req, res) => {
     try {
-      return await withWorkflowActivity('sheet-sync', async () => {
-        const { jobId } = req.params;
-        const job = await findSheetSyncJobById(jobId);
-        if (!job) return res.status(404).json({ error: 'Sheet sync job was not found.' });
+      const { jobId } = req.params;
+      const job = await findSheetSyncJobById(jobId);
+      if (!job) return res.status(404).json({ error: 'Sheet sync job was not found.' });
+      return await withWorkflowActivity('sheet-sync', job.emailBrand, async () => {
         if (job.status === 'SYNCED') {
           return res.json({ success: true, job: serializeSheetSyncJob(job), skipped: true });
         }
@@ -770,20 +780,19 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/process-leads/jobs', async (req, res) => {
     try {
-      return await withWorkflowActivity('lead-processing', async () => {
+      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
+        rows?: ExcelRow[];
+        sourceType?: 'excel' | 'google-sheet';
+        spreadsheetId?: string;
+        sheetName?: string;
+        headers?: string[];
+        emailBrand?: any;
+      };
+      const brand = parseEmailBrand(emailBrand);
+      return await withWorkflowActivity('lead-processing', brand, async () => {
         if (!isProcessQueueEnabled()) {
           return res.status(409).json({ error: 'Process queue is disabled.' });
         }
-
-        const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
-          rows?: ExcelRow[];
-          sourceType?: 'excel' | 'google-sheet';
-          spreadsheetId?: string;
-          sheetName?: string;
-          headers?: string[];
-          emailBrand?: any;
-        };
-        const brand = parseEmailBrand(emailBrand);
 
         if (!rows || !Array.isArray(rows)) {
           return res.status(400).json({ error: 'Valid rows list must be supplied.' });
@@ -811,7 +820,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           emailBrand: brand,
           rows: dbRows
         });
-        await enqueueProcessLeadJob(job.id, job.generation);
+        await enqueueProcessLeadJob(job.id, job.generation, brand);
 
         return res.status(202).json({
           jobId: job.id,
@@ -844,16 +853,16 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/process-leads', async (req, res) => {
     try {
-      return await withWorkflowActivity('lead-processing', async () => {
-        const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
-          rows?: ExcelRow[];
-          sourceType?: 'excel' | 'google-sheet';
-          spreadsheetId?: string;
-          sheetName?: string;
-          headers?: string[];
-          emailBrand?: any;
-        };
-        const brand = parseEmailBrand(emailBrand);
+      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
+        rows?: ExcelRow[];
+        sourceType?: 'excel' | 'google-sheet';
+        spreadsheetId?: string;
+        sheetName?: string;
+        headers?: string[];
+        emailBrand?: any;
+      };
+      const brand = parseEmailBrand(emailBrand);
+      return await withWorkflowActivity('lead-processing', brand, async () => {
 
         if (!rows || !Array.isArray(rows)) {
           return res.status(400).json({ error: 'Valid rows list must be supplied.' });

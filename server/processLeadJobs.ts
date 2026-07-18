@@ -42,14 +42,15 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
 }
 
 export async function createProcessLeadJob(input: ProcessLeadJobInput) {
-  const generation = await getWorkflowGenerationForNewJob();
+  const emailBrand = coerceStoredEmailBrand(input.emailBrand);
+  const generation = await getWorkflowGenerationForNewJob(emailBrand);
 
   return prisma.processLeadJob.create({
     data: {
       status: 'QUEUED',
       generation,
       sourceType: input.sourceType,
-      emailBrand: coerceStoredEmailBrand(input.emailBrand),
+      emailBrand,
       spreadsheetId: input.spreadsheetId || null,
       sheetName: input.sheetName || null,
       headersJson: input.headers ? JSON.stringify(input.headers) : null,

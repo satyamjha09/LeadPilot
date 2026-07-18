@@ -1,9 +1,12 @@
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { createWorkflowBusyError } from './workflowActivity';
+import { prisma } from './db';
+import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
 
 export const PROCESS_LEAD_QUEUE_NAME = 'process-lead-jobs';
 const PROCESS_QUEUE_RESET_COUNT = 1000;
+const REMOVABLE_RESET_JOB_STATES = ['waiting', 'delayed', 'prioritized', 'paused'] as const;
 
 let connection: IORedis | null = null;
 let queue: Queue | null = null;
@@ -43,11 +46,11 @@ export function getProcessLeadQueue() {
   return queue;
 }
 
-export async function enqueueProcessLeadJob(jobId: string, generation?: number) {
+export async function enqueueProcessLeadJob(jobId: string, generation: number | undefined, emailBrand: EmailBrandKey) {
   const processQueue = getProcessLeadQueue();
   return processQueue.add(
     'process-leads',
-    { jobId, generation },
+    { jobId, generation, emailBrand },
     {
       jobId,
       attempts: 1,
@@ -57,30 +60,68 @@ export async function enqueueProcessLeadJob(jobId: string, generation?: number) 
   );
 }
 
-export async function clearProcessQueueResetData(processQueue = getProcessLeadQueue()) {
-  await processQueue.obliterate({
-    force: false,
-    count: PROCESS_QUEUE_RESET_COUNT
+async function getProcessQueueJobBrand(job: { data?: any }) {
+  if (job.data?.emailBrand) {
+    return coerceStoredEmailBrand(job.data.emailBrand);
+  }
+
+  const jobId = String(job.data?.jobId || '');
+  if (!jobId) return null;
+
+  const processJob = await prisma.processLeadJob.findUnique({
+    where: { id: jobId },
+    select: { emailBrand: true }
   });
+
+  return processJob ? coerceStoredEmailBrand(processJob.emailBrand) : null;
 }
 
-export async function prepareProcessQueueForReset() {
+export async function clearProcessQueueResetData(emailBrand: EmailBrandKey, processQueue?: Queue) {
+  const queueToClear = processQueue || getProcessLeadQueue();
+  const jobs = await queueToClear.getJobs([...REMOVABLE_RESET_JOB_STATES], 0, PROCESS_QUEUE_RESET_COUNT - 1);
+  let removed = 0;
+
+  for (const job of jobs) {
+    const jobBrand = await getProcessQueueJobBrand(job);
+    if (jobBrand !== emailBrand) continue;
+
+    const state = await job.getState();
+    if (!REMOVABLE_RESET_JOB_STATES.includes(state as (typeof REMOVABLE_RESET_JOB_STATES)[number])) {
+      if (state === 'active') throw createWorkflowBusyError();
+      continue;
+    }
+
+    await job.remove();
+    removed += 1;
+  }
+
+  return { removed };
+}
+
+export async function prepareProcessQueueForReset(emailBrand: EmailBrandKey, processQueue?: Queue) {
   if (!isProcessQueueEnabled()) {
     return async () => {};
   }
 
-  const processQueue = getProcessLeadQueue();
-  await processQueue.pause();
+  const queueToPrepare = processQueue || getProcessLeadQueue();
+  await queueToPrepare.pause();
 
-  const activeCount = await processQueue.getActiveCount();
-  if (activeCount > 0) {
-    await processQueue.resume();
-    throw createWorkflowBusyError();
+  try {
+    const activeJobs = await queueToPrepare.getJobs(['active'], 0, PROCESS_QUEUE_RESET_COUNT - 1);
+    for (const activeJob of activeJobs) {
+      const activeBrand = await getProcessQueueJobBrand(activeJob);
+      if (!activeBrand || activeBrand === emailBrand) {
+        throw createWorkflowBusyError();
+      }
+    }
+
+    await clearProcessQueueResetData(emailBrand, queueToPrepare);
+
+    return async () => {
+      await queueToPrepare.resume();
+    };
+  } catch (error) {
+    await queueToPrepare.resume();
+    throw error;
   }
-
-  await clearProcessQueueResetData(processQueue);
-
-  return async () => {
-    await processQueue.resume();
-  };
 }

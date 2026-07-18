@@ -1,7 +1,7 @@
 import { prisma } from './db';
 import { createWorkflowBusyError } from './workflowActivity';
+import type { EmailBrandKey } from '../src/lib/emailBrand';
 
-export const WORKFLOW_CONTROL_ID = 'global';
 export const STALE_WORKFLOW_GENERATION_CODE = 'STALE_WORKFLOW_GENERATION';
 export const STALE_WORKFLOW_GENERATION_MESSAGE =
   'Workflow cancelled because application data was reset.';
@@ -29,70 +29,70 @@ export function isStaleWorkflowGenerationError(error: unknown) {
   );
 }
 
-export async function getWorkflowControl() {
+export async function getWorkflowControl(emailBrand: EmailBrandKey) {
   const existing = await prisma.workflowControl.findUnique({
-    where: { id: WORKFLOW_CONTROL_ID }
+    where: { id: emailBrand }
   });
   if (existing) return existing;
 
   try {
     return await prisma.workflowControl.create({
-      data: { id: WORKFLOW_CONTROL_ID }
+      data: { id: emailBrand }
     });
   } catch {
     return prisma.workflowControl.findUniqueOrThrow({
-      where: { id: WORKFLOW_CONTROL_ID }
+      where: { id: emailBrand }
     });
   }
 }
 
-export async function getWorkflowGenerationForNewJob() {
-  const control = await getWorkflowControl();
+export async function getWorkflowGenerationForNewJob(emailBrand: EmailBrandKey) {
+  const control = await getWorkflowControl(emailBrand);
   if (control.isResetting) {
     throw createWorkflowBusyError();
   }
   return control.generation;
 }
 
-export async function beginWorkflowResetWindow() {
+export async function beginWorkflowResetWindow(emailBrand: EmailBrandKey) {
   await prisma.workflowControl.upsert({
-    where: { id: WORKFLOW_CONTROL_ID },
+    where: { id: emailBrand },
     update: { isResetting: true },
     create: {
-      id: WORKFLOW_CONTROL_ID,
+      id: emailBrand,
       isResetting: true
     }
   });
 }
 
-export async function advanceWorkflowGenerationForReset() {
+export async function advanceWorkflowGenerationForReset(emailBrand: EmailBrandKey) {
   return prisma.workflowControl.upsert({
-    where: { id: WORKFLOW_CONTROL_ID },
+    where: { id: emailBrand },
     update: {
       generation: { increment: 1 },
       isResetting: true
     },
     create: {
-      id: WORKFLOW_CONTROL_ID,
+      id: emailBrand,
       generation: 2,
       isResetting: true
     }
   });
 }
 
-export async function finishWorkflowResetWindow() {
+export async function finishWorkflowResetWindow(emailBrand: EmailBrandKey) {
   await prisma.workflowControl.upsert({
-    where: { id: WORKFLOW_CONTROL_ID },
+    where: { id: emailBrand },
     update: { isResetting: false },
     create: {
-      id: WORKFLOW_CONTROL_ID,
+      id: emailBrand,
       isResetting: false
     }
   });
 }
 
-export async function assertWorkflowGenerationCurrent(jobGeneration: number) {
-  const control = await getWorkflowControl();
+export async function assertWorkflowGenerationCurrent(emailBrand: EmailBrandKey, jobGeneration: number) {
+  const control = await getWorkflowControl(emailBrand);
   if (control.generation !== jobGeneration) {
     throw createStaleWorkflowGenerationError(jobGeneration, control.generation);
   }

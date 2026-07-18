@@ -1061,10 +1061,11 @@ export default function App() {
 
         {activeView === 'settings' ? (
           <SettingsPanel
+            emailBrand={selectedEmailBrand}
             onResetStart={cancelWorkspaceRequestsForReset}
             onResetComplete={() => {
               clearWorkspaceState();
-              toast.success('Database and browser workspace reset. Import a fresh sheet to continue.');
+              toast.success(`${emailBrandLabel(selectedEmailBrand)} workflow and browser workspace reset. Import a fresh sheet to continue.`);
             }}
           />
         ) : (

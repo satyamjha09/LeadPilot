@@ -20,6 +20,7 @@ import { processLeadsByStatus } from '../leadWorkflow';
 import { applyDbTruthToRows } from '../scheduleDb';
 import { withWorkflowActivity } from '../workflowActivity';
 import { assertWorkflowGenerationCurrent, isStaleWorkflowGenerationError } from '../workflowControl';
+import { coerceStoredEmailBrand } from '../../src/lib/emailBrand';
 
 dotenv.config();
 
@@ -27,13 +28,13 @@ async function processLeadJob(jobId: string, queuedGeneration?: number) {
   const jobRecord = await getProcessLeadJob(jobId);
   if (!jobRecord) throw new Error('Process job not found.');
   const jobGeneration = jobRecord.generation;
+  const input = parseProcessLeadJobInput(jobRecord);
   if (queuedGeneration && queuedGeneration !== jobGeneration) {
     throw new Error('Process job generation does not match queued payload.');
   }
-  const assertCurrentGeneration = () => assertWorkflowGenerationCurrent(jobGeneration);
+  const assertCurrentGeneration = () => assertWorkflowGenerationCurrent(input.emailBrand, jobGeneration);
 
   await assertCurrentGeneration();
-  const input = parseProcessLeadJobInput(jobRecord);
 
   let headers = input.headers || [];
   if (input.sourceType === 'google-sheet') {
@@ -59,7 +60,7 @@ async function processLeadJob(jobId: string, queuedGeneration?: number) {
   await markProcessLeadJobRunning(jobId, input.rows.length);
   const dbRows = await applyDbTruthToRows(input.rows, input.emailBrand);
 
-  const result = await withWorkflowActivity('lead-processing', async () =>
+  const result = await withWorkflowActivity('lead-processing', input.emailBrand, async () =>
     processLeadsByStatus(dbRows, {
       sourceType: input.sourceType,
       spreadsheetId: input.spreadsheetId,
@@ -122,9 +123,16 @@ export function startProcessLeadWorker() {
     async (job) => {
       const jobId = String(job.data?.jobId || '');
       const queuedGeneration = Number(job.data?.generation || 0) || undefined;
+      const queuedBrand = job.data?.emailBrand ? coerceStoredEmailBrand(job.data.emailBrand) : undefined;
       if (!jobId) throw new Error('Missing process lead jobId.');
 
       try {
+        if (queuedBrand) {
+          const queuedRecord = await getProcessLeadJob(jobId);
+          if (queuedRecord && coerceStoredEmailBrand(queuedRecord.emailBrand) !== queuedBrand) {
+            throw new Error('Process job brand does not match queued payload.');
+          }
+        }
         await processLeadJob(jobId, queuedGeneration);
       } catch (err: any) {
         const message = err instanceof Error ? err.message : 'Lead processing job failed.';
@@ -133,7 +141,7 @@ export function startProcessLeadWorker() {
           await (async () => {
             const currentJob = await getProcessLeadJob(jobId);
             if (!currentJob) return;
-            await assertWorkflowGenerationCurrent(currentJob.generation);
+            await assertWorkflowGenerationCurrent(coerceStoredEmailBrand(currentJob.emailBrand), currentJob.generation);
             await markProcessLeadJobFailed(jobId, friendly?.message || message);
           })().catch((error) => {
             console.error('PROCESS_LEAD_JOB_MARK_FAILED_ERROR', {
