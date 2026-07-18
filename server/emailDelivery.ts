@@ -3,7 +3,7 @@ import { prisma } from './db';
 import type { EmailType } from './emailIdentity';
 import type { ExcelRow } from '../src/types';
 import { getAutomationId, type EmailIdentityContext } from './emailIdentity';
-import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
+import type { EmailBrandKey } from '../src/lib/emailBrand';
 
 export const EMAIL_DELIVERY_STATUS = {
   PROCESSING: 'PROCESSING',
@@ -21,7 +21,7 @@ export type EmailClaimInput = {
   emailType: EmailType;
   recipient: string;
   payloadHash: string;
-  emailBrand?: EmailBrandKey;
+  emailBrand: EmailBrandKey;
   subject?: string;
   text?: string;
   html?: string;
@@ -42,15 +42,25 @@ export type EmailClaimResult =
       providerMessageId?: string | null;
     };
 
-export async function findEmailDeliveryByEventKey(eventKey: string) {
-  return prisma.emailDelivery.findUnique({ where: { eventKey } });
+export async function findEmailDeliveryByEventKey(emailBrand: EmailBrandKey, eventKey: string) {
+  return prisma.emailDelivery.findUnique({
+    where: {
+      emailBrand_eventKey: {
+        emailBrand,
+        eventKey
+      }
+    }
+  });
 }
 
-export async function listEmailDeliveriesForRow(row: ExcelRow, context: EmailIdentityContext) {
+export async function listEmailDeliveriesForRow(row: ExcelRow, context: EmailIdentityContext & { emailBrand: EmailBrandKey }) {
   try {
     const automationId = getAutomationId(row, context);
     return prisma.emailDelivery.findMany({
-      where: { automationId },
+      where: {
+        emailBrand: context.emailBrand,
+        automationId
+      },
       orderBy: { createdAt: 'desc' }
     });
   } catch {
@@ -117,7 +127,12 @@ export async function findEmailDeliveryById(deliveryId: string) {
 
 export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailClaimResult> {
   const existingBeforeCreate = await prisma.emailDelivery.findUnique({
-    where: { eventKey: input.eventKey }
+    where: {
+      emailBrand_eventKey: {
+        emailBrand: input.emailBrand,
+        eventKey: input.eventKey
+      }
+    }
   });
   if (existingBeforeCreate) {
     return resolveExistingDeliveryClaim(existingBeforeCreate);
@@ -125,7 +140,7 @@ export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailC
 
   const deliveryId = randomUUID();
   const now = new Date();
-  const emailBrand = coerceStoredEmailBrand(input.emailBrand);
+  const emailBrand = input.emailBrand;
   const inserted = await prisma.$executeRaw`
     INSERT INTO "EmailDelivery" (
       "id",
@@ -167,14 +182,21 @@ export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailC
       ${now},
       ${now}
     )
-    ON CONFLICT ("eventKey") DO NOTHING
+    ON CONFLICT ("emailBrand", "eventKey") DO NOTHING
   `;
 
   if (inserted === 1) {
     return { claimed: true, deliveryId, attemptCount: 1 };
   }
 
-  const existing = await prisma.emailDelivery.findUnique({ where: { eventKey: input.eventKey } });
+  const existing = await prisma.emailDelivery.findUnique({
+    where: {
+      emailBrand_eventKey: {
+        emailBrand: input.emailBrand,
+        eventKey: input.eventKey
+      }
+    }
+  });
   if (!existing) throw new Error('Email delivery unique conflict occurred but record was not found.');
 
   return resolveExistingDeliveryClaim(existing);

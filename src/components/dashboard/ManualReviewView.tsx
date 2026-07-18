@@ -18,9 +18,16 @@ import {
   type SheetSyncJob
 } from '@/src/components/dashboard/reviewTypes';
 import { getLeadStatus } from '@/src/lib/rowUtils';
+import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
 import { ExcelRow } from '@/src/types';
 
-export default function ManualReviewView({ rows }: { rows: ExcelRow[] }) {
+export default function ManualReviewView({
+  rows,
+  emailBrand
+}: {
+  rows: ExcelRow[];
+  emailBrand: EmailBrandKey;
+}) {
   const [detailsRow, setDetailsRow] = useState<ExcelRow | null>(null);
 
   return (
@@ -50,7 +57,7 @@ export default function ManualReviewView({ rows }: { rows: ExcelRow[] }) {
           ) : (
             rows.map((row) => (
               <div key={row.id}>
-                <ManualReviewRow row={row} onViewDetails={() => setDetailsRow(row)} />
+                <ManualReviewRow row={row} emailBrand={emailBrand} onViewDetails={() => setDetailsRow(row)} />
               </div>
             ))
           )}
@@ -66,7 +73,15 @@ export default function ManualReviewView({ rows }: { rows: ExcelRow[] }) {
   );
 }
 
-function ManualReviewRow({ row, onViewDetails }: { row: ExcelRow; onViewDetails: () => void }) {
+function ManualReviewRow({
+  row,
+  emailBrand,
+  onViewDetails
+}: {
+  row: ExcelRow;
+  emailBrand: EmailBrandKey;
+  onViewDetails: () => void;
+}) {
   const [logs, setLogs] = useState<EmailHistoryLog[]>([]);
   const [sheetJobs, setSheetJobs] = useState<SheetSyncJob[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -79,7 +94,7 @@ function ManualReviewRow({ row, onViewDetails }: { row: ExcelRow; onViewDetails:
         fetch('/api/leads/email-history', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ row })
+          body: JSON.stringify({ row, emailBrand })
         }),
         fetch('/api/sheet-sync/jobs-for-row', {
           method: 'POST',
@@ -100,7 +115,7 @@ function ManualReviewRow({ row, onViewDetails }: { row: ExcelRow; onViewDetails:
     } finally {
       setIsLoading(false);
     }
-  }, [row]);
+  }, [row, emailBrand]);
 
   useEffect(() => {
     loadReviewData();
@@ -211,7 +226,7 @@ function ManualReviewRow({ row, onViewDetails }: { row: ExcelRow; onViewDetails:
                       <div>
                         <p className="text-sm font-semibold">{formatLogType(log.type)}</p>
                         <p className="text-xs text-muted-foreground">
-                          {formatStatus(log.status)} | attempts {log.attemptCount || 1}
+                          {formatStatus(log.status)} | {emailBrandLabel(log.emailBrand || row.__emailBrand || emailBrand)} | attempts {log.attemptCount || 1}
                         </p>
                       </div>
                       <Badge variant={canReview ? 'outline' : 'destructive'}>{formatStatus(log.status)}</Badge>

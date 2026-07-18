@@ -114,7 +114,7 @@ model EmailLog {
   error     String?
   createdAt DateTime @default(now())
 
-  @@unique([email, rowKey, type])
+  @@unique([emailBrand, email, rowKey, type])
   @@index([emailBrand])
 }
 
@@ -144,7 +144,7 @@ model SheetLeadState {
 model EmailDelivery {
   id                String   @id @default(cuid())
   emailBrand        String   @default("tallykonnect")
-  eventKey          String   @unique
+  eventKey          String
   automationId      String
   emailType         String
   recipient         String
@@ -169,7 +169,10 @@ model EmailDelivery {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
+  @@unique([emailBrand, eventKey])
   @@index([emailBrand])
+  @@index([emailBrand, automationId])
+  @@index([emailBrand, status])
   @@index([automationId])
   @@index([status])
   @@index([nextRetryAt])

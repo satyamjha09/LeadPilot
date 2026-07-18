@@ -1,7 +1,7 @@
 import { ExcelRow } from '../src/types';
 import { prisma } from './db';
 import { getLeadUniqueKeys, getSheetRowKey } from './scheduleDb';
-import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
+import type { EmailBrandKey } from '../src/lib/emailBrand';
 
 export const EMAIL_LOG_TYPES = {
   DEMO_SCHEDULED: 'DEMO_SCHEDULED',
@@ -19,14 +19,15 @@ export function getEmailRowKey(row: ExcelRow) {
   return `${keys.email}|${keys.dateOfDemo}|${keys.timeOfDemo}`;
 }
 
-export async function findEmailLog(row: ExcelRow, type: EmailLogType) {
+export async function findEmailLog(row: ExcelRow, type: EmailLogType, emailBrand: EmailBrandKey) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email) return null;
 
   const rowKey = getEmailRowKey(row);
   return prisma.emailLog.findUnique({
     where: {
-      email_rowKey_type: {
+      emailBrand_email_rowKey_type: {
+        emailBrand,
         email: keys.email,
         rowKey,
         type
@@ -35,13 +36,14 @@ export async function findEmailLog(row: ExcelRow, type: EmailLogType) {
   });
 }
 
-export async function listEmailLogsForRow(row: ExcelRow) {
+export async function listEmailLogsForRow(row: ExcelRow, emailBrand: EmailBrandKey) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email) return [];
 
   const rowKey = getEmailRowKey(row);
   return prisma.emailLog.findMany({
     where: {
+      emailBrand,
       email: keys.email,
       rowKey
     },
@@ -51,26 +53,27 @@ export async function listEmailLogsForRow(row: ExcelRow) {
   });
 }
 
-export async function hasEmailBeenSent(row: ExcelRow, type: EmailLogType) {
-  const log = await findEmailLog(row, type);
+export async function hasEmailBeenSent(row: ExcelRow, type: EmailLogType, emailBrand: EmailBrandKey) {
+  const log = await findEmailLog(row, type, emailBrand);
   return log?.status === 'sent';
 }
 
 export async function logEmailSent(
   row: ExcelRow,
   type: EmailLogType,
-  data?: { messageId?: string; error?: string; emailBrand?: EmailBrandKey }
+  data: { messageId?: string; error?: string; emailBrand: EmailBrandKey }
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email) return null;
 
   const rowKey = getEmailRowKey(row);
   const status = data?.error ? 'failed' : 'sent';
-  const emailBrand = coerceStoredEmailBrand(data?.emailBrand);
+  const emailBrand = data.emailBrand;
 
   return prisma.emailLog.upsert({
     where: {
-      email_rowKey_type: {
+      emailBrand_email_rowKey_type: {
+        emailBrand,
         email: keys.email,
         rowKey,
         type

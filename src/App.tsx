@@ -1006,7 +1006,9 @@ export default function App() {
             )}
 
             {activeView === 'activity' && <ActivityView rows={rows} />}
-            {activeView === 'manual-review' && <ManualReviewView rows={manualReviewRows} />}
+            {activeView === 'manual-review' && (
+              <ManualReviewView rows={manualReviewRows} emailBrand={selectedEmailBrand} />
+            )}
             {activeView === 'email-logs' && (
               <EmailLogsView rows={emailLogRows} emailBrand={selectedEmailBrand} />
             )}

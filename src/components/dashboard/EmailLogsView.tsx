@@ -56,6 +56,7 @@ export default function EmailLogsView({
               <div key={row.id}>
                 <EmailLogRow
                   row={row}
+                  emailBrand={emailBrand}
                   brandLabel={brandLabel}
                   onViewDetails={() => setDetailsRow(row)}
                 />
@@ -76,15 +77,18 @@ export default function EmailLogsView({
 
 function EmailLogRow({
   row,
+  emailBrand,
   brandLabel,
   onViewDetails
 }: {
   row: ExcelRow;
+  emailBrand: EmailBrandKey;
   brandLabel: string;
   onViewDetails: () => void;
 }) {
   const [logs, setLogs] = useState<EmailHistoryLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const rowBrandLabel = row.__emailBrand ? emailBrandLabel(row.__emailBrand) : brandLabel;
 
   const loadLogs = useCallback(async () => {
     setIsLoading(true);
@@ -92,7 +96,7 @@ function EmailLogRow({
       const res = await fetch('/api/leads/email-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ row })
+        body: JSON.stringify({ row, emailBrand })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not load email history.');
@@ -103,7 +107,7 @@ function EmailLogRow({
     } finally {
       setIsLoading(false);
     }
-  }, [row]);
+  }, [row, emailBrand]);
 
   useEffect(() => {
     loadLogs();
@@ -116,7 +120,7 @@ function EmailLogRow({
           <p className="font-semibold">{row.full_name || 'Unnamed lead'}</p>
           <p className="mt-1 break-all text-sm text-muted-foreground">{row.email || 'No email'}</p>
           <div className="mt-2 flex flex-wrap gap-2">
-            <Badge variant="outline">Brand: {brandLabel}</Badge>
+            <Badge variant="outline">Brand: {rowBrandLabel}</Badge>
             <Badge variant="outline">{logs.length} log{logs.length === 1 ? '' : 's'}</Badge>
           </div>
         </div>

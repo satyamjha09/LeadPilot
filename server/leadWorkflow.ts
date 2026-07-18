@@ -409,7 +409,7 @@ async function getEmailEventState(input: {
     time: input.time,
     reminderWindow: input.reminderWindow
   });
-  const delivery = await findEmailDeliveryByEventKey(eventKey);
+  const delivery = await findEmailDeliveryByEventKey(input.context.emailBrand, eventKey);
 
   return { automationId, eventKey, delivery };
 }

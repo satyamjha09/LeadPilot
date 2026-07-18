@@ -103,7 +103,14 @@ async function main() {
       deliveryId: retryClaim.deliveryId,
       error: { code: 429, message: 'rate limited' }
     });
-    const retryRecord = await prisma.emailDelivery.findUniqueOrThrow({ where: { eventKey: retryKey } });
+    const retryRecord = await prisma.emailDelivery.findUniqueOrThrow({
+      where: {
+        emailBrand_eventKey: {
+          emailBrand: 'tallykonnect',
+          eventKey: retryKey
+        }
+      }
+    });
     assert.equal(retryRecord.status, 'RETRY_PENDING');
 
     const authSource = fs.readFileSync(path.join(process.cwd(), 'server', 'googleAuth.ts'), 'utf-8');

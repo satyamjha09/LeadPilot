@@ -47,7 +47,7 @@ import {
 import { enqueueProcessLeadJob, isProcessQueueEnabled, prepareProcessQueueForReset } from '../processLeadQueue';
 import { buildExportRow, normalizeRows, reconcileScheduledRows } from '../services/rowTransforms';
 import { sendRouteError } from '../routeErrors';
-import { parseEmailBrand, type EmailBrandKey } from '../../src/lib/emailBrand';
+import { coerceStoredEmailBrand, parseEmailBrand, type EmailBrandKey } from '../../src/lib/emailBrand';
 import { beginResetGuard, withWorkflowActivity } from '../workflowActivity';
 import {
   advanceWorkflowGenerationForReset,
@@ -651,16 +651,20 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/leads/email-history', async (req, res) => {
     try {
-      const { row } = req.body as { row?: ExcelRow };
+      const { row, emailBrand } = req.body as { row?: ExcelRow; emailBrand?: any };
       if (!row) return res.status(400).json({ error: 'Row is required.' });
+      const brand = row.__emailBrand
+        ? coerceStoredEmailBrand(row.__emailBrand)
+        : parseEmailBrand(emailBrand);
 
       const sourceType = row.__sourceType === 'google-sheet' ? 'google-sheet' : 'excel';
       const [logs, deliveries] = await Promise.all([
-        listEmailLogsForRow(row),
+        listEmailLogsForRow(row, brand),
         listEmailDeliveriesForRow(row, {
           sourceType,
           spreadsheetId: row.__spreadsheetId,
-          sheetName: row.__sheetName
+          sheetName: row.__sheetName,
+          emailBrand: brand
         })
       ]);
 
