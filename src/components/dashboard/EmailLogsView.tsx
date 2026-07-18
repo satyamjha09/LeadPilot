@@ -15,16 +15,17 @@ import {
   type EmailHistoryLog
 } from '@/src/components/dashboard/reviewTypes';
 import { ExcelRow } from '@/src/types';
+import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
 
 export default function EmailLogsView({
   rows,
   emailBrand
 }: {
   rows: ExcelRow[];
-  emailBrand: 'tallykonnect' | 'anywheretally';
+  emailBrand: EmailBrandKey;
 }) {
   const [detailsRow, setDetailsRow] = useState<ExcelRow | null>(null);
-  const brandLabel = emailBrand === 'anywheretally' ? 'AnyWhereTally' : 'TallyKonnect';
+  const brandLabel = emailBrandLabel(emailBrand);
 
   return (
     <>

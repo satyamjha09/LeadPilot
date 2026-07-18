@@ -1,3 +1,5 @@
+import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
+
 type EmailMessage = {
   to: string;
   cc?: string;
@@ -40,8 +42,6 @@ const WEBSITE_URL = 'https://tallykonnect.com';
 const CONTACT_EMAIL = 'info@tallykonnect.com';
 const UNSUBSCRIBE_URL = 'https://tallykonnect.com/unsubscribe';
 
-export type EmailBrandKey = 'tallykonnect' | 'anywheretally';
-
 type EmailBrandConfig = {
   key: EmailBrandKey;
   name: string;
@@ -82,13 +82,8 @@ const EMAIL_BRANDS: Record<EmailBrandKey, EmailBrandConfig> = {
   }
 };
 
-export function normalizeEmailBrand(value: unknown): EmailBrandKey {
-  const key = String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
-  return key === 'anywheretally' || key === 'awt' ? 'anywheretally' : 'tallykonnect';
-}
-
 function getEmailBrand(value: unknown): EmailBrandConfig {
-  return EMAIL_BRANDS[normalizeEmailBrand(value)];
+  return EMAIL_BRANDS[coerceStoredEmailBrand(value)];
 }
 
 function safeHeader(value: string) {

@@ -32,9 +32,9 @@ import {
   buildMeetingInviteEmail,
   buildNoResponseEmail,
   buildRescheduleEmail,
-  buildThankYouEmail,
-  type EmailBrandKey
+  buildThankYouEmail
 } from './emailTemplates';
+import type { EmailBrandKey } from '../src/lib/emailBrand';
 import {
   claimEmailDelivery,
   findEmailDeliveryByEventKey,

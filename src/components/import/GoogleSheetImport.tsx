@@ -5,10 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ExcelRow, SheetSource } from '@/src/types';
+import type { EmailBrandKey } from '@/src/lib/emailBrand';
 
 interface GoogleSheetImportProps {
   onDataParsed: (rows: ExcelRow[], source: SheetSource) => void | Promise<void>;
-  emailBrand: 'tallykonnect' | 'anywheretally';
+  emailBrand: EmailBrandKey;
   isLoading: boolean;
   setIsLoading: (val: boolean) => void;
   getWorkspaceGeneration: () => number;

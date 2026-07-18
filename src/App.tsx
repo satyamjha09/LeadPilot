@@ -32,6 +32,7 @@ import {
 import { LEAD_STATUS, LeadStatusLabel } from '@/src/lib/leadStatus';
 import { getLeadStatus } from '@/src/lib/rowUtils';
 import { ExcelRow, AuthStatus, NotificationCounts, ScheduleSummary, SheetSource } from '@/src/types';
+import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
 import { cn } from '@/lib/utils';
 
 const ROWS_STORAGE_KEY = 'excel-meet-scheduler.rows';
@@ -40,11 +41,9 @@ const SOURCE_STORAGE_KEY = 'excel-meet-scheduler.source';
 const EMAIL_BRAND_STORAGE_KEY = 'excel-meet-scheduler.emailBrand';
 const AUTOMATION_STEPS = ['Validating lead', 'Creating calendar', 'Sending email', 'Updating sheet', 'Done'];
 
-type EmailBrandKey = 'tallykonnect' | 'anywheretally';
-
 const EMAIL_BRANDS: Array<{ key: EmailBrandKey; label: string; description: string }> = [
-  { key: 'tallykonnect', label: 'TallyKonnect', description: 'Use TallyKonnect logo, website, and footer.' },
-  { key: 'anywheretally', label: 'AnyWhereTally', description: 'Use AnyWhereTally logo, website, and footer.' }
+  { key: 'tallykonnect', label: emailBrandLabel('tallykonnect'), description: 'Use TallyKonnect logo, website, and footer.' },
+  { key: 'anywheretally', label: emailBrandLabel('anywheretally'), description: 'Use AnyWhereTally logo, website, and footer.' }
 ];
 
 type ProcessPreview = {
@@ -314,7 +313,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal,
-        body: JSON.stringify({ rows: rowsToReconcile })
+        body: JSON.stringify({ rows: rowsToReconcile, emailBrand: selectedEmailBrand })
       });
       if (!res.ok || !isCurrentWorkspace(generation)) return rowsToReconcile;
       const data = await res.json();

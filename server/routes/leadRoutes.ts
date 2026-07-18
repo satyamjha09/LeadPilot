@@ -46,7 +46,8 @@ import {
 } from '../processLeadJobs';
 import { enqueueProcessLeadJob, isProcessQueueEnabled, prepareProcessQueueForReset } from '../processLeadQueue';
 import { buildExportRow, normalizeRows, reconcileScheduledRows } from '../services/rowTransforms';
-import { normalizeEmailBrand, type EmailBrandKey } from '../emailTemplates';
+import { sendRouteError } from '../routeErrors';
+import { parseEmailBrand, type EmailBrandKey } from '../../src/lib/emailBrand';
 import { beginResetGuard, withWorkflowActivity } from '../workflowActivity';
 import {
   advanceWorkflowGenerationForReset,
@@ -105,7 +106,7 @@ async function resetDemoDataHandler(_req: Request, res: Response) {
     return res.json({ success: true, message: 'Workflow database and pending process jobs cleared.' });
   } catch (err: any) {
     console.error('Database reset failed:', err);
-    return res.status(err.statusCode || 500).json({ error: err.message || 'Database reset failed' });
+    return sendRouteError(res, err, 'Database reset failed');
   } finally {
     if (finishResetGuard) {
       finishResetGuard();
@@ -157,7 +158,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     try {
       return await withWorkflowActivity('sheet-sync', async () => {
         const { sheetUrl, emailBrand } = req.body as { sheetUrl?: string; emailBrand?: any };
-        const brand = normalizeEmailBrand(emailBrand);
+        const brand = parseEmailBrand(emailBrand);
         if (!sheetUrl) {
           return res.status(400).json({ error: 'Google Sheet URL is required.' });
         }
@@ -181,7 +182,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     } catch (err: any) {
       console.error('Google Sheets import failed:', err);
       if (err.statusCode) {
-        return res.status(err.statusCode).json({ error: err.message });
+        return sendRouteError(res, err, 'Google Sheets import failed');
       }
       const friendlyError = friendlySheetsError(err);
       return res.status(friendlyError.status).json({ error: friendlyError.message });
@@ -197,7 +198,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers?: string[];
           emailBrand?: any;
         };
-        const brand = normalizeEmailBrand(emailBrand);
+        const brand = parseEmailBrand(emailBrand);
 
         if (!spreadsheetId || !sheetName) {
           return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
@@ -209,7 +210,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     } catch (err: any) {
       console.error('Google Sheets sync failed:', err);
       if (err.statusCode) {
-        return res.status(err.statusCode).json({ error: err.message });
+        return sendRouteError(res, err, 'Google Sheets sync failed');
       }
       const friendlyError = friendlySheetsError(err);
       return res.status(friendlyError.status).json({ error: friendlyError.message });
@@ -230,9 +231,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       });
     } catch (err: any) {
       console.error('Schedule batch failed:', err);
-      return res.status(err.statusCode || 500).json({
-        error: err.statusCode ? err.message : `Batch processing crashed: ${err.message}`
-      });
+      return sendRouteError(res, err, `Batch processing crashed: ${err.message}`);
     }
   });
 
@@ -246,7 +245,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           rows?: ExcelRow[];
           emailBrand?: any;
         };
-        const brand = normalizeEmailBrand(emailBrand);
+        const brand = parseEmailBrand(emailBrand);
 
         if (!spreadsheetId || !sheetName) {
           return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
@@ -281,7 +280,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     } catch (err: any) {
       console.error('Google Sheets schedule failed:', err);
       if (err.statusCode) {
-        return res.status(err.statusCode).json({ error: err.message });
+        return sendRouteError(res, err, 'Google Sheets schedule failed');
       }
       const friendlyError = friendlySheetsError(err);
       return res.status(friendlyError.status).json({ error: friendlyError.message });
@@ -299,6 +298,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers?: string[];
           emailBrand?: any;
         };
+        const brand = parseEmailBrand(emailBrand);
         if (!row) return res.status(400).json({ error: 'Row is required.' });
 
         const [dbRow] = await applyDbTruthToRows([row]);
@@ -316,7 +316,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           spreadsheetId,
           sheetName,
           headers,
-          emailBrand
+          emailBrand: brand
         });
 
         return res.json({
@@ -328,7 +328,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       });
     } catch (err: any) {
       console.error('Thank-you email failed:', err);
-      return res.status(err.statusCode || 500).json({ error: err.message || 'Thank-you email failed' });
+      return sendRouteError(res, err, 'Thank-you email failed');
     }
   });
 
@@ -343,6 +343,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers?: string[];
           emailBrand?: any;
         };
+        const brand = parseEmailBrand(emailBrand);
         if (!rows || !Array.isArray(rows)) {
           return res.status(400).json({ error: 'Valid rows list must be supplied.' });
         }
@@ -352,7 +353,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           spreadsheetId,
           sheetName,
           headers,
-          emailBrand
+          emailBrand: brand
         };
 
         const results: Array<{
@@ -402,7 +403,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       });
     } catch (err: any) {
       console.error('Thank-you batch failed:', err);
-      return res.status(err.statusCode || 500).json({ error: err.message || 'Thank-you batch failed' });
+      return sendRouteError(res, err, 'Thank-you batch failed');
     }
   });
 
@@ -419,7 +420,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers?: string[];
           emailBrand?: any;
         };
-        const brand = normalizeEmailBrand(emailBrand);
+        const brand = parseEmailBrand(emailBrand);
 
         if (!row || !status) {
           return res.status(400).json({ error: 'Row and status are required.' });
@@ -459,7 +460,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       });
     } catch (err: any) {
       console.error('Lead status update failed:', err);
-      return res.status(err.statusCode || 500).json({ error: err.message || 'Lead status update failed' });
+      return sendRouteError(res, err, 'Lead status update failed');
     }
   });
 
@@ -475,7 +476,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers?: string[];
           emailBrand?: any;
         };
-        const brand = normalizeEmailBrand(emailBrand);
+        const brand = parseEmailBrand(emailBrand);
 
         if (!row) {
           return res.status(400).json({ error: 'Row is required.' });
@@ -494,7 +495,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       });
     } catch (err: any) {
       console.error('Force close active demo failed:', err);
-      return res.status(err.statusCode || 500).json({ error: err.message || 'Force close active demo failed' });
+      return sendRouteError(res, err, 'Force close active demo failed');
     }
   });
 
@@ -573,7 +574,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       });
     } catch (err: any) {
       console.error('Manual email retry failed:', err);
-      return res.status(err.statusCode || 500).json({ error: err.message || 'Manual email retry failed' });
+      return sendRouteError(res, err, 'Manual email retry failed');
     }
   });
 
@@ -636,7 +637,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       });
     } catch (err: any) {
       console.error('Sheet sync retry failed:', err);
-      return res.status(err.statusCode || 500).json({ error: err.message || 'Sheet sync retry failed' });
+      return sendRouteError(res, err, 'Sheet sync retry failed');
     }
   });
 
@@ -699,7 +700,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/process-leads/preview', async (req, res) => {
     try {
-      const { rows } = req.body as { rows?: ExcelRow[] };
+      const { rows, emailBrand } = req.body as { rows?: ExcelRow[]; emailBrand?: any };
+      parseEmailBrand(emailBrand);
       if (!rows || !Array.isArray(rows)) {
         return res.status(400).json({ error: 'Valid rows list must be supplied.' });
       }
@@ -736,7 +738,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       });
     } catch (err: any) {
       console.error('Lead process preview failed:', err);
-      return res.status(500).json({ error: err.message || 'Lead process preview failed' });
+      return sendRouteError(res, err, 'Lead process preview failed');
     }
   });
 
@@ -759,7 +761,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers?: string[];
           emailBrand?: any;
         };
-        const brand = normalizeEmailBrand(emailBrand);
+        const brand = parseEmailBrand(emailBrand);
 
         if (!rows || !Array.isArray(rows)) {
           return res.status(400).json({ error: 'Valid rows list must be supplied.' });
@@ -796,7 +798,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     } catch (err: any) {
       console.error('Lead processing job enqueue failed:', err);
       if (err.statusCode) {
-        return res.status(err.statusCode).json({ error: err.message });
+        return sendRouteError(res, err, 'Lead processing job enqueue failed');
       }
       const friendlyError = friendlySheetsError(err);
       if (req.body?.sourceType === 'google-sheet') {
@@ -828,7 +830,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers?: string[];
           emailBrand?: any;
         };
-        const brand = normalizeEmailBrand(emailBrand);
+        const brand = parseEmailBrand(emailBrand);
 
         if (!rows || !Array.isArray(rows)) {
           return res.status(400).json({ error: 'Valid rows list must be supplied.' });
@@ -860,7 +862,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     } catch (err: any) {
       console.error('Lead processing failed:', err);
       if (err.statusCode) {
-        return res.status(err.statusCode).json({ error: err.message });
+        return sendRouteError(res, err, 'Lead processing failed');
       }
       const friendlyError = friendlySheetsError(err);
       if (req.body?.sourceType === 'google-sheet') {
@@ -872,7 +874,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/reconcile', async (req, res) => {
     try {
-      const { rows } = req.body as { rows: ExcelRow[] };
+      const { rows, emailBrand } = req.body as { rows: ExcelRow[]; emailBrand?: any };
+      parseEmailBrand(emailBrand);
       if (!rows || !Array.isArray(rows)) {
         return res.status(400).json({ error: 'Valid rows list must be supplied.' });
       }
@@ -880,7 +883,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       return res.json({ rows: await reconcileScheduledRows(rows) });
     } catch (err: any) {
       console.error('Reconcile failed:', err);
-      return res.status(500).json({ error: `Reconcile failed: ${err.message}` });
+      return sendRouteError(res, err, `Reconcile failed: ${err.message}`);
     }
   });
 

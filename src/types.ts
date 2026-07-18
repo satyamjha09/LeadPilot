@@ -1,4 +1,5 @@
 import { LeadStatusLabel } from '@/src/lib/leadStatus';
+import type { EmailBrandKey } from '@/src/lib/emailBrand';
 
 export interface ExcelRow {
   id: string;
@@ -81,7 +82,7 @@ export interface NotificationCounts {
 }
 
 export interface AuthStatus {
-  brand?: 'tallykonnect' | 'anywheretally';
+  brand?: EmailBrandKey;
   email?: string;
   authenticated: boolean;
   configured: boolean;

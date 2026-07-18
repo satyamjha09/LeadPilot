@@ -2,7 +2,7 @@ import { ExcelRow } from '../../src/types';
 import { ensureRequiredColumns, ensureSheetAutomationIds, readSheetRows } from '../googleSheets';
 import { buildProcessLeadPlan } from '../leadWorkflow';
 import { applyDbTruthToRows } from '../scheduleDb';
-import type { EmailBrandKey } from '../emailTemplates';
+import type { EmailBrandKey } from '../../src/lib/emailBrand';
 
 export function createSheetSyncService() {
   const sheetProcessingLocks = new Set<string>();

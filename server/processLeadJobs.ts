@@ -1,6 +1,6 @@
 import { ExcelRow } from '../src/types';
 import { prisma } from './db';
-import { normalizeEmailBrand, type EmailBrandKey } from './emailTemplates';
+import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
 import { getWorkflowGenerationForNewJob } from './workflowControl';
 
 export type ProcessLeadJobStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
@@ -49,7 +49,7 @@ export async function createProcessLeadJob(input: ProcessLeadJobInput) {
       status: 'QUEUED',
       generation,
       sourceType: input.sourceType,
-      emailBrand: normalizeEmailBrand(input.emailBrand),
+      emailBrand: coerceStoredEmailBrand(input.emailBrand),
       spreadsheetId: input.spreadsheetId || null,
       sheetName: input.sheetName || null,
       headersJson: input.headers ? JSON.stringify(input.headers) : null,
@@ -135,7 +135,7 @@ export function serializeProcessLeadJob(job: Awaited<ReturnType<typeof getProces
     status: job.status,
     generation: job.generation,
     sourceType: job.sourceType,
-    emailBrand: normalizeEmailBrand(job.emailBrand),
+    emailBrand: coerceStoredEmailBrand(job.emailBrand),
     spreadsheetId: job.spreadsheetId || undefined,
     sheetName: job.sheetName || undefined,
     progress: parseJson<ProcessLeadJobProgress>(job.progressJson, initialProgress(inputRows.length)),
@@ -153,7 +153,7 @@ export function parseProcessLeadJobInput(job: Awaited<ReturnType<typeof getProce
   if (!job) throw new Error('Process job not found.');
   return {
     sourceType: job.sourceType === 'google-sheet' ? 'google-sheet' : 'excel',
-    emailBrand: normalizeEmailBrand(job.emailBrand),
+    emailBrand: coerceStoredEmailBrand(job.emailBrand),
     spreadsheetId: job.spreadsheetId || undefined,
     sheetName: job.sheetName || undefined,
     headers: parseJson<string[]>(job.headersJson, []),

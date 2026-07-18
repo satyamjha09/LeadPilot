@@ -1,25 +1,26 @@
 import type { Express } from 'express';
 import { clearCredentials, exchangeCodeAndSave, getAuthStatus } from '../googleAuth';
-import { normalizeEmailBrand } from '../emailTemplates';
+import { sendRouteError } from '../routeErrors';
+import { parseEmailBrand } from '../../src/lib/emailBrand';
 
 export function registerAuthRoutes(app: Express) {
   app.get('/api/auth/status', async (req, res) => {
     try {
-      const status = await getAuthStatus(normalizeEmailBrand(req.query.brand));
+      const status = await getAuthStatus(parseEmailBrand(req.query.brand));
       return res.json(status);
     } catch (err: any) {
-      return res.status(500).json({ error: err.message });
+      return sendRouteError(res, err, 'Google auth status failed');
     }
   });
 
   app.post('/api/auth/clear', async (req, res) => {
     try {
-      const brand = normalizeEmailBrand((req.body as any)?.brand || req.query.brand);
+      const brand = parseEmailBrand((req.body as any)?.brand || req.query.brand);
       await clearCredentials(brand);
       const status = await getAuthStatus(brand);
       return res.json({ success: true, message: 'Google authentication cleared.', status });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message });
+      return sendRouteError(res, err, 'Google authentication clear failed');
     }
   });
 
@@ -30,7 +31,7 @@ export function registerAuthRoutes(app: Express) {
         return res.status(400).send('Missing authorization code.');
       }
 
-      await exchangeCodeAndSave(String(code), normalizeEmailBrand(req.query.brand || req.query.state));
+      await exchangeCodeAndSave(String(code), parseEmailBrand(req.query.brand || req.query.state));
 
       return res.send(`
         <html>
@@ -53,7 +54,8 @@ export function registerAuthRoutes(app: Express) {
       `);
     } catch (err: any) {
       console.error('Google callback error:', err);
-      return res.status(500).send(`Authentication exchange failed: ${err.message}`);
+      const statusCode = err?.statusCode || 500;
+      return res.status(statusCode).send(`Authentication exchange failed: ${err.message}`);
     }
   });
 }

@@ -9,10 +9,9 @@ import {
   buildRescheduleEmail,
   buildRawEmail,
   buildReminderEmail,
-  buildThankYouEmail,
-  normalizeEmailBrand,
-  type EmailBrandKey
+  buildThankYouEmail
 } from './emailTemplates';
+import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
 import { parseDateParts } from '../src/lib/dateFormat';
 
 const TOKENS_PATH = path.join(process.cwd(), 'data', 'google_tokens.json');
@@ -44,7 +43,7 @@ function authStatePathForBrand(brand: EmailBrandKey) {
 }
 
 export function getGoogleAuthEmail(brand?: EmailBrandKey) {
-  const normalized = normalizeEmailBrand(brand);
+  const normalized = coerceStoredEmailBrand(brand);
   if (normalized === 'anywheretally') {
     return (
       process.env.GOOGLE_ANYWHERETALLY_AUTH_EMAIL ||
@@ -63,7 +62,7 @@ export function getGoogleAuthEmail(brand?: EmailBrandKey) {
 }
 
 function readLegacySavedTokens(brand?: EmailBrandKey): StoredGoogleTokens | null {
-  if (normalizeEmailBrand(brand) !== 'tallykonnect') return null;
+  if (coerceStoredEmailBrand(brand) !== 'tallykonnect') return null;
   if (!fs.existsSync(TOKENS_PATH)) return null;
   try {
     return JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf-8'));
@@ -116,7 +115,7 @@ async function readSavedTokens(brand?: EmailBrandKey): Promise<StoredGoogleToken
 
 // Get credentials from env or fallback configuration
 export function getCredentials(brand?: EmailBrandKey) {
-  const normalized = normalizeEmailBrand(brand);
+  const normalized = coerceStoredEmailBrand(brand);
   const isAnyWhereTally = normalized === 'anywheretally';
   const configuredRedirectUri = (
     (isAnyWhereTally ? process.env.GOOGLE_ANYWHERETALLY_REDIRECT_URI : process.env.GOOGLE_TALLYKONNECT_REDIRECT_URI) ||
@@ -161,7 +160,7 @@ export function getCredentials(brand?: EmailBrandKey) {
 }
 
 function isEnvTokenSuppressed(brand?: EmailBrandKey) {
-  const statePath = authStatePathForBrand(normalizeEmailBrand(brand));
+  const statePath = authStatePathForBrand(coerceStoredEmailBrand(brand));
   if (!fs.existsSync(statePath)) return false;
   try {
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
@@ -173,7 +172,7 @@ function isEnvTokenSuppressed(brand?: EmailBrandKey) {
 }
 
 function setEnvTokenSuppressed(suppressed: boolean, brand?: EmailBrandKey) {
-  const statePath = authStatePathForBrand(normalizeEmailBrand(brand));
+  const statePath = authStatePathForBrand(coerceStoredEmailBrand(brand));
   if (suppressed) {
     fs.writeFileSync(
       statePath,
@@ -476,7 +475,7 @@ function inferEmailBrandFromTemplate(template: { subject?: string; text?: string
 }
 
 function calendarBrandCopy(brand?: EmailBrandKey) {
-  const normalized = normalizeEmailBrand(brand);
+  const normalized = coerceStoredEmailBrand(brand);
   if (normalized === 'anywheretally') {
     return {
       summary: 'Tally Mobile App Demo - AnyWhereTally',
@@ -706,7 +705,7 @@ export async function sendGmailReminder(fullName: string, email: string, dateStr
 
 // Check tokens save status to determine authorization validity
 export async function getAuthStatus(brand?: EmailBrandKey) {
-  const normalizedBrand = normalizeEmailBrand(brand);
+  const normalizedBrand = coerceStoredEmailBrand(brand);
   const { clientId, clientSecret, redirectUri, envRefreshToken, authEmail } = getCredentials(normalizedBrand);
   const configured = !!(clientId && clientSecret);
   const envTokenSuppressed = isEnvTokenSuppressed(normalizedBrand);
@@ -765,7 +764,7 @@ export async function getAuthStatus(brand?: EmailBrandKey) {
 
 // Exchange callback authorization code for tokens and save
 export async function exchangeCodeAndSave(code: string, brand?: EmailBrandKey) {
-  const normalizedBrand = normalizeEmailBrand(brand);
+  const normalizedBrand = coerceStoredEmailBrand(brand);
   const { clientId, clientSecret, redirectUri } = getCredentials(normalizedBrand);
   const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
   
@@ -784,7 +783,7 @@ export async function exchangeCodeAndSave(code: string, brand?: EmailBrandKey) {
 }
 
 export async function clearCredentials(brand?: EmailBrandKey) {
-  const normalizedBrand = normalizeEmailBrand(brand);
+  const normalizedBrand = coerceStoredEmailBrand(brand);
   await prisma.googleAuth.deleteMany({ where: { email: getGoogleAuthEmail(normalizedBrand) } });
   if (normalizedBrand === 'tallykonnect' && fs.existsSync(TOKENS_PATH)) {
     fs.unlinkSync(TOKENS_PATH);

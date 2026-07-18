@@ -4,7 +4,7 @@ import { getOAuthClient, isInvalidGrantError } from './googleAuth';
 import { getLeadStatusParse, isValidLeadStatus, normalizeHeader } from './leadStatus';
 import { createNewAutomationId } from './emailIdentity';
 import { normalizeDisplayDate } from '../src/lib/dateFormat';
-import type { EmailBrandKey } from './emailTemplates';
+import type { EmailBrandKey } from '../src/lib/emailBrand';
 
 const REQUIRED_UPDATE_COLUMNS = ['Meeting Details', 'lead_status', 'Remarks', 'automation_id'];
 const SHEET_BATCH_SIZE = 20;

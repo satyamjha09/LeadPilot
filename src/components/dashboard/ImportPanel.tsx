@@ -4,11 +4,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ExcelUpload from '@/src/components/import/ExcelUpload';
 import GoogleSheetImport from '@/src/components/import/GoogleSheetImport';
 import { ExcelRow, SheetSource } from '@/src/types';
+import type { EmailBrandKey } from '@/src/lib/emailBrand';
 
 interface ImportPanelProps {
   onExcelParsed: (rows: ExcelRow[]) => void | Promise<void>;
   onGoogleSheetParsed: (rows: ExcelRow[], source: SheetSource) => void | Promise<void>;
-  emailBrand: 'tallykonnect' | 'anywheretally';
+  emailBrand: EmailBrandKey;
   isLoading: boolean;
   setIsLoading: (val: boolean) => void;
   uploadedFileName: string | null;
