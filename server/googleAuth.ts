@@ -14,18 +14,36 @@ import {
 import { coerceStoredEmailBrand, emailBrandLabel, type EmailBrandKey } from '../src/lib/emailBrand';
 import { parseDateParts } from '../src/lib/dateFormat';
 
-const TOKENS_PATH = path.join(process.cwd(), 'data', 'google_tokens.json');
-const AUTH_STATE_PATH = path.join(process.cwd(), 'data', 'auth_state.json');
+const GOOGLE_AUTH_DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+const TOKENS_PATH = path.join(GOOGLE_AUTH_DATA_DIR, 'google_tokens.json');
+const AUTH_STATE_PATH = path.join(GOOGLE_AUTH_DATA_DIR, 'auth_state.json');
 const GOOGLE_CALENDAR_TIME_ZONE = 'Asia/Kolkata';
 const GOOGLE_CALENDAR_TIME_ZONE_OFFSET_MINUTES = 5 * 60 + 30;
 const GOOGLE_OAUTH_SCOPES = [
+  'openid',
+  'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/spreadsheets'
 ];
+export const GOOGLE_RECONNECT_MESSAGE = 'Google authorization expired or was revoked. Reconnect this Google account.';
+
+export class GoogleAccountMismatchError extends Error {
+  code = 'GOOGLE_ACCOUNT_MISMATCH';
+  statusCode = 400;
+  expectedEmail: string;
+  connectedEmail: string;
+
+  constructor(brand: EmailBrandKey, expectedEmail: string, connectedEmail: string) {
+    super(`${emailBrandLabel(brand)} must be connected using ${expectedEmail}.`);
+    this.name = 'GoogleAccountMismatchError';
+    this.expectedEmail = expectedEmail;
+    this.connectedEmail = connectedEmail;
+  }
+}
 
 // Ensure data directory exists
-const dataDir = path.dirname(TOKENS_PATH);
+const dataDir = GOOGLE_AUTH_DATA_DIR;
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
@@ -190,6 +208,35 @@ function setEnvTokenSuppressed(suppressed: boolean, brand?: EmailBrandKey) {
   }
 }
 
+function normalizeGoogleEmail(email: unknown) {
+  return String(email || '').trim().toLowerCase();
+}
+
+async function getAuthenticatedGoogleEmail(oauth2Client: any) {
+  const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+  const response = await oauth2.userinfo.get();
+  const email = normalizeGoogleEmail(response.data.email);
+  if (!email) {
+    throw new Error('Google did not return the connected account email.');
+  }
+  return email;
+}
+
+async function revokeReceivedCredentials(oauth2Client: any, tokens: StoredGoogleTokens) {
+  try {
+    if (typeof oauth2Client.revokeCredentials === 'function') {
+      await oauth2Client.revokeCredentials();
+      return;
+    }
+    const token = tokens.access_token || tokens.refresh_token;
+    if (token && typeof oauth2Client.revokeToken === 'function') {
+      await oauth2Client.revokeToken(token);
+    }
+  } catch (error) {
+    console.warn('Failed to revoke mismatched Google OAuth credentials:', error);
+  }
+}
+
 export async function getOAuthClient(brand?: EmailBrandKey) {
   const { clientId, clientSecret, redirectUri, envRefreshToken } = getCredentials(brand);
   
@@ -309,7 +356,7 @@ function friendlyGoogleError(err: any, action: string): string {
     || err?.message;
 
   if (isInvalidGrantError(err)) {
-    return `${action} failed: Google authorization expired or was revoked. Reconnect the Google account and try again.`;
+    return `${action} failed: ${GOOGLE_RECONNECT_MESSAGE}`;
   }
   if (status === 401) {
     return `${action} failed: Google authorization expired. Reconnect the Google account and try again.`;
@@ -392,6 +439,19 @@ export function isInvalidGrantError(error: any) {
     oauthError === 'invalid_grant' ||
     /invalid_grant|expired or revoked|token has been expired/i.test(description)
   );
+}
+
+function isInsufficientScopeError(error: any) {
+  const status = error?.code || error?.response?.status;
+  const details = [
+    error?.response?.data?.error?.message,
+    error?.response?.data?.error_description,
+    error?.message
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return status === 403 && /insufficient|scope/i.test(details);
 }
 
 async function withCalendarRetry<T>(action: () => Promise<T>, maxAttempts = 4): Promise<T> {
@@ -704,16 +764,17 @@ export async function sendGmailReminder(
 }
 
 // Check tokens save status to determine authorization validity
-export async function getAuthStatus(brand?: EmailBrandKey) {
-  const normalizedBrand = coerceStoredEmailBrand(brand);
+export async function getAuthStatus(brand: EmailBrandKey) {
+  const normalizedBrand = brand;
   const { clientId, clientSecret, redirectUri, envRefreshToken, authEmail } = getCredentials(normalizedBrand);
   const configured = !!(clientId && clientSecret);
-  const envTokenSuppressed = isEnvTokenSuppressed(normalizedBrand);
+  let envTokenSuppressed = isEnvTokenSuppressed(normalizedBrand);
   
   let authenticated = false;
   let isUsingEnvToken = false;
   let requiresReconnect = false;
   let authError: string | undefined;
+  let connectedEmail: string | undefined;
 
   const savedTokens = await readSavedTokens(normalizedBrand);
   const hasSavedToken = !!savedTokens?.refresh_token;
@@ -723,13 +784,33 @@ export async function getAuthStatus(brand?: EmailBrandKey) {
     try {
       const oauth2Client = await getOAuthClient(normalizedBrand);
       await oauth2Client.getAccessToken();
-      authenticated = true;
-      isUsingEnvToken = !hasSavedToken && hasEnvToken;
+      connectedEmail = await getAuthenticatedGoogleEmail(oauth2Client);
+      if (connectedEmail !== authEmail) {
+        await clearCredentials(normalizedBrand);
+        envTokenSuppressed = true;
+        requiresReconnect = true;
+        authError = `${emailBrandLabel(normalizedBrand)} must be connected using ${authEmail}.`;
+      } else {
+        authenticated = true;
+        isUsingEnvToken = !hasSavedToken && hasEnvToken;
+      }
     } catch (error: any) {
       if (isInvalidGrantError(error)) {
         await clearCredentials(normalizedBrand);
+        envTokenSuppressed = true;
         requiresReconnect = true;
-        authError = 'Google authorization expired or was revoked. Connect Google again.';
+        authError = GOOGLE_RECONNECT_MESSAGE;
+      } else if (isInsufficientScopeError(error)) {
+        await clearCredentials(normalizedBrand);
+        envTokenSuppressed = true;
+        requiresReconnect = true;
+        authError = 'Google account identity permission missing. Reconnect this Google account.';
+      } else if (error?.code === 'GOOGLE_ACCOUNT_MISMATCH') {
+        await clearCredentials(normalizedBrand);
+        envTokenSuppressed = true;
+        requiresReconnect = true;
+        connectedEmail = error.connectedEmail;
+        authError = error.message;
       } else {
         authError = error?.message || 'Google authentication check failed.';
       }
@@ -755,6 +836,7 @@ export async function getAuthStatus(brand?: EmailBrandKey) {
     clientId: clientId ? `${clientId.slice(0, 10)}...` : undefined,
     redirectUri,
     authUrl,
+    connectedEmail,
     isUsingEnvToken,
     envTokenSuppressed,
     requiresReconnect,
@@ -763,12 +845,19 @@ export async function getAuthStatus(brand?: EmailBrandKey) {
 }
 
 // Exchange callback authorization code for tokens and save
-export async function exchangeCodeAndSave(code: string, brand?: EmailBrandKey) {
-  const normalizedBrand = coerceStoredEmailBrand(brand);
-  const { clientId, clientSecret, redirectUri } = getCredentials(normalizedBrand);
+export async function exchangeCodeAndSave(code: string, brand: EmailBrandKey) {
+  const normalizedBrand = brand;
+  const { clientId, clientSecret, redirectUri, authEmail } = getCredentials(normalizedBrand);
   const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
   
   const { tokens } = await oauth2Client.getToken(code);
+  oauth2Client.setCredentials(tokens);
+  const connectedEmail = await getAuthenticatedGoogleEmail(oauth2Client);
+
+  if (connectedEmail !== authEmail) {
+    await revokeReceivedCredentials(oauth2Client, tokens);
+    throw new GoogleAccountMismatchError(normalizedBrand, authEmail, connectedEmail);
+  }
   
   const existing = await readSavedTokens(normalizedBrand);
   const updated: StoredGoogleTokens = {
@@ -782,8 +871,8 @@ export async function exchangeCodeAndSave(code: string, brand?: EmailBrandKey) {
   return updated;
 }
 
-export async function clearCredentials(brand?: EmailBrandKey) {
-  const normalizedBrand = coerceStoredEmailBrand(brand);
+export async function clearCredentials(brand: EmailBrandKey) {
+  const normalizedBrand = brand;
   await prisma.googleAuth.deleteMany({ where: { email: getGoogleAuthEmail(normalizedBrand) } });
   if (normalizedBrand === 'tallykonnect' && fs.existsSync(TOKENS_PATH)) {
     fs.unlinkSync(TOKENS_PATH);

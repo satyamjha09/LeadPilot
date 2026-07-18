@@ -86,6 +86,7 @@ export interface NotificationCounts {
 export interface AuthStatus {
   brand?: EmailBrandKey;
   email?: string;
+  connectedEmail?: string;
   authenticated: boolean;
   configured: boolean;
   clientId?: string;

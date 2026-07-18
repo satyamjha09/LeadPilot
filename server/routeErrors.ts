@@ -6,6 +6,8 @@ type RouteError = Error & {
   requiredBrand?: string;
   selectedBrand?: string;
   brands?: string[];
+  expectedEmail?: string;
+  connectedEmail?: string;
 };
 
 export function sendRouteError(res: Response, error: unknown, fallbackMessage = 'Request failed') {
@@ -18,6 +20,8 @@ export function sendRouteError(res: Response, error: unknown, fallbackMessage = 
     ...(routeError?.requiredBrand ? { requiredBrand: routeError.requiredBrand } : {}),
     ...(routeError?.selectedBrand ? { selectedBrand: routeError.selectedBrand } : {}),
     ...(routeError?.brands ? { brands: routeError.brands } : {}),
+    ...(routeError?.expectedEmail ? { expectedEmail: routeError.expectedEmail } : {}),
+    ...(routeError?.connectedEmail ? { connectedEmail: routeError.connectedEmail } : {}),
     error: message
   });
 }

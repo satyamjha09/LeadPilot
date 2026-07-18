@@ -1,6 +1,6 @@
 import { google } from 'googleapis';
 import { ExcelRow } from '../src/types';
-import { getOAuthClient, isInvalidGrantError } from './googleAuth';
+import { getOAuthClient, GOOGLE_RECONNECT_MESSAGE, isInvalidGrantError } from './googleAuth';
 import { getLeadStatusParse, isValidLeadStatus, normalizeHeader } from './leadStatus';
 import { createNewAutomationId } from './emailIdentity';
 import { normalizeDisplayDate } from '../src/lib/dateFormat';
@@ -388,7 +388,7 @@ export function friendlySheetsError(err: any) {
   if (isInvalidGrantError(err)) {
     return {
       status: 401,
-      message: 'Google authorization expired or was revoked. Disconnect and reconnect this Google account.'
+      message: GOOGLE_RECONNECT_MESSAGE
     };
   }
   if (/Invalid Google Sheets URL/i.test(detail)) {
