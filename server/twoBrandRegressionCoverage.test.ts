@@ -1,0 +1,73 @@
+import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+
+function readRepoFile(...segments: string[]) {
+  return fs.readFileSync(path.join(process.cwd(), ...segments), 'utf-8');
+}
+
+describe('two-brand workflow regression coverage', () => {
+  it('keeps primary workflow Google calls tied to selected or persisted owner brand', () => {
+    const leadWorkflow = readRepoFile('server', 'leadWorkflow.ts');
+
+    expect(leadWorkflow).toContain('scheduleMeeting(row, sheetContext.emailBrand)');
+    expect(leadWorkflow).toContain('sendGmailInvite(row, meetLink, sheetContext.emailBrand)');
+    expect(leadWorkflow).toContain('updateCalendarMeeting(row, active.state.calendarEventId, ownerBrand)');
+    expect(leadWorkflow).toContain('sendGmailRescheduleInvite(updatedRow, meetLink');
+    expect(leadWorkflow).toContain('}, ownerBrand)');
+    expect(leadWorkflow).toContain('sendThankYouEmail(ownerRow, ownerBrand)');
+    expect(leadWorkflow).toContain('sendNoResponseEmail(ownerRow, ownerBrand)');
+    expect(leadWorkflow).toContain('updateGoogleSheetRowsResilient(');
+    expect(leadWorkflow).toContain('context.emailBrand');
+    expect(leadWorkflow).toContain('enqueueSheetSyncJob({');
+    expect(leadWorkflow).toContain('emailBrand: context.emailBrand');
+  });
+
+  it('keeps reminders and retry workers tied to persisted brand owners', () => {
+    const reminders = readRepoFile('server', 'reminders.ts');
+    const emailRetryWorker = readRepoFile('server', 'emailRetryWorker.ts');
+    const sheetSyncWorker = readRepoFile('server', 'sheetSyncWorker.ts');
+
+    expect(reminders).toContain('const emailBrand = coerceStoredEmailBrand(history.emailBrand)');
+    expect(reminders).toContain('sendGmailReminder(');
+    expect(reminders).toContain('history.emailBrand');
+    expect(emailRetryWorker).toContain('delivery.emailBrand');
+    expect(emailRetryWorker).toContain('sendGmailTemplate(');
+    expect(sheetSyncWorker).toContain('job.emailBrand');
+    expect(sheetSyncWorker).toContain('updateGoogleSheetRowsResilient(');
+  });
+
+  it('keeps idempotency, sheet retry, and reset database constraints brand-scoped', () => {
+    const schema = readRepoFile('prisma', 'schema.prisma');
+    const emailDelivery = readRepoFile('server', 'emailDelivery.ts');
+    const sheetSyncQueue = readRepoFile('server', 'sheetSyncQueue.ts');
+    const adminDb = readRepoFile('server', 'adminDb.ts');
+    const workflowControl = readRepoFile('server', 'workflowControl.ts');
+    const processLeadQueue = readRepoFile('server', 'processLeadQueue.ts');
+
+    expect(schema).toContain('@@unique([emailBrand, automationId, dateOfDemo, timeOfDemo])');
+    expect(schema).toContain('@@unique([emailBrand, userId])');
+    expect(schema).toContain('@@unique([emailBrand, eventKey])');
+    expect(schema).toContain('@@unique([emailBrand, jobKey])');
+    expect(schema).toContain('@@unique([emailBrand, sheetRowKey])');
+    expect(emailDelivery).toContain('emailBrand_eventKey');
+    expect(emailDelivery).toContain('ON CONFLICT ("emailBrand", "eventKey") DO NOTHING');
+    expect(sheetSyncQueue).toContain('ON CONFLICT ("emailBrand", "jobKey") DO UPDATE SET');
+    expect(adminDb).toContain('resetDemoTestData(emailBrand');
+    expect(adminDb).toContain('where: { emailBrand }');
+    expect(workflowControl).toContain('getWorkflowControl(emailBrand');
+    expect(processLeadQueue).toContain('{ jobId, generation, emailBrand }');
+  });
+
+  it('keeps OAuth account verification and invalid token cleanup brand-specific', () => {
+    const googleAuth = readRepoFile('server', 'googleAuth.ts');
+    const authRoutes = readRepoFile('server', 'routes', 'authRoutes.ts');
+
+    expect(googleAuth).toContain('https://www.googleapis.com/auth/userinfo.email');
+    expect(googleAuth).toContain('getAuthenticatedGoogleEmail(oauth2Client)');
+    expect(googleAuth).toContain('new GoogleAccountMismatchError(normalizedBrand, authEmail, connectedEmail)');
+    expect(googleAuth).toContain('clearCredentials(normalizedBrand)');
+    expect(authRoutes).toContain('parseEmailBrand(req.query.brand)');
+    expect(authRoutes).toContain('parseEmailBrand(req.query.brand || req.query.state)');
+  });
+});
