@@ -11,7 +11,7 @@ import {
   buildReminderEmail,
   buildThankYouEmail
 } from './emailTemplates';
-import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
+import { coerceStoredEmailBrand, emailBrandLabel, type EmailBrandKey } from '../src/lib/emailBrand';
 import { parseDateParts } from '../src/lib/dateFormat';
 
 const TOKENS_PATH = path.join(process.cwd(), 'data', 'google_tokens.json');
@@ -428,7 +428,7 @@ async function withCalendarRetry<T>(action: () => Promise<T>, maxAttempts = 4): 
   throw lastError;
 }
 
-async function sendRawGmailMessage(raw: string, brand?: EmailBrandKey) {
+async function sendRawGmailMessage(raw: string, brand: EmailBrandKey) {
   const oauth2Client = await getOAuthClient(brand);
   const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
@@ -451,27 +451,20 @@ async function sendRawGmailMessage(raw: string, brand?: EmailBrandKey) {
 export async function sendGmailTemplate(
   to: string,
   template: { subject: string; text: string; html: string },
-  brand?: EmailBrandKey
+  brand: EmailBrandKey
 ) {
   try {
-    const emailBrand = brand || inferEmailBrandFromTemplate(template);
     const encodedMessage = buildRawEmail({
       to,
-      fromEmail: getGoogleAuthEmail(emailBrand),
+      fromEmail: getGoogleAuthEmail(brand),
+      fromName: emailBrandLabel(brand),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage, emailBrand);
+    return await sendRawGmailMessage(encodedMessage, brand);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail email retry'));
   }
-}
-
-function inferEmailBrandFromTemplate(template: { subject?: string; text?: string; html?: string }): EmailBrandKey {
-  const content = `${template.subject || ''}\n${template.text || ''}\n${template.html || ''}`;
-  return /AnyWhereTally|anywheretally\.com|info@anywheretally\.com/i.test(content)
-    ? 'anywheretally'
-    : 'tallykonnect';
 }
 
 function calendarBrandCopy(brand?: EmailBrandKey) {
@@ -597,7 +590,7 @@ export async function updateCalendarMeeting(row: ExcelRow, calendarEventId: stri
   }
 }
 
-export async function sendThankYouEmail(row: ExcelRow, brand?: EmailBrandKey) {
+export async function sendThankYouEmail(row: ExcelRow, brand: EmailBrandKey) {
   try {
     const template = buildThankYouEmail({
       fullName: row.full_name,
@@ -615,7 +608,7 @@ export async function sendThankYouEmail(row: ExcelRow, brand?: EmailBrandKey) {
   }
 }
 
-export async function sendNoResponseEmail(row: ExcelRow, brand?: EmailBrandKey) {
+export async function sendNoResponseEmail(row: ExcelRow, brand: EmailBrandKey) {
   try {
     const template = buildNoResponseEmail({
       fullName: row.full_name,
@@ -633,7 +626,7 @@ export async function sendNoResponseEmail(row: ExcelRow, brand?: EmailBrandKey) 
   }
 }
 
-export async function sendGmailInvite(row: ExcelRow, meetLink: string, brand?: EmailBrandKey) {
+export async function sendGmailInvite(row: ExcelRow, meetLink: string, brand: EmailBrandKey) {
   try {
     const template = buildMeetingInviteEmail({
       fullName: row.full_name,
@@ -657,8 +650,8 @@ export async function sendGmailInvite(row: ExcelRow, meetLink: string, brand?: E
 export async function sendGmailRescheduleInvite(
   row: ExcelRow,
   meetLink: string,
-  previous?: { date?: string; time?: string },
-  brand?: EmailBrandKey
+  previous: { date?: string; time?: string } | undefined,
+  brand: EmailBrandKey
 ) {
   try {
     const template = buildRescheduleEmail({
@@ -682,7 +675,14 @@ export async function sendGmailRescheduleInvite(
   }
 }
 
-export async function sendGmailReminder(fullName: string, email: string, dateStr: string, timeStr: string, meetLink: string, brand?: EmailBrandKey) {
+export async function sendGmailReminder(
+  fullName: string,
+  email: string,
+  dateStr: string,
+  timeStr: string,
+  meetLink: string,
+  brand: EmailBrandKey
+) {
   try {
     const template = buildReminderEmail({
       fullName,

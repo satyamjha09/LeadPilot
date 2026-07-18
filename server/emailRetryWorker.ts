@@ -12,7 +12,7 @@ const RETRY_BATCH_SIZE = Number(process.env.EMAIL_RETRY_BATCH_SIZE || 10);
 let retryScannerRunning = false;
 let retryTimer: NodeJS.Timeout | undefined;
 
-async function runEmailRetryScanner() {
+export async function runEmailRetryScanner() {
   if (retryScannerRunning) {
     console.log('EMAIL_RETRY_SCAN_SKIPPED', {
       reason: 'Previous scan is still running'
