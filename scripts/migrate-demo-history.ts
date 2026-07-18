@@ -38,14 +38,27 @@ async function main() {
 
     const displayDate = schedule.dateOfDemo || '';
     const displayTime = schedule.timeOfDemo || '';
-    const existingState = await prisma.customerDemoState.findUnique({ where: { userId } });
+    const emailBrand = schedule.emailBrand || 'tallykonnect';
+    const existingState = await prisma.customerDemoState.findUnique({
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId
+        }
+      }
+    });
     const sessionId = existingState?.activeDemoSessionId || `demo_${randomUUID()}`;
     const scheduledAt = schedule.createdAt.toISOString();
 
     await prisma.customerDemoState.upsert({
-      where: { userId },
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId
+        }
+      },
       create: {
-        emailBrand: 'tallykonnect',
+        emailBrand,
         userId,
         fullName: schedule.fullName,
         email: userId,
@@ -79,7 +92,7 @@ async function main() {
     await prisma.demoHistory.upsert({
       where: { sessionId },
       create: {
-        emailBrand: 'tallykonnect',
+        emailBrand,
         sessionId,
         userId,
         fullName: schedule.fullName,

@@ -96,6 +96,7 @@ function isDemoExpired(state: { demoStartUtc?: string | null }) {
 
 async function expireActiveDemoState(
   state: {
+    emailBrand: string;
     userId: string;
     email: string;
     activeDemoSessionId?: string | null;
@@ -107,9 +108,10 @@ async function expireActiveDemoState(
   const timestamp = nowIso();
 
   await prisma.$transaction(async (tx) => {
+    const emailBrand = coerceStoredEmailBrand(state.emailBrand);
     if (state.activeDemoSessionId) {
       await tx.demoHistory.updateMany({
-        where: { sessionId: state.activeDemoSessionId, status: LEAD_STATUS.DEMO_SCHEDULED },
+        where: { emailBrand, sessionId: state.activeDemoSessionId, status: LEAD_STATUS.DEMO_SCHEDULED },
         data: {
           status: DEMO_EXPIRED_STATUS,
           cancelledAt: timestamp
@@ -118,7 +120,12 @@ async function expireActiveDemoState(
     }
 
     await tx.customerDemoState.update({
-      where: { userId: state.userId },
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId: state.userId
+        }
+      },
       data: {
         status: DEMO_EXPIRED_STATUS,
         activeDemoSessionId: null,
@@ -135,6 +142,7 @@ async function expireActiveDemoState(
     if (state.demoDate && state.demoTime) {
       await (tx.leadSchedule as any).updateMany({
         where: {
+          emailBrand,
           OR: [
             {
               automationId: state.userId,
@@ -159,17 +167,22 @@ async function expireActiveDemoState(
   });
 }
 
-export async function getCustomerDemoState(row: ExcelRow) {
+export async function getCustomerDemoState(row: ExcelRow, emailBrand: EmailBrandKey) {
   const userId = getLeadUserId(row);
   if (!userId) return null;
   return prisma.customerDemoState.findUnique({
-    where: { userId },
+    where: {
+      emailBrand_userId: {
+        emailBrand,
+        userId
+      }
+    },
     include: { demoHistory: { orderBy: { createdAt: 'desc' } } }
   });
 }
 
-export async function getActiveDemoForRow(row: ExcelRow) {
-  const state = await getCustomerDemoState(row);
+export async function getActiveDemoForRow(row: ExcelRow, emailBrand: EmailBrandKey) {
+  const state = await getCustomerDemoState(row, emailBrand);
   if (!state || !isActiveDemo(state) || !state.activeDemoSessionId) return null;
   if (isDemoExpired(state)) {
     await expireActiveDemoState(state, 'Active demo expired automatically after 24 hours.');
@@ -181,8 +194,8 @@ export async function getActiveDemoForRow(row: ExcelRow) {
   return { state, history };
 }
 
-export async function assertCanCreateOrReuseActiveDemo(row: ExcelRow) {
-  const active = await getActiveDemoForRow(row);
+export async function assertCanCreateOrReuseActiveDemo(row: ExcelRow, emailBrand: EmailBrandKey) {
+  const active = await getActiveDemoForRow(row, emailBrand);
   if (!active) return null;
 
   const sameSlot =
@@ -210,7 +223,7 @@ export async function ensureScheduledDemoHistory(
     calendarEventId: string;
     scheduledEmailSentAt?: string;
   },
-  options?: { sourceType?: string; sourceId?: string; emailBrand?: EmailBrandKey }
+  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey }
 ) {
   const userId = getLeadUserId(row);
   if (!userId || !data.meetingLink || !data.calendarEventId) return null;
@@ -220,10 +233,17 @@ export async function ensureScheduledDemoHistory(
   const email = normalizeLeadEmail(row.email);
   const { scheduledStartUtc, scheduledEndUtc } = getScheduledWindow(row);
   const timestamp = nowIso();
-  const emailBrand = coerceStoredEmailBrand(options?.emailBrand);
+  const emailBrand = options.emailBrand;
 
   return prisma.$transaction(async (tx) => {
-    const existingState = await tx.customerDemoState.findUnique({ where: { userId } });
+    const existingState = await tx.customerDemoState.findUnique({
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId
+        }
+      }
+    });
     let canReuseExistingActiveDemo = !!existingState && isActiveDemo(existingState);
     if (existingState && canReuseExistingActiveDemo) {
       const sameSlot =
@@ -238,7 +258,7 @@ export async function ensureScheduledDemoHistory(
           canReuseExistingActiveDemo = false;
           if (existingState.activeDemoSessionId) {
             await tx.demoHistory.updateMany({
-              where: { sessionId: existingState.activeDemoSessionId, status: LEAD_STATUS.DEMO_SCHEDULED },
+              where: { emailBrand, sessionId: existingState.activeDemoSessionId, status: LEAD_STATUS.DEMO_SCHEDULED },
               data: {
                 status: DEMO_EXPIRED_STATUS,
                 cancelledAt: timestamp
@@ -246,7 +266,12 @@ export async function ensureScheduledDemoHistory(
             });
           }
           await tx.customerDemoState.update({
-            where: { userId },
+            where: {
+              emailBrand_userId: {
+                emailBrand,
+                userId
+              }
+            },
             data: {
               status: DEMO_EXPIRED_STATUS,
               activeDemoSessionId: null,
@@ -261,6 +286,7 @@ export async function ensureScheduledDemoHistory(
           });
           await (tx.leadSchedule as any).updateMany({
             where: {
+              emailBrand,
               OR: [
                 {
                   automationId: existingState.userId,
@@ -293,7 +319,12 @@ export async function ensureScheduledDemoHistory(
         : `demo_${randomUUID()}`;
 
     const state = await tx.customerDemoState.upsert({
-      where: { userId },
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId
+        }
+      },
       create: {
         emailBrand,
         userId,
@@ -308,8 +339,8 @@ export async function ensureScheduledDemoHistory(
         demoDate: displayDate,
         demoTime: displayTime,
         timezone: DEFAULT_TIMEZONE,
-        sourceType: options?.sourceType || row.__sourceType || null,
-        sourceId: options?.sourceId || row.__spreadsheetId || null,
+        sourceType: options.sourceType || row.__sourceType || null,
+        sourceId: options.sourceId || row.__spreadsheetId || null,
         sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
       },
       update: {
@@ -324,8 +355,8 @@ export async function ensureScheduledDemoHistory(
         demoDate: displayDate,
         demoTime: displayTime,
         timezone: DEFAULT_TIMEZONE,
-        sourceType: options?.sourceType || row.__sourceType || null,
-        sourceId: options?.sourceId || row.__spreadsheetId || null,
+        sourceType: options.sourceType || row.__sourceType || null,
+        sourceId: options.sourceId || row.__spreadsheetId || null,
         sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
       }
     });
@@ -369,11 +400,18 @@ export async function ensureScheduledDemoHistory(
   });
 }
 
-export async function forceCloseActiveDemoForRow(row: ExcelRow, remarks?: string) {
+export async function forceCloseActiveDemoForRow(row: ExcelRow, remarks: string | undefined, emailBrand: EmailBrandKey) {
   const userId = getLeadUserId(row);
   if (!userId) throw new Error('Email is missing.');
 
-  const state = await prisma.customerDemoState.findUnique({ where: { userId } });
+  const state = await prisma.customerDemoState.findUnique({
+    where: {
+      emailBrand_userId: {
+        emailBrand,
+        userId
+      }
+    }
+  });
   if (!state?.activeDemoSessionId || !isActiveDemo(state)) {
     throw new Error('No active demo session exists.');
   }
@@ -383,14 +421,15 @@ export async function forceCloseActiveDemoForRow(row: ExcelRow, remarks?: string
 
   return {
     ...row,
+    __emailBrand: emailBrand,
     'Meeting Details': '',
     lead_status: LEAD_STATUS.DEMO_SCHEDULED,
     Remarks: `${message} You can schedule this lead again.`
   } satisfies ExcelRow;
 }
 
-export async function markScheduledEmailSent(row: ExcelRow, sentAt = nowIso()) {
-  const active = await getActiveDemoForRow(row);
+export async function markScheduledEmailSent(row: ExcelRow, emailBrand: EmailBrandKey, sentAt = nowIso()) {
+  const active = await getActiveDemoForRow(row, emailBrand);
   if (!active?.state.activeDemoSessionId) return null;
   return prisma.demoHistory.update({
     where: { sessionId: active.state.activeDemoSessionId },
@@ -403,7 +442,8 @@ export async function rescheduleActiveDemoForRow(
   data: {
     meetingLink: string;
     calendarEventId: string;
-  }
+  },
+  emailBrand: EmailBrandKey
 ) {
   const userId = getLeadUserId(row);
   if (!userId) throw new Error('Email is missing.');
@@ -416,7 +456,14 @@ export async function rescheduleActiveDemoForRow(
   const { scheduledStartUtc, scheduledEndUtc } = getScheduledWindow(row);
 
   return prisma.$transaction(async (tx) => {
-    const state = await tx.customerDemoState.findUnique({ where: { userId } });
+    const state = await tx.customerDemoState.findUnique({
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId
+        }
+      }
+    });
     if (!state?.activeDemoSessionId) {
       throw new Error('No active demo session exists.');
     }
@@ -432,7 +479,12 @@ export async function rescheduleActiveDemoForRow(
     }
 
     const updatedState = await tx.customerDemoState.update({
-      where: { userId },
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId
+        }
+      },
       data: {
         fullName: row.full_name || state.fullName,
         status: LEAD_STATUS.DEMO_SCHEDULED,
@@ -469,6 +521,7 @@ export async function rescheduleActiveDemoForRow(
 export async function closeActiveDemoForRow(
   row: ExcelRow,
   status: typeof LEAD_STATUS.DEMO_DONE | typeof LEAD_STATUS.NO_RESPONSE,
+  emailBrand: EmailBrandKey,
   options?: { emailSentAt?: string }
 ) {
   const userId = getLeadUserId(row);
@@ -476,7 +529,14 @@ export async function closeActiveDemoForRow(
   const timestamp = nowIso();
 
   return prisma.$transaction(async (tx) => {
-    const state = await tx.customerDemoState.findUnique({ where: { userId } });
+    const state = await tx.customerDemoState.findUnique({
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId
+        }
+      }
+    });
     if (!state?.activeDemoSessionId) {
       throw new Error('No active demo session exists.');
     }
@@ -508,7 +568,12 @@ export async function closeActiveDemoForRow(
     });
 
     const updatedState = await tx.customerDemoState.update({
-      where: { userId },
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId
+        }
+      },
       data: {
         status,
         activeDemoSessionId: null,
@@ -545,11 +610,10 @@ export async function saveSheetLeadState(
     lastActionStatus?: string;
     lastError?: string | null;
   } = {},
-  emailBrand?: EmailBrandKey
+  emailBrand: EmailBrandKey
 ) {
   const sheetRowKey = getSheetRowKey(row);
   if (!sheetRowKey || !row.__spreadsheetId || !row.__sheetName) return null;
-  const normalizedBrand = coerceStoredEmailBrand(emailBrand);
 
   const lastLeadStatus = data.lastLeadStatus ?? (String(row.lead_status || '') || null);
   const lastMeetingDate = data.lastMeetingDate ?? (normalizeLeadDate(row['Date of Demo']) || null);
@@ -557,9 +621,14 @@ export async function saveSheetLeadState(
   const lastMeetingLink = data.lastMeetingLink ?? (String(row['Meeting Details'] || '') || null);
 
   return prisma.sheetLeadState.upsert({
-    where: { sheetRowKey },
+    where: {
+      emailBrand_sheetRowKey: {
+        emailBrand,
+        sheetRowKey
+      }
+    },
     create: {
-      emailBrand: normalizedBrand,
+      emailBrand,
       sheetRowKey,
       spreadsheetId: row.__spreadsheetId,
       sheetName: row.__sheetName,
@@ -586,13 +655,20 @@ export async function saveSheetLeadState(
   });
 }
 
-export async function getSheetLeadState(row: ExcelRow) {
+export async function getSheetLeadState(row: ExcelRow, emailBrand: EmailBrandKey) {
   const sheetRowKey = getSheetRowKey(row);
   if (!sheetRowKey) return null;
-  return prisma.sheetLeadState.findUnique({ where: { sheetRowKey } });
+  return prisma.sheetLeadState.findUnique({
+    where: {
+      emailBrand_sheetRowKey: {
+        emailBrand,
+        sheetRowKey
+      }
+    }
+  });
 }
 
-export async function findLeadSchedule(row: ExcelRow) {
+export async function findLeadSchedule(row: ExcelRow, emailBrand: EmailBrandKey) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) {
     return null;
@@ -615,6 +691,7 @@ export async function findLeadSchedule(row: ExcelRow) {
 
   return (prisma.leadSchedule as any).findFirst({
     where: {
+      emailBrand,
       OR: orConditions
     },
     orderBy: { updatedAt: 'desc' }
@@ -630,13 +707,13 @@ async function saveLeadScheduleRow(
     status: string;
     remarks?: string | null;
   },
-  options?: { sourceType?: string; sourceId?: string; emailBrand?: EmailBrandKey }
+  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey }
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
 
-  const existing = await findLeadSchedule(row);
-  const emailBrand = coerceStoredEmailBrand(options?.emailBrand);
+  const emailBrand = options.emailBrand;
+  const existing = await findLeadSchedule(row, emailBrand);
   const writeData = {
     automationId: keys.automationId || null,
     fullName: row.full_name || null,
@@ -648,8 +725,8 @@ async function saveLeadScheduleRow(
     gmailMessageId: data.gmailMessageId === undefined ? undefined : data.gmailMessageId || null,
     status: data.status,
     remarks: data.remarks || null,
-    sourceType: options?.sourceType || row.__sourceType || null,
-    sourceId: options?.sourceId || row.__spreadsheetId || null,
+    sourceType: options.sourceType || row.__sourceType || null,
+    sourceId: options.sourceId || row.__spreadsheetId || null,
     sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
   };
 
@@ -680,9 +757,9 @@ function isTerminalStatus(status: string) {
   return status === LEAD_STATUS.DEMO_DONE || status === LEAD_STATUS.NO_RESPONSE;
 }
 
-export async function applyDbTruthToRow(row: ExcelRow): Promise<ExcelRow> {
+export async function applyDbTruthToRow(row: ExcelRow, emailBrand: EmailBrandKey): Promise<ExcelRow> {
   const requestedStatus = normalizeLeadStatus(row.lead_status);
-  const active = await getActiveDemoForRow(row);
+  const active = await getActiveDemoForRow(row, emailBrand);
   const rowDate = normalizeLeadDate(row['Date of Demo']);
   const rowTime = normalizeLeadTime(row['Time of Demo']);
 
@@ -694,6 +771,7 @@ export async function applyDbTruthToRow(row: ExcelRow): Promise<ExcelRow> {
       const activeAutomationId = active.state.userId.includes('@') ? '' : active.state.userId;
       return {
         ...row,
+        __emailBrand: coerceStoredEmailBrand(active.state.emailBrand),
         'Meeting Details': active.state.meetingLink || row['Meeting Details'] || '',
         lead_status: isOutcomeRequest(requestedStatus) ? requestedStatus : LEAD_STATUS.DEMO_SCHEDULED,
         Remarks: isOutcomeRequest(requestedStatus)
@@ -713,6 +791,7 @@ export async function applyDbTruthToRow(row: ExcelRow): Promise<ExcelRow> {
       } else {
       return {
         ...row,
+        __emailBrand: coerceStoredEmailBrand(active.state.emailBrand),
         __schedulerStatus: 'Failed',
         Remarks: 'This customer already has an active demo.'
       };
@@ -720,7 +799,7 @@ export async function applyDbTruthToRow(row: ExcelRow): Promise<ExcelRow> {
     }
   }
 
-  const schedule = await findLeadSchedule(row);
+  const schedule = await findLeadSchedule(row, emailBrand);
   if (!schedule) return row;
 
   const dbStatus = normalizeLeadStatus(schedule.status) || schedule.status;
@@ -735,6 +814,7 @@ export async function applyDbTruthToRow(row: ExcelRow): Promise<ExcelRow> {
 
   return {
     ...row,
+    __emailBrand: coerceStoredEmailBrand(schedule.emailBrand),
     full_name: row.full_name || schedule.fullName || '',
     email: row.email || schedule.email,
     'Date of Demo': normalizeLeadDate(schedule.dateOfDemo || row['Date of Demo']),
@@ -749,21 +829,21 @@ export async function applyDbTruthToRow(row: ExcelRow): Promise<ExcelRow> {
   };
 }
 
-export async function applyDbTruthToRows(rows: ExcelRow[]) {
-  return Promise.all(rows.map((row) => applyDbTruthToRow(row)));
+export async function applyDbTruthToRows(rows: ExcelRow[], emailBrand: EmailBrandKey) {
+  return Promise.all(rows.map((row) => applyDbTruthToRow(row, emailBrand)));
 }
 
 export async function saveLeadScheduleFailure(
   row: ExcelRow,
   remarks: string,
-  options?: {
+  options: {
     sourceType?: string;
     sourceId?: string;
     status?: string;
     meetingLink?: string;
     calendarEventId?: string;
     gmailMessageId?: string;
-    emailBrand?: EmailBrandKey;
+    emailBrand: EmailBrandKey;
   }
 ) {
   const keys = getLeadUniqueKeys(row);
@@ -795,7 +875,7 @@ export async function saveLeadScheduleSuccess(
     remarks: string;
     status?: string;
   },
-  options?: { sourceType?: string; sourceId?: string; emailBrand?: EmailBrandKey }
+  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey }
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
@@ -819,7 +899,7 @@ export async function saveLeadStatusUpdate(
     status: string;
     remarks?: string;
   },
-  options?: { sourceType?: string; sourceId?: string; emailBrand?: EmailBrandKey }
+  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey }
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
@@ -835,8 +915,8 @@ export async function saveLeadStatusUpdate(
   );
 }
 
-export async function findScheduledMeetLinkFromDb(row: ExcelRow) {
-  const existing = await findLeadSchedule(row);
+export async function findScheduledMeetLinkFromDb(row: ExcelRow, emailBrand: EmailBrandKey) {
+  const existing = await findLeadSchedule(row, emailBrand);
   const scheduled =
     existing?.status === 'Demo Scheduled' ||
     existing?.status === 'Scheduled' ||

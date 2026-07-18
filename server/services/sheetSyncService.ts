@@ -8,11 +8,11 @@ export function createSheetSyncService() {
   const sheetProcessingLocks = new Set<string>();
 
   return {
-    async runSheetSync(spreadsheetId: string, sheetName: string, incomingHeaders?: string[], emailBrand?: EmailBrandKey) {
+    async runSheetSync(spreadsheetId: string, sheetName: string, incomingHeaders: string[] | undefined, emailBrand: EmailBrandKey) {
       const lockKey = `${spreadsheetId}|${sheetName}`;
       if (sheetProcessingLocks.has(lockKey)) {
         const freshRows = await readSheetRows(spreadsheetId, sheetName, emailBrand);
-        const dbRows = await applyDbTruthToRows(freshRows.rows);
+        const dbRows = await applyDbTruthToRows(freshRows.rows, emailBrand);
         const { headers } = await ensureRequiredColumns(
           spreadsheetId,
           sheetName,
@@ -60,7 +60,7 @@ export function createSheetSyncService() {
           __originalColumns: headers,
           __spreadsheetId: spreadsheetId,
           __sheetName: sheetName
-        })));
+        })), emailBrand);
         const rows = await ensureSheetAutomationIds(
           spreadsheetId,
           sheetName,

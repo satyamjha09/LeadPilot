@@ -9,6 +9,7 @@ export interface ExcelRow {
   __sheetRowNumber?: number;
   __spreadsheetId?: string;
   __sheetName?: string;
+  __emailBrand?: EmailBrandKey;
   full_name?: string;
   email?: string;
   'Date of Demo'?: string | number;

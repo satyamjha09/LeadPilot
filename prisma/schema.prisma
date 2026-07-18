@@ -26,8 +26,10 @@ model LeadSchedule {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  @@unique([automationId, dateOfDemo, timeOfDemo])
+  @@unique([emailBrand, automationId, dateOfDemo, timeOfDemo])
   @@index([emailBrand])
+  @@index([emailBrand, email, dateOfDemo, timeOfDemo])
+  @@index([emailBrand, automationId])
   @@index([email, dateOfDemo, timeOfDemo])
   @@index([automationId])
 }
@@ -35,7 +37,7 @@ model LeadSchedule {
 model CustomerDemoState {
   id                  String   @id @default(cuid())
   emailBrand          String   @default("tallykonnect")
-  userId              String   @unique
+  userId              String
   fullName            String?
   email               String
   status              String
@@ -56,6 +58,8 @@ model CustomerDemoState {
   demoHistory DemoHistory[]
 
   @@index([emailBrand])
+  @@unique([emailBrand, userId])
+  @@index([emailBrand, status])
   @@index([status])
 }
 
@@ -88,9 +92,12 @@ model DemoHistory {
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
-  customer CustomerDemoState @relation(fields: [userId], references: [userId])
+  customer CustomerDemoState @relation(fields: [emailBrand, userId], references: [emailBrand, userId])
 
   @@index([emailBrand])
+  @@index([emailBrand, userId])
+  @@index([emailBrand, email])
+  @@index([emailBrand, status])
   @@index([userId])
   @@index([email])
   @@index([status])
@@ -114,7 +121,7 @@ model EmailLog {
 model SheetLeadState {
   id              String   @id @default(cuid())
   emailBrand      String   @default("tallykonnect")
-  sheetRowKey     String   @unique
+  sheetRowKey     String
   spreadsheetId   String
   sheetName       String
   sheetRowNumber  Int
@@ -130,6 +137,8 @@ model SheetLeadState {
   updatedAt       DateTime @updatedAt
 
   @@index([emailBrand])
+  @@unique([emailBrand, sheetRowKey])
+  @@index([emailBrand, spreadsheetId, sheetName, sheetRowNumber])
 }
 
 model EmailDelivery {

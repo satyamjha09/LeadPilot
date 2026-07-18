@@ -5,6 +5,7 @@ import { findScheduledMeetLinkFromDb } from '../scheduleDb';
 import { hasGoogleMeetLink, isValidEmail } from '../leadWorkflow';
 import { normalizeDisplayDate } from '../../src/lib/dateFormat';
 import { createNewAutomationId } from '../emailIdentity';
+import type { EmailBrandKey } from '../../src/lib/emailBrand';
 
 const validationRemark = (field: string) => `${field} is missing. Add it in the Excel row before scheduling.`;
 
@@ -56,7 +57,7 @@ function formatExcelTime(value: any) {
   return typeof value === 'string' ? value.trim() : value;
 }
 
-export async function reconcileScheduledRows(rows: ExcelRow[]) {
+export async function reconcileScheduledRows(rows: ExcelRow[], emailBrand: EmailBrandKey) {
   const reconciled: ExcelRow[] = [];
 
   for (const row of rows) {
@@ -69,7 +70,7 @@ export async function reconcileScheduledRows(rows: ExcelRow[]) {
       continue;
     }
 
-    const existingMeetLink = await findScheduledMeetLinkFromDb(row);
+    const existingMeetLink = await findScheduledMeetLinkFromDb(row, emailBrand);
     if (!existingMeetLink) {
       reconciled.push(row);
       continue;

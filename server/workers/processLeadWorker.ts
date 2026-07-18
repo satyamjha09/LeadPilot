@@ -57,7 +57,7 @@ async function processLeadJob(jobId: string, queuedGeneration?: number) {
 
   await assertCurrentGeneration();
   await markProcessLeadJobRunning(jobId, input.rows.length);
-  const dbRows = await applyDbTruthToRows(input.rows);
+  const dbRows = await applyDbTruthToRows(input.rows, input.emailBrand);
 
   const result = await withWorkflowActivity('lead-processing', async () =>
     processLeadsByStatus(dbRows, {

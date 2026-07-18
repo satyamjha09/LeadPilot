@@ -77,7 +77,7 @@ export type SheetContext = {
   spreadsheetId?: string;
   sheetName?: string;
   headers?: string[];
-  emailBrand?: EmailBrandKey;
+  emailBrand: EmailBrandKey;
   assertStillCurrent?: () => void | Promise<void>;
   onRowProcessed?: (row: ExcelRow, summary: ProcessLeadsResult['summary']) => void | Promise<void>;
 };
@@ -299,8 +299,8 @@ function hasMeetingStarted(startUtc?: string | null) {
   return Number.isFinite(time) && time <= Date.now();
 }
 
-async function assertManualCloseAllowed(row: ExcelRow) {
-  const active = await getActiveDemoForRow(row);
+async function assertManualCloseAllowed(row: ExcelRow, emailBrand: EmailBrandKey) {
+  const active = await getActiveDemoForRow(row, emailBrand);
   if (!active?.state.activeDemoSessionId) {
     throw new Error('No active demo session exists.');
   }
@@ -784,7 +784,7 @@ export async function processLeadsByStatus(
     const currentMeetingDate = normalizeLeadDate(row['Date of Demo']);
     const currentMeetingTime = normalizeLeadTime(row['Time of Demo']);
     try {
-      const sheetState = await getSheetLeadState(row);
+      const sheetState = await getSheetLeadState(row, context.emailBrand);
       const sameMeetingAsLastReschedule =
         normalizeLeadStatus(row.lead_status) === LEAD_STATUS.RESCHEDULE &&
         sheetState?.lastLeadStatus === LEAD_STATUS.RESCHEDULE &&
@@ -1066,7 +1066,7 @@ export async function sendThankYouForRow(
   const email = String(row.email || '').trim();
   if (!email) throw new Error('Email is missing.');
   if (!isValidEmail(email)) throw new Error('Email is invalid.');
-  await assertManualCloseAllowed(row);
+  await assertManualCloseAllowed(row, context.emailBrand);
 
   const template = buildThankYouEmail({ fullName: row.full_name, brand: context.emailBrand });
   const emailResult = await sendIdempotentEmail({
@@ -1092,6 +1092,7 @@ export async function sendThankYouForRow(
             : 'Email failed: review delivery status';
     const updatedRow: ExcelRow = {
       ...row,
+      __emailBrand: context.emailBrand,
       lead_status: LEAD_STATUS.DEMO_DONE,
       Remarks: message
     };
@@ -1103,7 +1104,7 @@ export async function sendThankYouForRow(
     }
     if (emailResult.reason === 'ALREADY_SENT') {
       await assertWorkflowStillValid(context);
-      await closeActiveDemoForRow(row, LEAD_STATUS.DEMO_DONE);
+      await closeActiveDemoForRow(row, LEAD_STATUS.DEMO_DONE, context.emailBrand);
     }
     return { row: updatedRow, skipped: true, message };
   }
@@ -1125,6 +1126,7 @@ export async function sendThankYouForRow(
 
   const updatedRow: ExcelRow = {
     ...row,
+    __emailBrand: context.emailBrand,
     lead_status: LEAD_STATUS.DEMO_DONE,
     Remarks: 'Thank-you email sent',
     __emailDeliveryId: emailResult.deliveryId
@@ -1138,7 +1140,7 @@ export async function sendThankYouForRow(
   }
 
   await assertWorkflowStillValid(context);
-  await closeActiveDemoForRow(row, LEAD_STATUS.DEMO_DONE, {
+  await closeActiveDemoForRow(row, LEAD_STATUS.DEMO_DONE, context.emailBrand, {
     emailSentAt: emailResult.sent ? new Date().toISOString() : undefined
   });
 
@@ -1153,7 +1155,7 @@ export async function sendNoResponseForRow(
   const email = String(row.email || '').trim();
   if (!email) throw new Error('Email is missing.');
   if (!isValidEmail(email)) throw new Error('Email is invalid.');
-  await assertManualCloseAllowed(row);
+  await assertManualCloseAllowed(row, context.emailBrand);
 
   const template = buildNoResponseEmail({ fullName: row.full_name, brand: context.emailBrand });
   const emailResult = await sendIdempotentEmail({
@@ -1179,6 +1181,7 @@ export async function sendNoResponseForRow(
             : 'Email failed: review delivery status';
     const updatedRow: ExcelRow = {
       ...row,
+      __emailBrand: context.emailBrand,
       lead_status: LEAD_STATUS.NO_RESPONSE,
       'Meeting Details': '',
       Remarks: message
@@ -1192,7 +1195,7 @@ export async function sendNoResponseForRow(
     }
     if (emailResult.reason === 'ALREADY_SENT') {
       await assertWorkflowStillValid(context);
-      await closeActiveDemoForRow(row, LEAD_STATUS.NO_RESPONSE);
+      await closeActiveDemoForRow(row, LEAD_STATUS.NO_RESPONSE, context.emailBrand);
     }
     await assertWorkflowStillValid(context);
     await saveLeadStatusUpdate(
@@ -1207,12 +1210,13 @@ export async function sendNoResponseForRow(
   }
 
   await assertWorkflowStillValid(context);
-  await closeActiveDemoForRow(row, LEAD_STATUS.NO_RESPONSE, {
+  await closeActiveDemoForRow(row, LEAD_STATUS.NO_RESPONSE, context.emailBrand, {
     emailSentAt: new Date().toISOString()
   });
 
   const updatedRow: ExcelRow = {
     ...row,
+    __emailBrand: context.emailBrand,
     lead_status: LEAD_STATUS.NO_RESPONSE,
     'Meeting Details': '',
     Remarks: 'Not Attended email sent',
@@ -1249,7 +1253,7 @@ export async function rescheduleDemoForRow(
   if (!email) throw new Error('Email is missing.');
   if (!isValidEmail(email)) throw new Error('Email is invalid.');
 
-  const active = await getActiveDemoForRow(row);
+  const active = await getActiveDemoForRow(row, context.emailBrand);
   if (!active?.state.activeDemoSessionId || !active.history) {
     throw new Error('No active demo session exists.');
   }
@@ -1269,6 +1273,7 @@ export async function rescheduleDemoForRow(
 
   const updatedRow: ExcelRow = {
     ...row,
+    __emailBrand: context.emailBrand,
     'Meeting Details': meetLink,
     lead_status: LEAD_STATUS.DEMO_SCHEDULED,
     Remarks: 'Rescheduled. Meeting updated and email sent.'
@@ -1278,7 +1283,7 @@ export async function rescheduleDemoForRow(
   await rescheduleActiveDemoForRow(updatedRow, {
     meetingLink: meetLink,
     calendarEventId
-  });
+  }, context.emailBrand);
 
   await assertWorkflowStillValid(context);
   await saveLeadScheduleSuccess(
@@ -1346,6 +1351,7 @@ export async function rescheduleDemoForRow(
 
   const finalRow: ExcelRow = {
     ...updatedRow,
+    __emailBrand: context.emailBrand,
     Remarks: remarks,
     __emailDeliveryId: emailResult?.deliveryId
   };
@@ -1394,6 +1400,7 @@ export async function updateLeadStatusOnly(
 
   const updatedRow: ExcelRow = {
     ...row,
+    __emailBrand: context.emailBrand,
     lead_status: normalized,
     Remarks: remarks ?? row.Remarks ?? ''
   };
@@ -1441,6 +1448,10 @@ export async function processScheduleRows(
     failed: 0,
     skipped: 0
   };
+  const requiredEmailBrand = options?.sheetContext?.emailBrand;
+  if (!requiredEmailBrand) {
+    throw new Error('emailBrand is required for scheduling.');
+  }
 
   const timeConflictGroups = findTimeConflictGroups(rows);
   const conflictRowIds = new Set(timeConflictGroups.flatMap((group) => group.rowIds));
@@ -1475,7 +1486,7 @@ export async function processScheduleRows(
       await saveLeadScheduleFailure(updatedRow, TIME_CONFLICT_REMARK, {
         sourceType: options?.sheetContext?.sourceType || row.__sourceType,
         sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-        emailBrand: options?.sheetContext?.emailBrand
+        emailBrand: requiredEmailBrand
       });
       results.push(updatedRow);
       summary.failed++;
@@ -1509,7 +1520,7 @@ export async function processScheduleRows(
       await saveLeadScheduleFailure(updatedRow, updatedRow.Remarks || 'Email is invalid', {
         sourceType: options?.sheetContext?.sourceType || row.__sourceType,
         sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-        emailBrand: options?.sheetContext?.emailBrand
+        emailBrand: requiredEmailBrand
       });
       results.push(updatedRow);
       summary.failed++;
@@ -1528,7 +1539,7 @@ export async function processScheduleRows(
       await saveLeadScheduleFailure(updatedRow, message, {
         sourceType: options?.sheetContext?.sourceType || row.__sourceType,
         sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-        emailBrand: options?.sheetContext?.emailBrand
+        emailBrand: requiredEmailBrand
       });
       results.push(updatedRow);
       summary.failed++;
@@ -1542,7 +1553,8 @@ export async function processScheduleRows(
       sourceType: row.__sourceType || 'excel',
       spreadsheetId: row.__spreadsheetId,
       sheetName: row.__sheetName,
-      headers: row.__originalColumns
+      headers: row.__originalColumns,
+      emailBrand: requiredEmailBrand
     };
     await assertStillCurrent();
     const eventState = await getEmailEventState({
@@ -1553,9 +1565,10 @@ export async function processScheduleRows(
       time: row['Time of Demo']
     });
     if (eventState.delivery?.status === 'SENT') {
-      const dbLink = await findScheduledMeetLinkFromDb(row);
+      const dbLink = await findScheduledMeetLinkFromDb(row, sheetContext.emailBrand);
       const updatedRow: ExcelRow = {
         ...row,
+        __emailBrand: sheetContext.emailBrand,
         'Meeting Details': dbLink || row['Meeting Details'] || '',
         lead_status: LEAD_STATUS.DEMO_SCHEDULED,
         Remarks: 'Already sent, skipped duplicate'
@@ -1578,6 +1591,7 @@ export async function processScheduleRows(
     if (eventState.delivery?.status === 'PROCESSING') {
       const updatedRow: ExcelRow = {
         ...row,
+        __emailBrand: sheetContext.emailBrand,
         lead_status: LEAD_STATUS.DEMO_SCHEDULED,
         Remarks: 'Email is being processed'
       };
@@ -1592,6 +1606,7 @@ export async function processScheduleRows(
     if (eventState.delivery?.status === 'UNKNOWN') {
       const updatedRow: ExcelRow = {
         ...row,
+        __emailBrand: sheetContext.emailBrand,
         lead_status: LEAD_STATUS.DEMO_SCHEDULED,
         Remarks: 'Email result requires review'
       };
@@ -1605,7 +1620,7 @@ export async function processScheduleRows(
 
     try {
       await assertStillCurrent();
-      const activeDemo = await assertCanCreateOrReuseActiveDemo(row);
+      const activeDemo = await assertCanCreateOrReuseActiveDemo(row, sheetContext.emailBrand);
       let meetLink = existingMeetLink;
       let calendarEventId = activeDemo?.state.calendarEventId || '';
       let startTime = parseExcelDateTime(row['Date of Demo'], row['Time of Demo']).getTime();
@@ -1627,7 +1642,7 @@ export async function processScheduleRows(
           emailType: EMAIL_TYPES.DEMO_SCHEDULED
         });
       } else {
-        const dbLink = await findScheduledMeetLinkFromDb(row);
+        const dbLink = await findScheduledMeetLinkFromDb(row, sheetContext.emailBrand);
         if (hasGoogleMeetLink(dbLink)) {
           meetLink = dbLink;
           console.log('CALENDAR_EVENT_SKIPPED_DB_MEET_LINK', {
@@ -1729,6 +1744,7 @@ export async function processScheduleRows(
 
       const updatedRow: ExcelRow = {
         ...row,
+        __emailBrand: sheetContext.emailBrand,
         'Meeting Details': meetLink,
         lead_status: LEAD_STATUS.DEMO_SCHEDULED,
         Remarks: remarks,
@@ -1768,7 +1784,7 @@ export async function processScheduleRows(
       );
       if (emailResult.sent) {
         await assertStillCurrent();
-        await markScheduledEmailSent(updatedRow);
+        await markScheduledEmailSent(updatedRow, sheetContext.emailBrand);
       }
 
       await assertStillCurrent();
@@ -1784,7 +1800,7 @@ export async function processScheduleRows(
       if (isCalendarQuotaBlocked(failureMessage)) {
         markCalendarBlocked();
       }
-      const dbLink = await findScheduledMeetLinkFromDb(row);
+      const dbLink = await findScheduledMeetLinkFromDb(row, requiredEmailBrand);
       const preservedMeetLink = existingMeetLink || dbLink || String(row['Meeting Details'] || '');
       const updatedRow: ExcelRow = {
         ...row,
@@ -1796,7 +1812,7 @@ export async function processScheduleRows(
       await saveLeadScheduleFailure(updatedRow, failureMessage, {
         sourceType: options?.sheetContext?.sourceType || row.__sourceType,
         sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-        emailBrand: options?.sheetContext?.emailBrand,
+        emailBrand: requiredEmailBrand,
         status: scheduleFailureStatus(failureMessage),
         meetingLink: preservedMeetLink
       });

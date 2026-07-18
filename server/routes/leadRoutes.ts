@@ -58,8 +58,8 @@ import {
 type SheetSyncRunner = (
   spreadsheetId: string,
   sheetName: string,
-  incomingHeaders?: string[],
-  emailBrand?: EmailBrandKey
+  incomingHeaders: string[] | undefined,
+  emailBrand: EmailBrandKey
 ) => Promise<any>;
 
 function getProvidedAdminResetToken(req: Request) {
@@ -220,13 +220,19 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
   app.post('/api/schedule', async (req, res) => {
     try {
       return await withWorkflowActivity('lead-processing', async () => {
-        const { rows } = req.body as { rows: ExcelRow[] };
+        const { rows, emailBrand } = req.body as { rows: ExcelRow[]; emailBrand?: any };
+        const brand = parseEmailBrand(emailBrand);
         if (!rows || !Array.isArray(rows)) {
           return res.status(400).json({ error: 'Valid rows list must be supplied.' });
         }
 
         console.log(`Received request to schedule ${rows.length} rows...`);
-        const { rows: results, summary } = await processScheduleRows(rows);
+        const { rows: results, summary } = await processScheduleRows(rows, {
+          sheetContext: {
+            sourceType: 'excel',
+            emailBrand: brand
+          }
+        });
         return res.json({ rows: results, summary });
       });
     } catch (err: any) {
@@ -266,7 +272,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           __sheetName: sheetName,
           __originalColumns: headers
         }));
-        const dbRows = await applyDbTruthToRows(preparedRows);
+        const dbRows = await applyDbTruthToRows(preparedRows, brand);
         const result = await processLeadsByStatus(dbRows, {
           sourceType: 'google-sheet',
           spreadsheetId,
@@ -301,7 +307,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         const brand = parseEmailBrand(emailBrand);
         if (!row) return res.status(400).json({ error: 'Row is required.' });
 
-        const [dbRow] = await applyDbTruthToRows([row]);
+        const [dbRow] = await applyDbTruthToRows([row], brand);
         if (dbRow.__dbFinalState) {
           return res.json({
             success: true,
@@ -366,7 +372,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         }> = [];
 
         for (let i = 0; i < rows.length; i++) {
-          const [row] = await applyDbTruthToRows([rows[i]]);
+          const [row] = await applyDbTruthToRows([rows[i]], brand);
           try {
             if (row.__dbFinalState) {
               results.push({
@@ -482,7 +488,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           return res.status(400).json({ error: 'Row is required.' });
         }
 
-        const updatedRow = await forceCloseActiveDemoForRow(row, remarks);
+        const updatedRow = await forceCloseActiveDemoForRow(row, remarks, brand);
         if (sourceType === 'google-sheet' && spreadsheetId && sheetName && headers?.length && row.__sheetRowNumber) {
           await updateGoogleSheetRow(spreadsheetId, sheetName, row.__sheetRowNumber, headers, {
             'Meeting Details': '',
@@ -705,12 +711,12 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
   app.post('/api/process-leads/preview', async (req, res) => {
     try {
       const { rows, emailBrand } = req.body as { rows?: ExcelRow[]; emailBrand?: any };
-      parseEmailBrand(emailBrand);
+      const brand = parseEmailBrand(emailBrand);
       if (!rows || !Array.isArray(rows)) {
         return res.status(400).json({ error: 'Valid rows list must be supplied.' });
       }
 
-      const dbRows = await applyDbTruthToRows(rows);
+      const dbRows = await applyDbTruthToRows(rows, brand);
       const plan = await buildProcessLeadPlan(dbRows);
       const flattenPlannedRows = (items: any[]) =>
         items.map((item) => ({
@@ -783,7 +789,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers = ensured.headers;
         }
 
-        const dbRows = await applyDbTruthToRows(rows);
+        const dbRows = await applyDbTruthToRows(rows, brand);
         const job = await createProcessLeadJob({
           sourceType: sourceType || 'excel',
           spreadsheetId,
@@ -852,7 +858,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers = ensured.headers;
         }
 
-        const dbRows = await applyDbTruthToRows(rows);
+        const dbRows = await applyDbTruthToRows(rows, brand);
         const result = await processLeadsByStatus(dbRows, {
           sourceType: sourceType || 'excel',
           spreadsheetId,
@@ -879,12 +885,12 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
   app.post('/api/reconcile', async (req, res) => {
     try {
       const { rows, emailBrand } = req.body as { rows: ExcelRow[]; emailBrand?: any };
-      parseEmailBrand(emailBrand);
+      const brand = parseEmailBrand(emailBrand);
       if (!rows || !Array.isArray(rows)) {
         return res.status(400).json({ error: 'Valid rows list must be supplied.' });
       }
 
-      return res.json({ rows: await reconcileScheduledRows(rows) });
+      return res.json({ rows: await reconcileScheduledRows(rows, brand) });
     } catch (err: any) {
       console.error('Reconcile failed:', err);
       return sendRouteError(res, err, `Reconcile failed: ${err.message}`);

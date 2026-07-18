@@ -17,7 +17,7 @@ export type ProcessLeadJobProgress = {
 
 export type ProcessLeadJobInput = {
   sourceType: 'excel' | 'google-sheet';
-  emailBrand?: EmailBrandKey;
+  emailBrand: EmailBrandKey;
   spreadsheetId?: string;
   sheetName?: string;
   headers?: string[];

@@ -111,8 +111,14 @@ export async function checkAndSendReminders() {
   const sentField = reminderSentField(config.offsetMinutes);
 
   for (const history of histories) {
+    const emailBrand = coerceStoredEmailBrand(history.emailBrand);
     const activeState = await prisma.customerDemoState.findUnique({
-      where: { userId: history.userId }
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId: history.userId
+        }
+      }
     });
     const stillActive =
       activeState?.status === LEAD_STATUS.DEMO_SCHEDULED &&
@@ -132,7 +138,6 @@ export async function checkAndSendReminders() {
 
     let activeDeliveryId = '';
     try {
-      const emailBrand = coerceStoredEmailBrand(history.emailBrand);
       const eventKey = createEmailEventKey({
         automationId: history.userId,
         recipient: history.email,
