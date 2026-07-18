@@ -184,7 +184,7 @@ model EmailDelivery {
 model SheetSyncJob {
   id              String   @id @default(cuid())
   emailBrand      String   @default("tallykonnect")
-  jobKey          String   @unique
+  jobKey          String
   spreadsheetId   String
   sheetName       String
   rowNumber       Int
@@ -199,7 +199,10 @@ model SheetSyncJob {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  @@unique([emailBrand, jobKey])
   @@index([emailBrand])
+  @@index([emailBrand, status])
+  @@index([emailBrand, nextRetryAt])
   @@index([status])
   @@index([nextRetryAt])
   @@index([emailDeliveryId])

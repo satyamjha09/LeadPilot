@@ -1143,6 +1143,7 @@ export default function App() {
                   onForceCloseActiveDemo={handleForceCloseActiveDemo}
                   onProcessRow={handleProcessRow}
                   isProcessing={isProcessing}
+                  emailBrand={selectedEmailBrand}
                 />
               </>
             )}
@@ -1162,6 +1163,7 @@ export default function App() {
                 onForceCloseActiveDemo={handleForceCloseActiveDemo}
                 onProcessRow={handleProcessRow}
                 isProcessing={isProcessing}
+                emailBrand={selectedEmailBrand}
               />
             )}
           </>

@@ -68,6 +68,7 @@ export default function EmailLogsView({
 
       <RowDetailsDialog
         row={detailsRow}
+        emailBrand={emailBrand}
         open={!!detailsRow}
         onOpenChange={(open) => !open && setDetailsRow(null)}
       />

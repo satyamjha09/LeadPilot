@@ -13,7 +13,7 @@ const SHEET_SYNC_BATCH_SIZE = Number(process.env.SHEET_SYNC_BATCH_SIZE || 10);
 let sheetSyncRunning = false;
 let sheetSyncTimer: NodeJS.Timeout | undefined;
 
-async function runSheetSyncScanner() {
+export async function runSheetSyncScanner() {
   if (sheetSyncRunning) return;
   sheetSyncRunning = true;
   try {

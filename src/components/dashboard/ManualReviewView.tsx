@@ -66,6 +66,7 @@ export default function ManualReviewView({
 
       <RowDetailsDialog
         row={detailsRow}
+        emailBrand={emailBrand}
         open={!!detailsRow}
         onOpenChange={(open) => !open && setDetailsRow(null)}
       />
@@ -99,7 +100,7 @@ function ManualReviewRow({
         fetch('/api/sheet-sync/jobs-for-row', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ row })
+          body: JSON.stringify({ row, emailBrand })
         })
       ]);
 

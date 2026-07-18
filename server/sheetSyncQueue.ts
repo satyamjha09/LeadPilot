@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from './db';
-import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
+import type { EmailBrandKey } from '../src/lib/emailBrand';
 
 const SHEET_SYNC_DELAYS_MS = [5 * 60 * 1000, 15 * 60 * 1000, 60 * 60 * 1000];
 
@@ -18,13 +18,13 @@ export async function enqueueSheetSyncJob(input: {
   rowNumber: number;
   headers: string[];
   values: Record<string, any>;
-  emailBrand?: EmailBrandKey;
+  emailBrand: EmailBrandKey;
   emailDeliveryId?: string;
   error?: unknown;
 }) {
   const now = new Date();
   const errorMessage = input.error instanceof Error ? input.error.message : String(input.error || 'Google Sheet sync failed');
-  const emailBrand = coerceStoredEmailBrand(input.emailBrand);
+  const emailBrand = input.emailBrand;
   const id = randomUUID();
   await prisma.$executeRaw`
     INSERT INTO "SheetSyncJob" (
@@ -63,10 +63,9 @@ export async function enqueueSheetSyncJob(input: {
       ${now},
       ${now}
     )
-    ON CONFLICT ("jobKey") DO UPDATE SET
+    ON CONFLICT ("emailBrand", "jobKey") DO UPDATE SET
       "headersJson" = EXCLUDED."headersJson",
       "valuesJson" = EXCLUDED."valuesJson",
-      "emailBrand" = EXCLUDED."emailBrand",
       "emailDeliveryId" = EXCLUDED."emailDeliveryId",
       "status" = 'PENDING',
       "nextRetryAt" = EXCLUDED."nextRetryAt",
@@ -110,6 +109,7 @@ export async function listDueSheetSyncJobs(limit = 10) {
 }
 
 export async function listSheetSyncJobsForRow(input: {
+  emailBrand: EmailBrandKey;
   spreadsheetId: string;
   sheetName: string;
   rowNumber: number;
@@ -150,7 +150,8 @@ export async function listSheetSyncJobsForRow(input: {
       "createdAt",
       "updatedAt"
     FROM "SheetSyncJob"
-    WHERE "spreadsheetId" = ${input.spreadsheetId}
+    WHERE "emailBrand" = ${input.emailBrand}
+      AND "spreadsheetId" = ${input.spreadsheetId}
       AND "sheetName" = ${input.sheetName}
       AND "rowNumber" = ${input.rowNumber}
     ORDER BY "updatedAt" DESC

@@ -25,15 +25,17 @@ import {
   type SheetSyncJob
 } from '@/src/components/dashboard/reviewTypes';
 import { getLeadStatus, hasMeetLink } from '@/src/lib/rowUtils';
+import type { EmailBrandKey } from '@/src/lib/emailBrand';
 import { ExcelRow } from '@/src/types';
 
 interface RowDetailsDialogProps {
   row: ExcelRow | null;
+  emailBrand?: EmailBrandKey;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetailsDialogProps) {
+export default function RowDetailsDialog({ row, emailBrand, open, onOpenChange }: RowDetailsDialogProps) {
   const [logs, setLogs] = useState<EmailHistoryLog[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [historyError, setHistoryError] = useState('');
@@ -42,6 +44,7 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
   const [isLoadingSheetJobs, setIsLoadingSheetJobs] = useState(false);
   const [sheetJobError, setSheetJobError] = useState('');
   const [sheetRetryId, setSheetRetryId] = useState<string | null>(null);
+  const effectiveEmailBrand = row?.__emailBrand || emailBrand;
 
   const loadEmailHistory = useCallback(async () => {
     if (!row) return;
@@ -52,7 +55,7 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
       const res = await fetch('/api/leads/email-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ row })
+        body: JSON.stringify({ row, emailBrand: effectiveEmailBrand })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not load email history.');
@@ -63,7 +66,7 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
     } finally {
       setIsLoadingLogs(false);
     }
-  }, [row]);
+  }, [row, effectiveEmailBrand]);
 
   const loadSheetSyncJobs = useCallback(async () => {
     if (!row) return;
@@ -74,7 +77,7 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
       const res = await fetch('/api/sheet-sync/jobs-for-row', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ row })
+        body: JSON.stringify({ row, emailBrand: effectiveEmailBrand })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not load sheet sync jobs.');
@@ -85,7 +88,7 @@ export default function RowDetailsDialog({ row, open, onOpenChange }: RowDetails
     } finally {
       setIsLoadingSheetJobs(false);
     }
-  }, [row]);
+  }, [row, effectiveEmailBrand]);
 
   useEffect(() => {
     if (!open || !row) return;

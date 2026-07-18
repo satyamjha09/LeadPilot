@@ -587,8 +587,11 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheet-sync/jobs-for-row', async (req, res) => {
     try {
-      const { row } = req.body as { row?: ExcelRow };
+      const { row, emailBrand } = req.body as { row?: ExcelRow; emailBrand?: any };
       if (!row) return res.status(400).json({ error: 'Row is required.' });
+      const brand = row.__emailBrand
+        ? coerceStoredEmailBrand(row.__emailBrand)
+        : parseEmailBrand(emailBrand);
       const spreadsheetId = String(row.__spreadsheetId || '');
       const sheetName = String(row.__sheetName || '');
       const rowNumber = Number(row.__sheetRowNumber || row.__sourceRowNumber);
@@ -596,11 +599,11 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         return res.json({ jobs: [] });
       }
 
-      const jobs = await listSheetSyncJobsForRow({ spreadsheetId, sheetName, rowNumber });
+      const jobs = await listSheetSyncJobsForRow({ emailBrand: brand, spreadsheetId, sheetName, rowNumber });
       return res.json({ jobs: jobs.map(serializeSheetSyncJob) });
     } catch (err: any) {
       console.error('Sheet sync job lookup failed:', err);
-      return res.status(500).json({ error: err.message || 'Sheet sync job lookup failed' });
+      return sendRouteError(res, err, 'Sheet sync job lookup failed');
     }
   });
 
