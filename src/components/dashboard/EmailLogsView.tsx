@@ -133,33 +133,36 @@ function EmailLogRow({
           <LogEmpty icon={<Mail className="h-4 w-4" />} text="No email history loaded for this row." />
         ) : (
           <div className="divide-y">
-            {logs.map((log) => (
-              <div key={`${log.source}-${log.id}`} className="grid gap-3 p-3 xl:grid-cols-[1.2fr_1fr_0.8fr_0.9fr_1fr]">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    {isSentStatus(log.status) ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                    ) : isNeedsReviewStatus(log.status) ? (
-                      <AlertCircle className="h-4 w-4 text-amber-600" />
-                    ) : (
-                      <AlertCircle className="h-4 w-4 text-destructive" />
-                    )}
-                    <p className="truncate text-sm font-semibold">{formatLogType(log.type)}</p>
+            {logs.map((log) => {
+              const logBrandLabel = log.emailBrand ? emailBrandLabel(log.emailBrand) : brandLabel;
+              return (
+                <div key={`${log.source}-${log.id}`} className="grid gap-3 p-3 xl:grid-cols-[1.2fr_1fr_0.8fr_0.9fr_1fr]">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      {isSentStatus(log.status) ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      ) : isNeedsReviewStatus(log.status) ? (
+                        <AlertCircle className="h-4 w-4 text-amber-600" />
+                      ) : (
+                        <AlertCircle className="h-4 w-4 text-destructive" />
+                      )}
+                      <p className="truncate text-sm font-semibold">{formatLogType(log.type)}</p>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{formatSource(log.source || 'EmailDelivery')}</p>
+                    {log.error && <p className="mt-2 text-xs text-destructive">{log.error}</p>}
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{formatSource(log.source || 'EmailDelivery')}</p>
-                  {log.error && <p className="mt-2 text-xs text-destructive">{log.error}</p>}
-                </div>
 
-                <LogField label="Recipient" value={log.recipient || row.email || '-'} />
-                <LogField label="Status" value={formatStatus(log.status)} />
-                <LogField label="Brand" value={brandLabel} />
-                <div className="min-w-0 space-y-1 text-xs">
-                  <LogField label="Gmail message id" value={log.messageId || '-'} />
-                  <LogField label="Retry / attempts" value={String(log.attemptCount || 1)} />
-                  <LogField label="Time" value={formatDateTime(log.sentAt || log.updatedAt || log.createdAt)} />
+                  <LogField label="Recipient" value={log.recipient || row.email || '-'} />
+                  <LogField label="Status" value={formatStatus(log.status)} />
+                  <LogField label="Brand" value={logBrandLabel} />
+                  <div className="min-w-0 space-y-1 text-xs">
+                    <LogField label="Gmail message id" value={log.messageId || '-'} />
+                    <LogField label="Retry / attempts" value={String(log.attemptCount || 1)} />
+                    <LogField label="Time" value={formatDateTime(log.sentAt || log.updatedAt || log.createdAt)} />
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

@@ -1,6 +1,7 @@
 import { ExcelRow } from '../src/types';
 import { prisma } from './db';
 import { getLeadUniqueKeys, getSheetRowKey } from './scheduleDb';
+import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
 
 export const EMAIL_LOG_TYPES = {
   DEMO_SCHEDULED: 'DEMO_SCHEDULED',
@@ -58,13 +59,14 @@ export async function hasEmailBeenSent(row: ExcelRow, type: EmailLogType) {
 export async function logEmailSent(
   row: ExcelRow,
   type: EmailLogType,
-  data?: { messageId?: string; error?: string }
+  data?: { messageId?: string; error?: string; emailBrand?: EmailBrandKey }
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email) return null;
 
   const rowKey = getEmailRowKey(row);
   const status = data?.error ? 'failed' : 'sent';
+  const emailBrand = coerceStoredEmailBrand(data?.emailBrand);
 
   return prisma.emailLog.upsert({
     where: {
@@ -75,6 +77,7 @@ export async function logEmailSent(
       }
     },
     create: {
+      emailBrand,
       email: keys.email,
       rowKey,
       type,

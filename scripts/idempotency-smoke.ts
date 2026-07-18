@@ -51,6 +51,7 @@ async function main() {
         automationId,
         emailType: EMAIL_TYPES.DEMO_SCHEDULED,
         recipient,
+        emailBrand: 'tallykonnect',
         payloadHash
       }),
       claimEmailDelivery({
@@ -58,6 +59,7 @@ async function main() {
         automationId,
         emailType: EMAIL_TYPES.DEMO_SCHEDULED,
         recipient,
+        emailBrand: 'tallykonnect',
         payloadHash
       })
     ]);
@@ -77,6 +79,7 @@ async function main() {
       automationId,
       emailType: EMAIL_TYPES.DEMO_SCHEDULED,
       recipient,
+      emailBrand: 'tallykonnect',
       payloadHash
     });
     assert.equal(sentClaim.claimed, false);
@@ -92,6 +95,7 @@ async function main() {
       automationId,
       emailType: EMAIL_TYPES.DEMO_SCHEDULED,
       recipient,
+      emailBrand: 'tallykonnect',
       payloadHash
     });
     assert.equal(retryClaim.claimed, true);

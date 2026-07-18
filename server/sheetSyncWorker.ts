@@ -27,7 +27,9 @@ async function runSheetSyncScanner() {
             job.spreadsheetId,
             job.sheetName,
             headers,
-            [{ rowNumber: job.rowNumber, values, emailDeliveryId: job.emailDeliveryId || undefined }]
+            [{ rowNumber: job.rowNumber, values, emailDeliveryId: job.emailDeliveryId || undefined }],
+            {},
+            job.emailBrand
           );
 
           if (!result?.success) {

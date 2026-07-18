@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from './db';
+import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
 
 const SHEET_SYNC_DELAYS_MS = [5 * 60 * 1000, 15 * 60 * 1000, 60 * 60 * 1000];
 
@@ -17,16 +18,19 @@ export async function enqueueSheetSyncJob(input: {
   rowNumber: number;
   headers: string[];
   values: Record<string, any>;
+  emailBrand?: EmailBrandKey;
   emailDeliveryId?: string;
   error?: unknown;
 }) {
   const now = new Date();
   const errorMessage = input.error instanceof Error ? input.error.message : String(input.error || 'Google Sheet sync failed');
+  const emailBrand = coerceStoredEmailBrand(input.emailBrand);
   const id = randomUUID();
   await prisma.$executeRaw`
     INSERT INTO "SheetSyncJob" (
       "id",
       "jobKey",
+      "emailBrand",
       "spreadsheetId",
       "sheetName",
       "rowNumber",
@@ -44,6 +48,7 @@ export async function enqueueSheetSyncJob(input: {
     VALUES (
       ${id},
       ${jobKey(input)},
+      ${emailBrand},
       ${input.spreadsheetId},
       ${input.sheetName},
       ${input.rowNumber},
@@ -61,6 +66,7 @@ export async function enqueueSheetSyncJob(input: {
     ON CONFLICT ("jobKey") DO UPDATE SET
       "headersJson" = EXCLUDED."headersJson",
       "valuesJson" = EXCLUDED."valuesJson",
+      "emailBrand" = EXCLUDED."emailBrand",
       "emailDeliveryId" = EXCLUDED."emailDeliveryId",
       "status" = 'PENDING',
       "nextRetryAt" = EXCLUDED."nextRetryAt",
@@ -73,6 +79,7 @@ export async function listDueSheetSyncJobs(limit = 10) {
   return prisma.$queryRaw<
     Array<{
       id: string;
+      emailBrand: EmailBrandKey;
       spreadsheetId: string;
       sheetName: string;
       rowNumber: number;
@@ -85,6 +92,7 @@ export async function listDueSheetSyncJobs(limit = 10) {
   >`
     SELECT
       "id",
+      "emailBrand",
       "spreadsheetId",
       "sheetName",
       "rowNumber",
@@ -109,6 +117,7 @@ export async function listSheetSyncJobsForRow(input: {
   return prisma.$queryRaw<
     Array<{
       id: string;
+      emailBrand: EmailBrandKey;
       spreadsheetId: string;
       sheetName: string;
       rowNumber: number;
@@ -126,6 +135,7 @@ export async function listSheetSyncJobsForRow(input: {
   >`
     SELECT
       "id",
+      "emailBrand",
       "spreadsheetId",
       "sheetName",
       "rowNumber",
@@ -151,6 +161,7 @@ export async function findSheetSyncJobById(jobId: string) {
   const [job] = await prisma.$queryRaw<
     Array<{
       id: string;
+      emailBrand: EmailBrandKey;
       spreadsheetId: string;
       sheetName: string;
       rowNumber: number;
@@ -168,6 +179,7 @@ export async function findSheetSyncJobById(jobId: string) {
   >`
     SELECT
       "id",
+      "emailBrand",
       "spreadsheetId",
       "sheetName",
       "rowNumber",

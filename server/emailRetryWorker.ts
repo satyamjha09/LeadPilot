@@ -48,7 +48,7 @@ async function runEmailRetryScanner() {
           subject: delivery.subject,
           text: delivery.textBody,
           html: delivery.htmlBody
-        });
+        }, delivery.emailBrand);
 
         await markEmailDeliverySent({
           deliveryId: delivery.id,

@@ -45,6 +45,7 @@ async function main() {
     await prisma.customerDemoState.upsert({
       where: { userId },
       create: {
+        emailBrand: 'tallykonnect',
         userId,
         fullName: schedule.fullName,
         email: userId,
@@ -78,6 +79,7 @@ async function main() {
     await prisma.demoHistory.upsert({
       where: { sessionId },
       create: {
+        emailBrand: 'tallykonnect',
         sessionId,
         userId,
         fullName: schedule.fullName,

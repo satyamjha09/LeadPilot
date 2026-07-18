@@ -4,6 +4,7 @@ import { prisma } from './db';
 import { parseExcelDateTime } from './googleAuth';
 import { LEAD_STATUS, normalizeLeadStatus } from './leadStatus';
 import { normalizeDisplayDate, normalizeIsoDate } from '../src/lib/dateFormat';
+import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
 
 const DEFAULT_TIMEZONE = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Kolkata';
 const DEMO_EXPIRED_STATUS = 'Expired';
@@ -209,7 +210,7 @@ export async function ensureScheduledDemoHistory(
     calendarEventId: string;
     scheduledEmailSentAt?: string;
   },
-  options?: { sourceType?: string; sourceId?: string }
+  options?: { sourceType?: string; sourceId?: string; emailBrand?: EmailBrandKey }
 ) {
   const userId = getLeadUserId(row);
   if (!userId || !data.meetingLink || !data.calendarEventId) return null;
@@ -219,6 +220,7 @@ export async function ensureScheduledDemoHistory(
   const email = normalizeLeadEmail(row.email);
   const { scheduledStartUtc, scheduledEndUtc } = getScheduledWindow(row);
   const timestamp = nowIso();
+  const emailBrand = coerceStoredEmailBrand(options?.emailBrand);
 
   return prisma.$transaction(async (tx) => {
     const existingState = await tx.customerDemoState.findUnique({ where: { userId } });
@@ -293,6 +295,7 @@ export async function ensureScheduledDemoHistory(
     const state = await tx.customerDemoState.upsert({
       where: { userId },
       create: {
+        emailBrand,
         userId,
         fullName: row.full_name || null,
         email,
@@ -330,6 +333,7 @@ export async function ensureScheduledDemoHistory(
     const history = await tx.demoHistory.upsert({
       where: { sessionId },
       create: {
+        emailBrand,
         sessionId,
         userId,
         fullName: row.full_name || null,
@@ -540,10 +544,12 @@ export async function saveSheetLeadState(
     lastAction?: string;
     lastActionStatus?: string;
     lastError?: string | null;
-  } = {}
+  } = {},
+  emailBrand?: EmailBrandKey
 ) {
   const sheetRowKey = getSheetRowKey(row);
   if (!sheetRowKey || !row.__spreadsheetId || !row.__sheetName) return null;
+  const normalizedBrand = coerceStoredEmailBrand(emailBrand);
 
   const lastLeadStatus = data.lastLeadStatus ?? (String(row.lead_status || '') || null);
   const lastMeetingDate = data.lastMeetingDate ?? (normalizeLeadDate(row['Date of Demo']) || null);
@@ -553,6 +559,7 @@ export async function saveSheetLeadState(
   return prisma.sheetLeadState.upsert({
     where: { sheetRowKey },
     create: {
+      emailBrand: normalizedBrand,
       sheetRowKey,
       spreadsheetId: row.__spreadsheetId,
       sheetName: row.__sheetName,
@@ -623,12 +630,13 @@ async function saveLeadScheduleRow(
     status: string;
     remarks?: string | null;
   },
-  options?: { sourceType?: string; sourceId?: string }
+  options?: { sourceType?: string; sourceId?: string; emailBrand?: EmailBrandKey }
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
 
   const existing = await findLeadSchedule(row);
+  const emailBrand = coerceStoredEmailBrand(options?.emailBrand);
   const writeData = {
     automationId: keys.automationId || null,
     fullName: row.full_name || null,
@@ -653,7 +661,10 @@ async function saveLeadScheduleRow(
   }
 
   return (prisma.leadSchedule as any).create({
-    data: writeData
+    data: {
+      ...writeData,
+      emailBrand
+    }
   });
 }
 
@@ -752,6 +763,7 @@ export async function saveLeadScheduleFailure(
     meetingLink?: string;
     calendarEventId?: string;
     gmailMessageId?: string;
+    emailBrand?: EmailBrandKey;
   }
 ) {
   const keys = getLeadUniqueKeys(row);
@@ -783,7 +795,7 @@ export async function saveLeadScheduleSuccess(
     remarks: string;
     status?: string;
   },
-  options?: { sourceType?: string; sourceId?: string }
+  options?: { sourceType?: string; sourceId?: string; emailBrand?: EmailBrandKey }
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
@@ -807,7 +819,7 @@ export async function saveLeadStatusUpdate(
     status: string;
     remarks?: string;
   },
-  options?: { sourceType?: string; sourceId?: string }
+  options?: { sourceType?: string; sourceId?: string; emailBrand?: EmailBrandKey }
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;

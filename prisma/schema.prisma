@@ -9,6 +9,7 @@ datasource db {
 
 model LeadSchedule {
   id              String   @id @default(cuid())
+  emailBrand      String   @default("tallykonnect")
   automationId    String?
   fullName        String?
   email           String
@@ -26,12 +27,14 @@ model LeadSchedule {
   updatedAt       DateTime @updatedAt
 
   @@unique([automationId, dateOfDemo, timeOfDemo])
+  @@index([emailBrand])
   @@index([email, dateOfDemo, timeOfDemo])
   @@index([automationId])
 }
 
 model CustomerDemoState {
   id                  String   @id @default(cuid())
+  emailBrand          String   @default("tallykonnect")
   userId              String   @unique
   fullName            String?
   email               String
@@ -52,11 +55,13 @@ model CustomerDemoState {
 
   demoHistory DemoHistory[]
 
+  @@index([emailBrand])
   @@index([status])
 }
 
 model DemoHistory {
   id                      String   @id @default(cuid())
+  emailBrand              String   @default("tallykonnect")
   sessionId               String   @unique
   userId                  String
   fullName                String?
@@ -85,6 +90,7 @@ model DemoHistory {
 
   customer CustomerDemoState @relation(fields: [userId], references: [userId])
 
+  @@index([emailBrand])
   @@index([userId])
   @@index([email])
   @@index([status])
@@ -92,6 +98,7 @@ model DemoHistory {
 
 model EmailLog {
   id        String   @id @default(cuid())
+  emailBrand String   @default("tallykonnect")
   email     String
   rowKey    String
   type      String
@@ -101,10 +108,12 @@ model EmailLog {
   createdAt DateTime @default(now())
 
   @@unique([email, rowKey, type])
+  @@index([emailBrand])
 }
 
 model SheetLeadState {
   id              String   @id @default(cuid())
+  emailBrand      String   @default("tallykonnect")
   sheetRowKey     String   @unique
   spreadsheetId   String
   sheetName       String
@@ -119,10 +128,13 @@ model SheetLeadState {
   lastError       String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  @@index([emailBrand])
 }
 
 model EmailDelivery {
   id                String   @id @default(cuid())
+  emailBrand        String   @default("tallykonnect")
   eventKey          String   @unique
   automationId      String
   emailType         String
@@ -148,6 +160,7 @@ model EmailDelivery {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
+  @@index([emailBrand])
   @@index([automationId])
   @@index([status])
   @@index([nextRetryAt])
@@ -158,6 +171,7 @@ model EmailDelivery {
 
 model SheetSyncJob {
   id              String   @id @default(cuid())
+  emailBrand      String   @default("tallykonnect")
   jobKey          String   @unique
   spreadsheetId   String
   sheetName       String
@@ -173,6 +187,7 @@ model SheetSyncJob {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  @@index([emailBrand])
   @@index([status])
   @@index([nextRetryAt])
   @@index([emailDeliveryId])
@@ -200,7 +215,7 @@ model ProcessLeadJob {
   status         String   @default("QUEUED")
   generation     Int      @default(1)
   sourceType     String
-  emailBrand     String?
+  emailBrand     String   @default("tallykonnect")
   spreadsheetId  String?
   sheetName      String?
   headersJson    String?
@@ -213,6 +228,7 @@ model ProcessLeadJob {
   updatedAt      DateTime @updatedAt
 
   @@index([status])
+  @@index([emailBrand])
   @@index([generation])
   @@index([createdAt])
 }

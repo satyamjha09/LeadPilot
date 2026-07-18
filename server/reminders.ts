@@ -15,6 +15,7 @@ import {
 } from './emailIdentity';
 import { prisma } from './db';
 import { LEAD_STATUS } from './leadStatus';
+import { coerceStoredEmailBrand } from '../src/lib/emailBrand';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const CONFIG_PATH = path.join(DATA_DIR, 'reminder_config.json');
@@ -35,6 +36,7 @@ export async function getScheduledReminders(): Promise<ScheduledReminder[]> {
     id: history.sessionId,
     rowId: history.sessionId,
     automationId: history.userId,
+    emailBrand: coerceStoredEmailBrand(history.emailBrand),
     fullName: history.fullName || 'Client',
     email: history.email,
     dateStr: history.displayDate,
@@ -130,6 +132,7 @@ export async function checkAndSendReminders() {
 
     let activeDeliveryId = '';
     try {
+      const emailBrand = coerceStoredEmailBrand(history.emailBrand);
       const eventKey = createEmailEventKey({
         automationId: history.userId,
         recipient: history.email,
@@ -142,7 +145,8 @@ export async function checkAndSendReminders() {
         fullName: history.fullName || 'Client',
         date: history.displayDate,
         time: history.displayTime,
-        meetLink: history.meetingLink
+        meetLink: history.meetingLink,
+        brand: emailBrand
       });
       const payloadHash = createEmailPayloadHash({
         recipient: history.email,
@@ -155,6 +159,7 @@ export async function checkAndSendReminders() {
         automationId: history.userId,
         emailType: EMAIL_TYPES.REMINDER,
         recipient: history.email,
+        emailBrand,
         payloadHash,
         subject: template.subject,
         text: template.text,
@@ -177,7 +182,8 @@ export async function checkAndSendReminders() {
         history.email,
         history.displayDate,
         history.displayTime,
-        history.meetingLink
+        history.meetingLink,
+        emailBrand
       );
 
       await markEmailDeliverySent({

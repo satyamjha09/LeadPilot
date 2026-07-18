@@ -63,6 +63,7 @@ export interface ScheduledReminder {
   id: string;
   rowId: string;
   automationId?: string;
+  emailBrand: EmailBrandKey;
   fullName: string;
   email: string;
   dateStr?: string;

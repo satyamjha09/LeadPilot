@@ -434,6 +434,7 @@ async function sendIdempotentEmail(input: IdempotentEmailInput) {
 
   await assertWorkflowStillValid(input.context);
   const claim = await claimEmailDelivery({
+    emailBrand: input.context.emailBrand,
     eventKey,
     automationId,
     emailType: input.emailType,
@@ -755,7 +756,7 @@ export async function processLeadsByStatus(
         Remarks: processedRow.Remarks || ''
       });
       await assertStillCurrent();
-      await saveSheetLeadState(processedRow, { lastAction: 'DEMO_SCHEDULED', lastActionStatus: 'success' });
+      await saveSheetLeadState(processedRow, { lastAction: 'DEMO_SCHEDULED', lastActionStatus: 'success' }, context.emailBrand);
       await notifyRowProcessed(processedRow);
     } catch (err: unknown) {
       if (isStaleWorkflowGenerationError(err)) throw err;
@@ -768,7 +769,7 @@ export async function processLeadsByStatus(
         Remarks: message
       });
       await assertStillCurrent();
-      await saveSheetLeadState(failedRow, { lastAction: 'DEMO_SCHEDULED', lastActionStatus: 'failed', lastError: message });
+      await saveSheetLeadState(failedRow, { lastAction: 'DEMO_SCHEDULED', lastActionStatus: 'failed', lastError: message }, context.emailBrand);
       await notifyRowProcessed(failedRow);
     }
 
@@ -830,7 +831,7 @@ export async function processLeadsByStatus(
         lastAction: RESCHEDULE_ACTION,
         lastActionStatus: result.skipped ? 'skipped' : 'success',
         lastError: null
-      });
+      }, context.emailBrand);
       await notifyRowProcessed(processedRow);
     } catch (err: unknown) {
       if (isStaleWorkflowGenerationError(err)) throw err;
@@ -851,7 +852,7 @@ export async function processLeadsByStatus(
         lastAction: RESCHEDULE_ACTION,
         lastActionStatus: 'failed',
         lastError: message
-      });
+      }, context.emailBrand);
       await notifyRowProcessed(failedRow);
     }
 
@@ -876,7 +877,7 @@ export async function processLeadsByStatus(
       await saveSheetLeadState(result.row, {
         lastAction: 'DEMO_DONE_THANK_YOU',
         lastActionStatus: result.skipped ? 'skipped' : 'success'
-      });
+      }, context.emailBrand);
       await notifyRowProcessed(result.row);
     } catch (err: unknown) {
       if (isStaleWorkflowGenerationError(err)) throw err;
@@ -889,7 +890,7 @@ export async function processLeadsByStatus(
         Remarks: message
       });
       await assertStillCurrent();
-      await saveSheetLeadState(failedRow, { lastAction: 'DEMO_DONE_THANK_YOU', lastActionStatus: 'failed', lastError: message });
+      await saveSheetLeadState(failedRow, { lastAction: 'DEMO_DONE_THANK_YOU', lastActionStatus: 'failed', lastError: message }, context.emailBrand);
       await notifyRowProcessed(failedRow);
     }
 
@@ -929,7 +930,7 @@ export async function processLeadsByStatus(
         lastMeetingLink: String(updatedRow['Meeting Details'] || '') || null,
         lastAction: isNoResponse ? 'NO_RESPONSE' : 'STATUS_ONLY',
         lastActionStatus: result.skipped ? 'skipped' : 'success'
-      });
+      }, context.emailBrand);
       await notifyRowProcessed(updatedRow);
     } catch (err: unknown) {
       if (isStaleWorkflowGenerationError(err)) throw err;
@@ -942,7 +943,7 @@ export async function processLeadsByStatus(
         Remarks: message
       });
       await assertStillCurrent();
-      await saveSheetLeadState(failedRow, { lastAction: 'STATUS_ONLY', lastActionStatus: 'failed', lastError: message });
+      await saveSheetLeadState(failedRow, { lastAction: 'STATUS_ONLY', lastActionStatus: 'failed', lastError: message }, context.emailBrand);
       await notifyRowProcessed(failedRow);
     }
   }
@@ -982,6 +983,7 @@ export async function processLeadsByStatus(
           headers: context.headers,
           values: result.values,
           emailDeliveryId: result.emailDeliveryId,
+          emailBrand: context.emailBrand,
           error: result.error
         });
         if (result.emailDeliveryId) {
@@ -1117,7 +1119,7 @@ export async function sendThankYouForRow(
         remarks: 'Thank-you email sent',
         status: LEAD_STATUS.DEMO_DONE
       },
-      { sourceType: context.sourceType, sourceId: context.spreadsheetId }
+      { sourceType: context.sourceType, sourceId: context.spreadsheetId, emailBrand: context.emailBrand }
     );
   }
 
@@ -1199,7 +1201,7 @@ export async function sendNoResponseForRow(
         status: LEAD_STATUS.NO_RESPONSE,
         remarks: message
       },
-      { sourceType: context.sourceType, sourceId: context.spreadsheetId }
+      { sourceType: context.sourceType, sourceId: context.spreadsheetId, emailBrand: context.emailBrand }
     );
     return { row: updatedRow, skipped: true, message };
   }
@@ -1232,7 +1234,7 @@ export async function sendNoResponseForRow(
       status: LEAD_STATUS.NO_RESPONSE,
       remarks: 'Not Attended email sent'
     },
-    { sourceType: context.sourceType, sourceId: context.spreadsheetId }
+    { sourceType: context.sourceType, sourceId: context.spreadsheetId, emailBrand: context.emailBrand }
   );
 
   return { row: updatedRow, skipped: false, message: 'Not Attended email sent' };
@@ -1289,7 +1291,8 @@ export async function rescheduleDemoForRow(
     },
     {
       sourceType: context.sourceType || row.__sourceType,
-      sourceId: context.spreadsheetId || row.__spreadsheetId
+      sourceId: context.spreadsheetId || row.__spreadsheetId,
+      emailBrand: context.emailBrand
     }
   );
 
@@ -1359,7 +1362,8 @@ export async function rescheduleDemoForRow(
     },
     {
       sourceType: context.sourceType || row.__sourceType,
-      sourceId: context.spreadsheetId || row.__spreadsheetId
+      sourceId: context.spreadsheetId || row.__spreadsheetId,
+      emailBrand: context.emailBrand
     }
   );
 
@@ -1410,7 +1414,8 @@ export async function updateLeadStatusOnly(
     },
     {
       sourceType: context.sourceType,
-      sourceId: context.spreadsheetId
+      sourceId: context.spreadsheetId,
+      emailBrand: context.emailBrand
     }
   );
 
@@ -1467,7 +1472,11 @@ export async function processScheduleRows(
     if (conflictRowIds.has(row.id)) {
       const updatedRow = failureRow(row, TIME_CONFLICT_REMARK);
       await assertStillCurrent();
-      await saveLeadScheduleFailure(updatedRow, TIME_CONFLICT_REMARK);
+      await saveLeadScheduleFailure(updatedRow, TIME_CONFLICT_REMARK, {
+        sourceType: options?.sheetContext?.sourceType || row.__sourceType,
+        sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
+        emailBrand: options?.sheetContext?.emailBrand
+      });
       results.push(updatedRow);
       summary.failed++;
       summary.timeConflicts = (summary.timeConflicts || 0) + 1;
@@ -1497,7 +1506,11 @@ export async function processScheduleRows(
         Remarks: 'Email is invalid. Add a valid recipient email before scheduling.'
       };
       await assertStillCurrent();
-      await saveLeadScheduleFailure(updatedRow, updatedRow.Remarks || 'Email is invalid');
+      await saveLeadScheduleFailure(updatedRow, updatedRow.Remarks || 'Email is invalid', {
+        sourceType: options?.sheetContext?.sourceType || row.__sourceType,
+        sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
+        emailBrand: options?.sheetContext?.emailBrand
+      });
       results.push(updatedRow);
       summary.failed++;
       logResult('Failed');
@@ -1512,7 +1525,11 @@ export async function processScheduleRows(
       const message = err instanceof Error ? err.message : 'Date or time is invalid.';
       const updatedRow: ExcelRow = { ...row, __schedulerStatus: 'Failed', Remarks: message };
       await assertStillCurrent();
-      await saveLeadScheduleFailure(updatedRow, message);
+      await saveLeadScheduleFailure(updatedRow, message, {
+        sourceType: options?.sheetContext?.sourceType || row.__sourceType,
+        sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
+        emailBrand: options?.sheetContext?.emailBrand
+      });
       results.push(updatedRow);
       summary.failed++;
       logResult('Failed');
@@ -1639,7 +1656,8 @@ export async function processScheduleRows(
             },
             {
               sourceType: options?.sheetContext?.sourceType || row.__sourceType,
-              sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId
+              sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
+              emailBrand: sheetContext.emailBrand
             }
           );
 
@@ -1652,7 +1670,8 @@ export async function processScheduleRows(
             },
             {
               sourceType: options?.sheetContext?.sourceType || row.__sourceType,
-              sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId
+              sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
+              emailBrand: sheetContext.emailBrand
             }
           );
         }
@@ -1728,7 +1747,8 @@ export async function processScheduleRows(
         },
         {
           sourceType: options?.sheetContext?.sourceType || row.__sourceType,
-          sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId
+          sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
+          emailBrand: sheetContext.emailBrand
         }
       );
 
@@ -1742,7 +1762,8 @@ export async function processScheduleRows(
         },
         {
           sourceType: options?.sheetContext?.sourceType || row.__sourceType,
-          sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId
+          sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
+          emailBrand: sheetContext.emailBrand
         }
       );
       if (emailResult.sent) {
@@ -1775,6 +1796,7 @@ export async function processScheduleRows(
       await saveLeadScheduleFailure(updatedRow, failureMessage, {
         sourceType: options?.sheetContext?.sourceType || row.__sourceType,
         sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
+        emailBrand: options?.sheetContext?.emailBrand,
         status: scheduleFailureStatus(failureMessage),
         meetingLink: preservedMeetLink
       });

@@ -14,6 +14,8 @@
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "migrate:demo-history": "tsx scripts/migrate-demo-history.ts",
+    "db:audit-email-brand": "tsx scripts/backfill-email-brand.ts",
+    "db:backfill-email-brand": "tsx scripts/backfill-email-brand.ts --apply",
     "db:deploy": "prisma migrate deploy",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",

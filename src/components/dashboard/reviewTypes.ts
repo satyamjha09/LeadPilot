@@ -1,6 +1,9 @@
+import type { EmailBrandKey } from '@/src/lib/emailBrand';
+
 export type EmailHistoryLog = {
   id: string;
   source?: string;
+  emailBrand?: EmailBrandKey;
   type: string;
   status: string;
   recipient?: string | null;
@@ -14,6 +17,7 @@ export type EmailHistoryLog = {
 
 export type SheetSyncJob = {
   id: string;
+  emailBrand?: EmailBrandKey;
   status: string;
   retryCount: number;
   maxRetries: number;

@@ -558,7 +558,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
             subject: delivery.subject,
             text: delivery.textBody,
             html: delivery.htmlBody
-          });
+          }, delivery.emailBrand);
           await markEmailDeliverySent({ deliveryId, providerMessageId: result.messageId });
           const updated = await findEmailDeliveryById(deliveryId);
           return res.json({ success: true, delivery: serializeDelivery(updated) });
@@ -616,7 +616,9 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
             job.spreadsheetId,
             job.sheetName,
             headers,
-            [{ rowNumber: job.rowNumber, values, emailDeliveryId: job.emailDeliveryId || undefined }]
+            [{ rowNumber: job.rowNumber, values, emailDeliveryId: job.emailDeliveryId || undefined }],
+            {},
+            job.emailBrand
           );
 
           if (!result?.success) {
@@ -660,6 +662,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         ...deliveries.map((delivery) => ({
           id: delivery.id,
           source: 'EmailDelivery',
+          emailBrand: delivery.emailBrand,
           type: delivery.emailType,
           status: delivery.status,
           recipient: delivery.recipient,
@@ -673,6 +676,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         ...logs.map((log) => ({
           id: log.id,
           source: 'EmailLog',
+          emailBrand: log.emailBrand,
           type: log.type,
           status: log.status,
           recipient: log.email,
@@ -919,6 +923,7 @@ function serializeDelivery(delivery: Awaited<ReturnType<typeof findEmailDelivery
   return {
     id: delivery.id,
     source: 'EmailDelivery',
+    emailBrand: delivery.emailBrand,
     type: delivery.emailType,
     status: delivery.status,
     recipient: delivery.recipient,
@@ -935,6 +940,7 @@ function serializeSheetSyncJob(job: Awaited<ReturnType<typeof findSheetSyncJobBy
   if (!job) return null;
   return {
     id: job.id,
+    emailBrand: job.emailBrand,
     spreadsheetId: job.spreadsheetId,
     sheetName: job.sheetName,
     rowNumber: job.rowNumber,
