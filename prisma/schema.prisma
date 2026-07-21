@@ -7,6 +7,233 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum WorkspaceStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum DataSourceType {
+  GOOGLE_SHEETS
+  EXCEL
+  CSV
+}
+
+enum DataSourceConnectionStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+  ARCHIVED
+}
+
+enum SourceSnapshotStatus {
+  CREATED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum SourceRowValidationStatus {
+  VALID
+  WARNING
+  INVALID
+}
+
+enum LeadIdentityType {
+  EMAIL
+  PHONE
+  AUTOMATION_ID
+  CRM_ID
+}
+
+model Workspace {
+  id        String          @id @default(cuid())
+  key       String          @unique
+  name      String
+  status    WorkspaceStatus @default(ACTIVE)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  dataSources    DataSource[]
+  sourceRows     SourceRow[]
+  leads          Lead[]
+  leadIdentities LeadIdentity[]
+}
+
+model DataSource {
+  id               String         @id @default(cuid())
+  workspaceId      String
+  type             DataSourceType
+  displayName      String
+  externalFileId   String?
+  originalFileName String?
+  storageKey       String?
+  mimeType         String?
+  checksum         String?
+  fileSize         Int?
+
+  connectionStatus DataSourceConnectionStatus @default(CONNECTED)
+  syncEnabled      Boolean                    @default(true)
+
+  lastValidatedAt DateTime?
+  lastSyncedAt    DateTime?
+  lastSyncStatus  String?
+  lastError       String?
+  archivedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  tabs      DataSourceTab[]
+  snapshots SourceSnapshot[]
+  rows      SourceRow[]
+
+  @@unique([workspaceId, type, externalFileId])
+  @@index([workspaceId])
+  @@index([workspaceId, type])
+  @@index([workspaceId, archivedAt])
+}
+
+model DataSourceTab {
+  id            String  @id @default(cuid())
+  dataSourceId  String
+  externalTabId String
+  name          String
+  position      Int?
+  isEnabled     Boolean @default(true)
+
+  headerHash  String?
+  headersJson Json
+  rowCount    Int     @default(0)
+
+  lastSyncedAt DateTime?
+  lastError    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  dataSource DataSource       @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
+  rows       SourceRow[]
+  snapshots  SourceSnapshot[]
+
+  @@unique([dataSourceId, externalTabId])
+  @@index([dataSourceId])
+  @@index([dataSourceId, isEnabled])
+}
+
+model SourceSnapshot {
+  id           String               @id @default(cuid())
+  dataSourceId String
+  sourceTabId  String?
+  version      Int
+  status       SourceSnapshotStatus @default(CREATED)
+
+  rowCount     Int @default(0)
+  addedCount   Int @default(0)
+  updatedCount Int @default(0)
+  removedCount Int @default(0)
+  invalidCount Int @default(0)
+
+  checksum   String?
+  rawFileKey String?
+  error      String?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  dataSource DataSource     @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
+  sourceTab  DataSourceTab? @relation(fields: [sourceTabId], references: [id], onDelete: SetNull)
+
+  @@unique([dataSourceId, version])
+  @@index([dataSourceId, createdAt])
+  @@index([sourceTabId])
+  @@index([status])
+}
+
+model Lead {
+  id              String  @id @default(cuid())
+  workspaceId     String
+  primaryEmail    String?
+  normalizedEmail String?
+  fullName        String?
+  status          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace  Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  sourceRows SourceRow[]
+  identities LeadIdentity[]
+
+  @@unique([workspaceId, normalizedEmail])
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([normalizedEmail])
+}
+
+model LeadIdentity {
+  id          String           @id @default(cuid())
+  workspaceId String
+  leadId      String
+  type        LeadIdentityType
+  value       String
+  createdAt   DateTime         @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  lead      Lead      @relation(fields: [leadId], references: [id], onDelete: Restrict)
+
+  @@unique([workspaceId, type, value])
+  @@index([leadId])
+  @@index([workspaceId])
+}
+
+model SourceRow {
+  id           String @id @default(cuid())
+  workspaceId  String
+  dataSourceId String
+  sourceTabId  String
+
+  externalRowId String
+  rowNumber     Int?
+  rowHash       String
+
+  rawData        Json
+  normalizedData Json
+
+  automationId String?
+  email        String?
+  fullName     String?
+  leadStatus   String?
+  demoDate     String?
+  demoTime     String?
+  meetingLink  String?
+  remarks      String?
+
+  validationStatus SourceRowValidationStatus @default(VALID)
+  validationErrors Json?
+
+  canonicalLeadId String?
+
+  isActive   Boolean  @default(true)
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  dataSource    DataSource    @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
+  sourceTab     DataSourceTab @relation(fields: [sourceTabId], references: [id], onDelete: Restrict)
+  canonicalLead Lead?         @relation(fields: [canonicalLeadId], references: [id], onDelete: SetNull)
+
+  @@unique([sourceTabId, externalRowId])
+  @@index([workspaceId])
+  @@index([dataSourceId])
+  @@index([sourceTabId, rowNumber])
+  @@index([canonicalLeadId])
+  @@index([email])
+  @@index([automationId])
+  @@index([validationStatus])
+}
+
 model LeadSchedule {
   id              String   @id @default(cuid())
   emailBrand      String   @default("tallykonnect")
@@ -57,8 +284,8 @@ model CustomerDemoState {
 
   demoHistory DemoHistory[]
 
-  @@index([emailBrand])
   @@unique([emailBrand, userId])
+  @@index([emailBrand])
   @@index([emailBrand, status])
   @@index([status])
 }
@@ -104,70 +331,70 @@ model DemoHistory {
 }
 
 model EmailLog {
-  id        String   @id @default(cuid())
+  id         String   @id @default(cuid())
   emailBrand String   @default("tallykonnect")
-  email     String
-  rowKey    String
-  type      String
-  status    String   @default("sent")
-  messageId String?
-  error     String?
-  createdAt DateTime @default(now())
+  email      String
+  rowKey     String
+  type       String
+  status     String   @default("sent")
+  messageId  String?
+  error      String?
+  createdAt  DateTime @default(now())
 
   @@unique([emailBrand, email, rowKey, type])
   @@index([emailBrand])
 }
 
 model SheetLeadState {
-  id              String   @id @default(cuid())
-  emailBrand      String   @default("tallykonnect")
-  sheetRowKey     String
-  spreadsheetId   String
-  sheetName       String
-  sheetRowNumber  Int
-  email           String?
-  lastLeadStatus  String?
-  lastMeetingDate String?
-  lastMeetingTime String?
-  lastMeetingLink String?
-  lastAction      String?
+  id               String   @id @default(cuid())
+  emailBrand       String   @default("tallykonnect")
+  sheetRowKey      String
+  spreadsheetId    String
+  sheetName        String
+  sheetRowNumber   Int
+  email            String?
+  lastLeadStatus   String?
+  lastMeetingDate  String?
+  lastMeetingTime  String?
+  lastMeetingLink  String?
+  lastAction       String?
   lastActionStatus String?
-  lastError       String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  lastError        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  @@index([emailBrand])
   @@unique([emailBrand, sheetRowKey])
+  @@index([emailBrand])
   @@index([emailBrand, spreadsheetId, sheetName, sheetRowNumber])
 }
 
 model EmailDelivery {
-  id                String   @id @default(cuid())
-  emailBrand        String   @default("tallykonnect")
-  eventKey          String
-  automationId      String
-  emailType         String
-  recipient         String
-  payloadHash       String
-  status            String   @default("PROCESSING")
-  attemptCount      Int      @default(1)
-  retryCount        Int      @default(0)
-  maxRetries        Int      @default(3)
-  nextRetryAt       DateTime?
-  providerMessageId String?
-  subject           String?
-  textBody          String?
-  htmlBody          String?
-  sentAt            DateTime?
-  lockedAt          DateTime?
-  lockedBy          String?
-  lastError         String?
-  sheetSyncStatus   String?
+  id                 String    @id @default(cuid())
+  emailBrand         String    @default("tallykonnect")
+  eventKey           String
+  automationId       String
+  emailType          String
+  recipient          String
+  payloadHash        String
+  status             String    @default("PROCESSING")
+  attemptCount       Int       @default(1)
+  retryCount         Int       @default(0)
+  maxRetries         Int       @default(3)
+  nextRetryAt        DateTime?
+  providerMessageId  String?
+  subject            String?
+  textBody           String?
+  htmlBody           String?
+  sentAt             DateTime?
+  lockedAt           DateTime?
+  lockedBy           String?
+  lastError          String?
+  sheetSyncStatus    String?
   sheetSyncLastError String?
-  sheetSyncRetryAt  DateTime?
-  sheetSyncedAt     DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  sheetSyncRetryAt   DateTime?
+  sheetSyncedAt      DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   @@unique([emailBrand, eventKey])
   @@index([emailBrand])
