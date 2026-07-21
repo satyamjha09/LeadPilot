@@ -29,6 +29,7 @@ enum SourceSnapshotStatus {
   CREATED
   PROCESSING
   COMPLETED
+  PARTIAL
   FAILED
 }
 
@@ -36,6 +37,11 @@ enum SourceRowValidationStatus {
   VALID
   WARNING
   INVALID
+}
+
+enum SourceRowIdentityType {
+  AUTOMATION_ID
+  ROW_NUMBER
 }
 
 enum LeadIdentityType {
@@ -114,9 +120,11 @@ model DataSourceTab {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  dataSource DataSource       @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
-  rows       SourceRow[]
-  snapshots  SourceSnapshot[]
+  dataSource   DataSource          @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
+  rows         SourceRow[]
+  snapshots    SourceSnapshot[]
+  tabResults   SourceSnapshotTab[]
+  snapshotRows SourceSnapshotRow[]
 
   @@unique([dataSourceId, externalTabId])
   @@index([dataSourceId])
@@ -129,12 +137,14 @@ model SourceSnapshot {
   sourceTabId  String?
   version      Int
   status       SourceSnapshotStatus @default(CREATED)
+  trigger      String               @default("MANUAL")
 
-  rowCount     Int @default(0)
-  addedCount   Int @default(0)
-  updatedCount Int @default(0)
-  removedCount Int @default(0)
-  invalidCount Int @default(0)
+  rowCount       Int @default(0)
+  addedCount     Int @default(0)
+  updatedCount   Int @default(0)
+  unchangedCount Int @default(0)
+  removedCount   Int @default(0)
+  invalidCount   Int @default(0)
 
   checksum   String?
   rawFileKey String?
@@ -143,13 +153,80 @@ model SourceSnapshot {
   createdAt   DateTime  @default(now())
   completedAt DateTime?
 
-  dataSource DataSource     @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
-  sourceTab  DataSourceTab? @relation(fields: [sourceTabId], references: [id], onDelete: SetNull)
+  dataSource   DataSource          @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
+  sourceTab    DataSourceTab?      @relation(fields: [sourceTabId], references: [id], onDelete: SetNull)
+  tabResults   SourceSnapshotTab[]
+  snapshotRows SourceSnapshotRow[]
 
   @@unique([dataSourceId, version])
   @@index([dataSourceId, createdAt])
   @@index([sourceTabId])
   @@index([status])
+}
+
+model SourceSnapshotTab {
+  id          String               @id @default(cuid())
+  snapshotId  String
+  sourceTabId String
+  status      SourceSnapshotStatus @default(PROCESSING)
+
+  rowCount       Int @default(0)
+  addedCount     Int @default(0)
+  updatedCount   Int @default(0)
+  unchangedCount Int @default(0)
+  removedCount   Int @default(0)
+  invalidCount   Int @default(0)
+
+  headerHash  String?
+  contentHash String?
+  error       String?
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  snapshot  SourceSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  sourceTab DataSourceTab  @relation(fields: [sourceTabId], references: [id], onDelete: Restrict)
+
+  @@unique([snapshotId, sourceTabId])
+  @@index([snapshotId])
+  @@index([sourceTabId])
+  @@index([status])
+}
+
+model SourceSnapshotRow {
+  id          String @id @default(cuid())
+  snapshotId  String
+  sourceTabId String
+
+  externalRowId String
+  rowNumber     Int
+  identityType  SourceRowIdentityType
+
+  rowHash        String
+  rawData        Json
+  normalizedData Json
+
+  automationId String?
+  email        String?
+  fullName     String?
+  leadStatus   String?
+  demoDate     String?
+  demoTime     String?
+  meetingLink  String?
+  remarks      String?
+
+  validationStatus SourceRowValidationStatus @default(VALID)
+  validationErrors Json?
+
+  createdAt DateTime @default(now())
+
+  snapshot  SourceSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  sourceTab DataSourceTab  @relation(fields: [sourceTabId], references: [id], onDelete: Restrict)
+
+  @@unique([snapshotId, sourceTabId, externalRowId])
+  @@index([snapshotId, sourceTabId])
+  @@index([sourceTabId, externalRowId])
+  @@index([validationStatus])
 }
 
 model Lead {
@@ -197,6 +274,7 @@ model SourceRow {
 
   externalRowId String
   rowNumber     Int?
+  identityType  SourceRowIdentityType @default(ROW_NUMBER)
   rowHash       String
 
   rawData        Json
@@ -216,10 +294,13 @@ model SourceRow {
 
   canonicalLeadId String?
 
-  isActive   Boolean  @default(true)
-  lastSeenAt DateTime @default(now())
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  isActive         Boolean   @default(true)
+  lastSeenAt       DateTime  @default(now())
+  firstSeenVersion Int?
+  lastSeenVersion  Int?
+  deactivatedAt    DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   dataSource    DataSource    @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)

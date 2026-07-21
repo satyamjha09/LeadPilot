@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
+import { SourceConfigurationError, SourceForbiddenError, SourceUnauthorizedError, toSourceHttpError } from './sourceErrors';
 
 function safeCompare(a: string, b: string) {
   const aBuffer = Buffer.from(a);
@@ -13,19 +14,24 @@ function safeCompare(a: string, b: string) {
 }
 
 export function requireMultiSourceAdmin(req: Request, res: Response, next: NextFunction) {
-  const configuredToken = process.env.MULTI_SOURCE_V2_ADMIN_TOKEN;
-  if (!configuredToken) {
-    return res.status(503).json({ error: 'Multi-source admin token is not configured.' });
-  }
+  try {
+    const configuredToken = process.env.MULTI_SOURCE_V2_ADMIN_TOKEN;
+    if (!configuredToken) {
+      throw new SourceConfigurationError('Multi-source admin token is not configured.');
+    }
 
-  const suppliedToken = req.header('x-multi-source-admin-token');
-  if (!suppliedToken) {
-    return res.status(401).json({ error: 'Multi-source admin token is required.' });
-  }
+    const suppliedToken = req.header('x-multi-source-admin-token');
+    if (!suppliedToken) {
+      throw new SourceUnauthorizedError();
+    }
 
-  if (!safeCompare(suppliedToken, configuredToken)) {
-    return res.status(403).json({ error: 'Multi-source admin token is incorrect.' });
-  }
+    if (!safeCompare(suppliedToken, configuredToken)) {
+      throw new SourceForbiddenError();
+    }
 
-  return next();
+    return next();
+  } catch (error) {
+    const httpError = toSourceHttpError(error);
+    return res.status(httpError.statusCode).json({ error: httpError.message, code: httpError.code });
+  }
 }

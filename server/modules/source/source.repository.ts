@@ -8,6 +8,7 @@ import type {
   SourceWithTabsInput
 } from './source.types';
 import { buildInitialTabRows, buildTabRefreshPlan } from './sourceTabRefresh';
+import { SourceNotFoundError } from './sourceErrors';
 
 export async function createDataSource(input: DataSourceCreateInput) {
   return prisma.dataSource.create({
@@ -160,10 +161,13 @@ export async function updateSourceDetails(input: {
   sourceId: string;
   data: SourceDetailsUpdateInput;
 }) {
-  await prisma.dataSource.updateMany({
+  const result = await prisma.dataSource.updateMany({
     where: { id: input.sourceId, workspaceId: input.workspaceId },
     data: input.data
   });
+  if (result.count === 0) {
+    throw new SourceNotFoundError('Source not found.');
+  }
   return findSourceWithTabs(input.workspaceId, input.sourceId);
 }
 
@@ -190,7 +194,7 @@ export async function updateSourceTab(input: {
   tabId: string;
   isEnabled: boolean;
 }) {
-  await prisma.dataSourceTab.updateMany({
+  const result = await prisma.dataSourceTab.updateMany({
     where: {
       id: input.tabId,
       dataSource: {
@@ -201,11 +205,14 @@ export async function updateSourceTab(input: {
     },
     data: { isEnabled: input.isEnabled }
   });
+  if (result.count === 0) {
+    throw new SourceNotFoundError('Source tab not found.');
+  }
   return findSourceWithTabs(input.workspaceId, input.sourceId);
 }
 
 export async function archiveSource(workspaceId: string, sourceId: string) {
-  await prisma.dataSource.updateMany({
+  const result = await prisma.dataSource.updateMany({
     where: { id: sourceId, workspaceId },
     data: {
       archivedAt: new Date(),
@@ -213,6 +220,9 @@ export async function archiveSource(workspaceId: string, sourceId: string) {
       syncEnabled: false
     }
   });
+  if (result.count === 0) {
+    throw new SourceNotFoundError('Source not found.');
+  }
   return findSourceWithTabs(workspaceId, sourceId);
 }
 

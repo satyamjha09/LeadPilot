@@ -1,6 +1,7 @@
 import { InMemoryStorage } from './inMemoryStorage';
 import type { ObjectStorage } from './objectStorage';
 import { R2Storage } from './r2Storage';
+import { SourceConfigurationError } from '../../modules/source/sourceErrors';
 
 let storage: ObjectStorage | null = null;
 
@@ -24,7 +25,11 @@ export function createObjectStorage() {
     });
   }
 
-  return new InMemoryStorage();
+  if (process.env.NODE_ENV === 'test') {
+    return new InMemoryStorage();
+  }
+
+  throw new SourceConfigurationError('Cloudflare R2 storage is not configured for permanent Excel sources.');
 }
 
 export function getObjectStorage() {

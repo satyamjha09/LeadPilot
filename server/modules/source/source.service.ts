@@ -20,6 +20,7 @@ import {
   updateSourceTab
 } from './source.repository';
 import type { SourceTabUpsertInput } from './source.types';
+import { SourceNotFoundError, SourceValidationError, safeErrorMessage } from './sourceErrors';
 
 type ServiceOptions = {
   googleAdapter?: GoogleSheetsSourceAdapter;
@@ -165,7 +166,7 @@ export async function getWorkspaceSource(workspaceKey: string, sourceId: string)
   const { workspace } = await getWorkspace(workspaceKey);
   const source = await findSourceWithTabs(workspace.id, sourceId);
   if (!source || source.archivedAt) {
-    throw new Error('Source not found.');
+    throw new SourceNotFoundError('Source not found.');
   }
   return source;
 }
@@ -175,33 +176,46 @@ export async function validateWorkspaceSource(workspaceKey: string, sourceId: st
   const source = await getWorkspaceSource(workspaceKey, sourceId);
   let inspected: InspectedSource;
 
-  if (source.type === 'GOOGLE_SHEETS') {
-    const googleAdapter = options.googleAdapter || new GoogleSheetsSourceAdapter();
-    inspected = await googleAdapter.inspect(
-      { sheetUrl: `https://docs.google.com/spreadsheets/d/${source.externalFileId}/edit`, displayName: source.displayName },
-      { workspaceId: workspace.id, workspaceKey: brand }
-    );
-  } else if (source.type === 'EXCEL') {
-    if (!source.storageKey || !source.originalFileName || !source.mimeType) {
-      throw new Error('Excel source does not have enough stored file metadata to validate.');
+  try {
+    if (source.type === 'GOOGLE_SHEETS') {
+      const googleAdapter = options.googleAdapter || new GoogleSheetsSourceAdapter();
+      inspected = await googleAdapter.inspect(
+        { sheetUrl: `https://docs.google.com/spreadsheets/d/${source.externalFileId}/edit`, displayName: source.displayName },
+        { workspaceId: workspace.id, workspaceKey: brand }
+      );
+    } else if (source.type === 'EXCEL') {
+      if (!source.storageKey || !source.originalFileName || !source.mimeType) {
+        throw new SourceValidationError('Excel source does not have enough stored file metadata to validate.');
+      }
+      const storage = options.storage || getObjectStorage();
+      const buffer = await storage.getObject(source.storageKey);
+      const excelAdapter = options.excelAdapter || new ExcelSourceAdapter(storage);
+      inspected = await excelAdapter.inspect(
+        {
+          buffer,
+          originalFileName: source.originalFileName,
+          mimeType: source.mimeType,
+          displayName: source.displayName,
+          externalFileId: source.externalFileId || source.id,
+          storageKey: source.storageKey,
+          skipUpload: true
+        },
+        { workspaceId: workspace.id, workspaceKey: brand }
+      );
+    } else {
+      throw new SourceValidationError(`Unsupported source type: ${source.type}`);
     }
-    const storage = options.storage || getObjectStorage();
-    const buffer = await storage.getObject(source.storageKey);
-    const excelAdapter = options.excelAdapter || new ExcelSourceAdapter(storage);
-    inspected = await excelAdapter.inspect(
-      {
-        buffer,
-        originalFileName: source.originalFileName,
-        mimeType: source.mimeType,
-        displayName: source.displayName,
-        externalFileId: source.externalFileId || source.id,
-        storageKey: source.storageKey,
-        skipUpload: true
-      },
-      { workspaceId: workspace.id, workspaceKey: brand }
-    );
-  } else {
-    throw new Error(`Unsupported source type: ${source.type}`);
+  } catch (error) {
+    await updateSourceDetails({
+      workspaceId: workspace.id,
+      sourceId,
+      data: {
+        connectionStatus: 'ERROR',
+        lastValidatedAt: new Date(),
+        lastError: safeErrorMessage(error)
+      }
+    });
+    throw error;
   }
 
   return refreshSourceWithTabs({
@@ -214,10 +228,14 @@ export async function validateWorkspaceSource(workspaceKey: string, sourceId: st
 
 export async function renameWorkspaceSource(workspaceKey: string, sourceId: string, displayName: string) {
   const { workspace } = await getWorkspace(workspaceKey);
+  const normalizedDisplayName = displayName.trim();
+  if (!normalizedDisplayName) {
+    throw new SourceValidationError('displayName cannot be empty.');
+  }
   return updateSourceDetails({
     workspaceId: workspace.id,
     sourceId,
-    data: { displayName: displayName.trim() }
+    data: { displayName: normalizedDisplayName }
   });
 }
 
@@ -244,7 +262,7 @@ export async function setSourceTabEnabled(
     isEnabled
   });
   if (!source) {
-    throw new Error('Source tab not found.');
+    throw new SourceNotFoundError('Source tab not found.');
   }
   return source;
 }
@@ -253,7 +271,7 @@ export async function archiveWorkspaceSource(workspaceKey: string, sourceId: str
   const { workspace } = await getWorkspace(workspaceKey);
   const source = await archiveSource(workspace.id, sourceId);
   if (!source) {
-    throw new Error('Source not found.');
+    throw new SourceNotFoundError('Source not found.');
   }
   return source;
 }

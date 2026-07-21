@@ -2,6 +2,14 @@ import type express from 'express';
 import multer from 'multer';
 
 import { requireMultiSourceAdmin } from './sourceAdminAuth';
+import { toSourceHttpError } from './sourceErrors';
+import {
+  getWorkspaceCurrentSourceRow,
+  getWorkspaceSourceSnapshot,
+  ingestWorkspaceSource,
+  listWorkspaceCurrentSourceRows,
+  listWorkspaceSourceSnapshots
+} from './ingestion/sourceIngestion.service';
 import {
   archiveWorkspaceSource,
   getWorkspaceSource,
@@ -60,9 +68,17 @@ function sanitizeSource(source: any) {
 }
 
 function errorResponse(res: express.Response, error: unknown) {
-  const message = error instanceof Error ? error.message : 'Request failed.';
-  const status = /not found/i.test(message) ? 404 : /invalid|unsupported|required|must/i.test(message) ? 400 : 500;
-  return res.status(status).json({ error: message });
+  const httpError = toSourceHttpError(error);
+  return res.status(httpError.statusCode).json({ error: httpError.message, code: httpError.code });
+}
+
+function uploadExcel(req: express.Request, res: express.Response, next: express.NextFunction) {
+  upload.single('file')(req, res, (error) => {
+    if (error) {
+      return errorResponse(res, error);
+    }
+    return next();
+  });
 }
 
 export function registerSourceRoutes(app: express.Express) {
@@ -86,6 +102,75 @@ export function registerSourceRoutes(app: express.Express) {
     }
   });
 
+  router('/api/v2/workspaces/:workspaceKey/sources/:sourceId/ingest').post(requireMultiSourceAdmin, async (req, res) => {
+    try {
+      const snapshot = await ingestWorkspaceSource(req.params.workspaceKey, req.params.sourceId);
+      res.status(200).json({ snapshot });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router('/api/v2/workspaces/:workspaceKey/sources/:sourceId/snapshots').get(requireMultiSourceAdmin, async (req, res) => {
+    try {
+      const result = await listWorkspaceSourceSnapshots(
+        req.params.workspaceKey,
+        req.params.sourceId,
+        typeof req.query.cursor === 'string' ? req.query.cursor : undefined,
+        req.query.limit
+      );
+      res.json(result);
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router('/api/v2/workspaces/:workspaceKey/sources/:sourceId/snapshots/:snapshotId').get(
+    requireMultiSourceAdmin,
+    async (req, res) => {
+      try {
+        const snapshot = await getWorkspaceSourceSnapshot(
+          req.params.workspaceKey,
+          req.params.sourceId,
+          req.params.snapshotId
+        );
+        res.json({ snapshot });
+      } catch (error) {
+        errorResponse(res, error);
+      }
+    }
+  );
+
+  router('/api/v2/workspaces/:workspaceKey/sources/:sourceId/rows').get(requireMultiSourceAdmin, async (req, res) => {
+    try {
+      const result = await listWorkspaceCurrentSourceRows(req.params.workspaceKey, req.params.sourceId, {
+        tabId: typeof req.query.tabId === 'string' ? req.query.tabId : undefined,
+        active: typeof req.query.active === 'string' ? req.query.active : undefined,
+        validationStatus:
+          req.query.validationStatus === 'VALID' ||
+          req.query.validationStatus === 'WARNING' ||
+          req.query.validationStatus === 'INVALID'
+            ? req.query.validationStatus
+            : undefined,
+        search: typeof req.query.search === 'string' ? req.query.search : undefined,
+        cursor: typeof req.query.cursor === 'string' ? req.query.cursor : undefined,
+        limit: req.query.limit
+      });
+      res.json(result);
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
+  router('/api/v2/workspaces/:workspaceKey/sources/:sourceId/rows/:rowId').get(requireMultiSourceAdmin, async (req, res) => {
+    try {
+      const row = await getWorkspaceCurrentSourceRow(req.params.workspaceKey, req.params.sourceId, req.params.rowId);
+      res.json({ row });
+    } catch (error) {
+      errorResponse(res, error);
+    }
+  });
+
   router('/api/v2/workspaces/:workspaceKey/sources/google-sheets').post(requireMultiSourceAdmin, async (req, res) => {
     try {
       const result = await registerGoogleSheetsSource(req.params.workspaceKey, {
@@ -103,7 +188,7 @@ export function registerSourceRoutes(app: express.Express) {
 
   router('/api/v2/workspaces/:workspaceKey/sources/excel').post(
     requireMultiSourceAdmin,
-    upload.single('file'),
+    uploadExcel,
     async (req, res) => {
       try {
         if (!req.file) {
