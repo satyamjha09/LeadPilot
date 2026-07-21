@@ -77,4 +77,17 @@ describe('source row normalization', () => {
 
     expect(normalizeReadSourceTab(input)[0].rowHash).toBe(normalizeReadSourceTab(input)[0].rowHash);
   });
+
+  it('normalizes phone and CRM identity fields from header aliases', () => {
+    const [row] = normalizeReadSourceTab({
+      ...baseTab,
+      headers: ['full_name', 'email', 'lead_status', 'mobile number', 'crm_id'],
+      rows: [{ rowNumber: 2, values: ['A', 'a@example.com', 'Demo Scheduled', '(881) 784-4439', ' CRM-1 '] }]
+    });
+
+    expect(row.normalizedFields).toMatchObject({
+      phone: '8817844439',
+      crmId: 'CRM-1'
+    });
+  });
 });

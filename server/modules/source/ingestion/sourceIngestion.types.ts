@@ -31,6 +31,8 @@ export type SourceValidationError = {
 export type NormalizedSourceFields = {
   fullName: string;
   email: string;
+  phone: string;
+  crmId: string;
   leadStatus: string;
   demoDate: string;
   demoTime: string;

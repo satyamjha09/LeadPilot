@@ -56,18 +56,27 @@ export async function upsertLeadByEmail(input: LeadCreateInput & { primaryEmail:
 
 export async function addLeadIdentity(input: LeadIdentityCreateInput) {
   return prisma.leadIdentity.create({
-    data: input
+    data: {
+      ...input,
+      scopeKey: input.scopeKey || 'workspace'
+    }
   });
 }
 
 export async function findLeadIdentity(input: {
   workspaceId: string;
   type: LeadIdentityCreateInput['type'];
+  scopeKey?: string;
   value: string;
 }) {
   return prisma.leadIdentity.findUnique({
     where: {
-      workspaceId_type_value: input
+      workspaceId_type_scopeKey_value: {
+        workspaceId: input.workspaceId,
+        type: input.type,
+        scopeKey: input.scopeKey || 'workspace',
+        value: input.value
+      }
     },
     include: { lead: true }
   });

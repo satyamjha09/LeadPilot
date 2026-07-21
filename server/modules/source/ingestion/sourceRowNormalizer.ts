@@ -12,6 +12,8 @@ import type {
 const HEADER_ALIASES: Record<keyof NormalizedSourceFields, string[]> = {
   fullName: ['full_name', 'full name', 'name', 'client name', 'lead name'],
   email: ['email', 'email address', 'mail', 'contact email'],
+  phone: ['phone', 'phone number', 'mobile', 'mobile number', 'contact number', 'whatsapp number'],
+  crmId: ['crm id', 'crm_id', 'lead id', 'customer id', 'contact id'],
   leadStatus: ['lead_status', 'lead status', 'status'],
   demoDate: ['date of demo', 'demo date', 'date', 'meeting date'],
   demoTime: ['time of demo', 'demo time', 'time', 'meeting time'],
@@ -42,6 +44,13 @@ function firstValueFor(headers: string[], values: unknown[], field: keyof Normal
 
 function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
+}
+
+export function normalizePhoneIdentity(value: string) {
+  const trimmed = value.trim();
+  const hasPlus = trimmed.startsWith('+');
+  const digits = trimmed.replace(/[()\s-]/g, '').replace(/^\+/, '').replace(/\D/g, '');
+  return digits ? `${hasPlus ? '+' : ''}${digits}` : '';
 }
 
 function isValidEmail(value: string) {
@@ -114,6 +123,17 @@ function normalizeRow(tab: ReadSourceTabResult, row: { rowNumber: number; values
     });
   }
 
+  const phone = normalizePhoneIdentity(firstValueFor(tab.headers, row.values, 'phone'));
+  const phoneDigits = phone.replace(/^\+/, '');
+  if (phone && (phoneDigits.length < 8 || phoneDigits.length > 15)) {
+    errors.push({
+      code: 'INVALID_PHONE',
+      field: 'phone',
+      severity: 'ERROR',
+      message: 'Phone must contain 8 to 15 digits.'
+    });
+  }
+
   if (leadStatusParse.raw && !leadStatusParse.isKnown) {
     errors.push({
       code: 'UNKNOWN_LEAD_STATUS',
@@ -144,6 +164,8 @@ function normalizeRow(tab: ReadSourceTabResult, row: { rowNumber: number; values
   const normalizedFields: NormalizedSourceFields = {
     fullName: firstValueFor(tab.headers, row.values, 'fullName'),
     email,
+    phone,
+    crmId: firstValueFor(tab.headers, row.values, 'crmId'),
     leadStatus: leadStatusParse.normalized || leadStatusParse.raw,
     demoDate: demoDateRaw ? normalizeDisplayDate(demoDateRaw) : '',
     demoTime,

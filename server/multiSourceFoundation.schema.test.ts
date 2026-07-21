@@ -70,7 +70,9 @@ describe('multi-source Phase 1 Prisma foundation', () => {
 
   it('scopes lead identities to one workspace and identity type', () => {
     const block = modelBlock('LeadIdentity');
-    expect(block).toContain('@@unique([workspaceId, type, value])');
+    expect(block).toContain('@@unique([workspaceId, type, scopeKey, value])');
     expect(block).toContain('@@index([leadId])');
+    expect(block).toContain('@@index([leadId, type])');
+    expect(block).toContain('@@index([workspaceId, type])');
   });
 });

@@ -1,4 +1,4 @@
-import type { LeadIdentityType } from '@prisma/client';
+import type { LeadIdentitySource, LeadIdentityType } from '@prisma/client';
 
 export type LeadCreateInput = {
   workspaceId: string;
@@ -12,7 +12,10 @@ export type LeadIdentityCreateInput = {
   workspaceId: string;
   leadId: string;
   type: LeadIdentityType;
+  scopeKey?: string;
   value: string;
+  source?: LeadIdentitySource;
+  isVerified?: boolean;
 };
 
 export type LeadMatchInput = {

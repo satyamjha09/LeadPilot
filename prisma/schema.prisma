@@ -51,6 +51,48 @@ enum LeadIdentityType {
   CRM_ID
 }
 
+enum LeadIdentitySource {
+  AUTO
+  MANUAL
+  MIGRATION
+}
+
+enum LeadMatchStatus {
+  UNMATCHED
+  MATCHED
+  CONFLICT
+  SKIPPED
+}
+
+enum LeadMatchRunStatus {
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum LeadMatchResultStatus {
+  CREATED
+  MATCHED
+  UNCHANGED
+  CONFLICT
+  SKIPPED
+}
+
+enum LeadMatchConflictStatus {
+  OPEN
+  RESOLVED
+  IGNORED
+}
+
+enum LeadMatchConflictType {
+  MULTIPLE_LEADS
+  IDENTITY_OWNED_BY_ANOTHER_LEAD
+  LINKED_LEAD_CHANGED
+  NO_STRONG_IDENTITY
+  INVALID_IDENTITY
+}
+
 model Workspace {
   id        String          @id @default(cuid())
   key       String          @unique
@@ -59,10 +101,14 @@ model Workspace {
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
 
-  dataSources    DataSource[]
-  sourceRows     SourceRow[]
-  leads          Lead[]
-  leadIdentities LeadIdentity[]
+  dataSources          DataSource[]
+  sourceRows           SourceRow[]
+  leads                Lead[]
+  leadIdentities       LeadIdentity[]
+  identityObservations LeadIdentityObservation[]
+  leadMatchRuns        LeadMatchRun[]
+  leadMatchConflicts   LeadMatchConflict[]
+  leadMergeHistories   LeadMergeHistory[]
 }
 
 model DataSource {
@@ -89,10 +135,11 @@ model DataSource {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  tabs      DataSourceTab[]
-  snapshots SourceSnapshot[]
-  rows      SourceRow[]
+  workspace     Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  tabs          DataSourceTab[]
+  snapshots     SourceSnapshot[]
+  rows          SourceRow[]
+  leadMatchRuns LeadMatchRun[]
 
   @@unique([workspaceId, type, externalFileId])
   @@unique([workspaceId, type, checksum])
@@ -153,10 +200,11 @@ model SourceSnapshot {
   createdAt   DateTime  @default(now())
   completedAt DateTime?
 
-  dataSource   DataSource          @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
-  sourceTab    DataSourceTab?      @relation(fields: [sourceTabId], references: [id], onDelete: SetNull)
-  tabResults   SourceSnapshotTab[]
-  snapshotRows SourceSnapshotRow[]
+  dataSource    DataSource          @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
+  sourceTab     DataSourceTab?      @relation(fields: [sourceTabId], references: [id], onDelete: SetNull)
+  tabResults    SourceSnapshotTab[]
+  snapshotRows  SourceSnapshotRow[]
+  leadMatchRuns LeadMatchRun[]
 
   @@unique([dataSourceId, version])
   @@index([dataSourceId, createdAt])
@@ -208,6 +256,8 @@ model SourceSnapshotRow {
 
   automationId String?
   email        String?
+  phone        String?
+  crmId        String?
   fullName     String?
   leadStatus   String?
   demoDate     String?
@@ -230,40 +280,57 @@ model SourceSnapshotRow {
 }
 
 model Lead {
-  id              String  @id @default(cuid())
-  workspaceId     String
-  primaryEmail    String?
-  normalizedEmail String?
-  fullName        String?
-  status          String?
+  id               String    @id @default(cuid())
+  workspaceId      String
+  primaryEmail     String?
+  normalizedEmail  String?
+  fullName         String?
+  status           String?
+  mergedIntoLeadId String?
+  mergedAt         DateTime?
+  lastMatchedAt    DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  workspace  Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  sourceRows SourceRow[]
-  identities LeadIdentity[]
+  workspace            Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  sourceRows           SourceRow[]
+  identities           LeadIdentity[]
+  mergedInto           Lead?               @relation("LeadMerge", fields: [mergedIntoLeadId], references: [id], onDelete: SetNull)
+  mergedLeads          Lead[]              @relation("LeadMerge")
+  matchResults         LeadMatchResult[]
+  resolvedConflicts    LeadMatchConflict[]
+  sourceMergeHistories LeadMergeHistory[]  @relation("LeadMergeHistorySource")
+  targetMergeHistories LeadMergeHistory[]  @relation("LeadMergeHistoryTarget")
 
   @@unique([workspaceId, normalizedEmail])
   @@index([workspaceId])
   @@index([workspaceId, status])
+  @@index([workspaceId, mergedIntoLeadId])
   @@index([normalizedEmail])
 }
 
 model LeadIdentity {
-  id          String           @id @default(cuid())
+  id          String             @id @default(cuid())
   workspaceId String
   leadId      String
   type        LeadIdentityType
+  scopeKey    String             @default("workspace")
   value       String
-  createdAt   DateTime         @default(now())
+  source      LeadIdentitySource @default(AUTO)
+  isVerified  Boolean            @default(false)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  lead      Lead      @relation(fields: [leadId], references: [id], onDelete: Restrict)
+  workspace    Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  lead         Lead                      @relation(fields: [leadId], references: [id], onDelete: Restrict)
+  observations LeadIdentityObservation[]
 
-  @@unique([workspaceId, type, value])
+  @@unique([workspaceId, type, scopeKey, value])
   @@index([leadId])
+  @@index([leadId, type])
   @@index([workspaceId])
+  @@index([workspaceId, type])
 }
 
 model SourceRow {
@@ -282,6 +349,8 @@ model SourceRow {
 
   automationId String?
   email        String?
+  phone        String?
+  crmId        String?
   fullName     String?
   leadStatus   String?
   demoDate     String?
@@ -292,7 +361,11 @@ model SourceRow {
   validationStatus SourceRowValidationStatus @default(VALID)
   validationErrors Json?
 
-  canonicalLeadId String?
+  canonicalLeadId          String?
+  leadMatchStatus          LeadMatchStatus @default(UNMATCHED)
+  leadMatchReason          String?
+  leadMatchedAt            DateTime?
+  leadMatchStrategyVersion String?
 
   isActive         Boolean   @default(true)
   lastSeenAt       DateTime  @default(now())
@@ -302,19 +375,148 @@ model SourceRow {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  dataSource    DataSource    @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
-  sourceTab     DataSourceTab @relation(fields: [sourceTabId], references: [id], onDelete: Restrict)
-  canonicalLead Lead?         @relation(fields: [canonicalLeadId], references: [id], onDelete: SetNull)
+  workspace            Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  dataSource           DataSource                @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
+  sourceTab            DataSourceTab             @relation(fields: [sourceTabId], references: [id], onDelete: Restrict)
+  canonicalLead        Lead?                     @relation(fields: [canonicalLeadId], references: [id], onDelete: SetNull)
+  matchResults         LeadMatchResult[]
+  matchConflicts       LeadMatchConflict[]
+  identityObservations LeadIdentityObservation[]
 
   @@unique([sourceTabId, externalRowId])
   @@index([workspaceId])
+  @@index([workspaceId, leadMatchStatus])
   @@index([dataSourceId])
   @@index([sourceTabId, rowNumber])
   @@index([canonicalLeadId])
+  @@index([canonicalLeadId, isActive])
   @@index([email])
   @@index([automationId])
   @@index([validationStatus])
+}
+
+model LeadIdentityObservation {
+  id             String @id @default(cuid())
+  workspaceId    String
+  leadIdentityId String
+  sourceRowId    String
+
+  isActive    Boolean  @default(true)
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  identity  LeadIdentity @relation(fields: [leadIdentityId], references: [id], onDelete: Restrict)
+  sourceRow SourceRow    @relation(fields: [sourceRowId], references: [id], onDelete: Restrict)
+
+  @@unique([leadIdentityId, sourceRowId])
+  @@index([sourceRowId])
+  @@index([workspaceId, isActive])
+}
+
+model LeadMatchRun {
+  id              String             @id @default(cuid())
+  workspaceId     String
+  dataSourceId    String
+  snapshotId      String
+  strategyVersion String             @default("exact-v1")
+  status          LeadMatchRunStatus @default(PROCESSING)
+
+  rowCount          Int @default(0)
+  createdLeadCount  Int @default(0)
+  matchedRowCount   Int @default(0)
+  unchangedRowCount Int @default(0)
+  conflictCount     Int @default(0)
+  skippedCount      Int @default(0)
+
+  error       String?
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  workspace  Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  dataSource DataSource     @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
+  snapshot   SourceSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+
+  results   LeadMatchResult[]
+  conflicts LeadMatchConflict[]
+
+  @@index([workspaceId, startedAt])
+  @@index([dataSourceId, startedAt])
+  @@index([snapshotId])
+  @@index([status])
+}
+
+model LeadMatchResult {
+  id          String                @id @default(cuid())
+  runId       String
+  sourceRowId String
+  leadId      String?
+  status      LeadMatchResultStatus
+
+  reasonCode       String?
+  identitiesJson   Json
+  candidateLeadIds Json?
+
+  createdAt DateTime @default(now())
+
+  run       LeadMatchRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+  sourceRow SourceRow    @relation(fields: [sourceRowId], references: [id], onDelete: Restrict)
+  lead      Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@unique([runId, sourceRowId])
+  @@index([sourceRowId])
+  @@index([leadId])
+  @@index([status])
+}
+
+model LeadMatchConflict {
+  id          String                  @id @default(cuid())
+  workspaceId String
+  runId       String
+  sourceRowId String
+  type        LeadMatchConflictType
+  status      LeadMatchConflictStatus @default(OPEN)
+
+  identityClaims   Json
+  candidateLeadIds Json
+  message          String
+
+  resolvedLeadId String?
+  resolutionNote String?
+  resolvedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace    Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  run          LeadMatchRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+  sourceRow    SourceRow    @relation(fields: [sourceRowId], references: [id], onDelete: Restrict)
+  resolvedLead Lead?        @relation(fields: [resolvedLeadId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status])
+  @@index([runId])
+  @@index([sourceRowId])
+}
+
+model LeadMergeHistory {
+  id           String @id @default(cuid())
+  workspaceId  String
+  sourceLeadId String
+  targetLeadId String
+
+  movedSourceRowCount Int
+  movedIdentityCount  Int
+  note                String?
+
+  createdAt DateTime @default(now())
+
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  sourceLead Lead      @relation("LeadMergeHistorySource", fields: [sourceLeadId], references: [id], onDelete: Restrict)
+  targetLead Lead      @relation("LeadMergeHistoryTarget", fields: [targetLeadId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, createdAt])
+  @@index([sourceLeadId])
+  @@index([targetLeadId])
 }
 
 model LeadSchedule {

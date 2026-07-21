@@ -11,6 +11,7 @@ import { registerReminderRoutes } from './server/routes/reminderRoutes';
 import { createSheetSyncService } from './server/services/sheetSyncService';
 import { isMultiSourceV2Enabled } from './server/modules/multiSourceConfig';
 import { registerSourceRoutes } from './server/modules/source/source.routes';
+import { registerLeadMatchRoutes } from './server/modules/lead/matching/leadMatch.routes';
 
 dotenv.config();
 
@@ -49,6 +50,7 @@ async function startServer() {
   registerReminderRoutes(app);
   if (isMultiSourceV2Enabled()) {
     registerSourceRoutes(app);
+    registerLeadMatchRoutes(app);
   }
 
   await configureFrontend(app);

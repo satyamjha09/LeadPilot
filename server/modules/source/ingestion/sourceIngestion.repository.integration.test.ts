@@ -68,6 +68,8 @@ function row(tabId: string, externalRowId: string, email: string, hash: string):
     normalizedData: {
       fullName: '',
       email,
+      phone: '',
+      crmId: '',
       leadStatus: '',
       demoDate: '',
       demoTime: '',
@@ -78,6 +80,8 @@ function row(tabId: string, externalRowId: string, email: string, hash: string):
     normalizedFields: {
       fullName: '',
       email,
+      phone: '',
+      crmId: '',
       leadStatus: '',
       demoDate: '',
       demoTime: '',
