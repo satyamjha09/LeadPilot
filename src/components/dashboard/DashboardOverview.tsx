@@ -17,8 +17,9 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { LEAD_STATUS } from '@/src/lib/leadStatus';
-import { canProcessLead, getLeadStatus } from '@/src/lib/rowUtils';
-import { ExcelRow } from '@/src/types';
+import { canProcessLead } from '@/src/lib/rowUtils';
+import { AuthStatus, DashboardActivityEvent, DashboardHealthSummary, DashboardTrendPoint, ExcelRow } from '@/src/types';
+import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
 
 type DashboardStats = {
   total: number;
@@ -31,31 +32,54 @@ type DashboardStats = {
   reschedule: number;
 };
 
-const trendData = [32, 45, 38, 62, 58, 67, 55];
-const trendLabels = ['May 16', 'May 17', 'May 18', 'May 19', 'May 20', 'May 21', 'May 22'];
-
 export default function DashboardOverview({
   rows,
   stats,
+  trendData,
+  activityEvents,
+  healthSummary,
+  authStatus,
+  isAuthStatusLoading,
+  emailBrand,
   selectedCount,
   onRunAutomation,
   onViewAllActivity
 }: {
   rows: ExcelRow[];
   stats: DashboardStats;
+  trendData: DashboardTrendPoint[];
+  activityEvents: DashboardActivityEvent[];
+  healthSummary: DashboardHealthSummary | null;
+  authStatus: AuthStatus | null;
+  isAuthStatusLoading: boolean;
+  emailBrand: EmailBrandKey;
   selectedCount: number;
   onRunAutomation: () => void;
   onViewAllActivity: () => void;
 }) {
   const total = Math.max(stats.total, 1);
-  const processed = stats.demoScheduled + stats.demoDone + stats.noResponse;
-  const successRate = processed + stats.failed > 0 ? Math.round((processed / (processed + stats.failed)) * 100) : 100;
+  const positiveOutcomes = stats.demoScheduled + stats.demoDone;
+  const actionedLeads = positiveOutcomes + stats.noResponse;
+  const finalOutcomeTotal = positiveOutcomes + stats.noResponse + stats.failed;
+  const positiveOutcomeRate = finalOutcomeTotal > 0 ? Math.round((positiveOutcomes / finalOutcomeTotal) * 100) : 0;
   const ready = rows.filter((row) => canProcessLead(row)).length;
-  const issues = stats.failed;
-  const healthPercent = Math.min(100, Math.round((processed / total) * 100));
+  const workspaceIssues = stats.failed;
+  const backendIssues = healthSummary?.issueCount ?? 0;
+  const authIssue = !isAuthStatusLoading && (
+    !authStatus?.configured ||
+    !authStatus?.authenticated ||
+    !!authStatus?.requiresReconnect ||
+    !!authStatus?.authError
+  );
+  const issues = workspaceIssues + backendIssues + (authIssue ? 1 : 0);
+  const brandLabel = emailBrandLabel(emailBrand);
+  const healthPercent = stats.total > 0 ? Math.min(100, Math.round((actionedLeads / total) * 100)) : 0;
+  const healthMessage = issues > 0
+    ? `${issues} health item${issues > 1 ? 's' : ''} need review`
+    : 'Workspace health looks good';
   const statusSlices = [
     { label: 'Ready to Schedule', value: stats.readyToSchedule, color: '#3b82f6' },
-    { label: 'Demo Scheduled', value: stats.demoScheduled, color: '#22c7d8' },
+    { label: 'Scheduled Leads', value: stats.demoScheduled, color: '#22c7d8' },
     { label: 'Demo Done', value: stats.demoDone, color: '#22c55e' },
     { label: 'Not Attended', value: stats.noResponse, color: '#fb923c' },
     { label: 'Failed / Needs Fix', value: stats.failed, color: '#ef4444' },
@@ -70,21 +94,22 @@ export default function DashboardOverview({
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-sky-700 dark:text-sky-300">
                 <Sparkles className="h-4 w-4" />
-                Today's Automation Health
+                Current Workspace Health
                 <TrendingUp className="ml-1 h-4 w-4" />
               </div>
               <div>
                 <h2 className="text-xl font-bold tracking-normal text-slate-950 dark:text-white">
-                  {issues > 0 ? `${issues} item${issues > 1 ? 's' : ''} need review` : 'Everything is running smoothly!'}
+                  {healthMessage}
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  TallyKonnect is tracking demos, email delivery, reminders, and sheet updates.
+                  {brandLabel} health checks include workspace rows, email delivery, sheet sync, jobs, and Google auth.
                 </p>
               </div>
               <div className="flex flex-wrap gap-4 text-sm">
                 <Metric label="Total Leads" value={stats.total} />
-                <Metric label="Processed" value={processed} />
-                <Metric label="Issues" value={issues} />
+                <Metric label="Workspace Issues" value={workspaceIssues} />
+                <Metric label="Backend Issues" value={backendIssues} />
+                <Metric label="Auth Issues" value={authIssue ? 1 : 0} />
               </div>
               <div className="space-y-2">
                 <div className="h-2.5 overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-800">
@@ -94,7 +119,7 @@ export default function DashboardOverview({
                   />
                 </div>
                 <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Automation completion</span>
+                  <span>Workspace actioned</span>
                   <span className="font-semibold text-foreground">{healthPercent}%</span>
                 </div>
               </div>
@@ -120,12 +145,13 @@ export default function DashboardOverview({
 
         <Card className="tk-premium-card self-start">
           <CardHeader className="px-4 pb-2 pt-4">
-            <CardTitle className="text-base">Automation Efficiency</CardTitle>
+            <CardTitle className="text-base">Lead Outcome Rate</CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-[120px_1fr] items-center gap-4 px-4 pb-4">
-            <Donut value={successRate} />
+            <Donut value={positiveOutcomeRate} label="Positive Outcome" />
             <div className="space-y-2 text-sm">
-              <LegendDot color="bg-emerald-500" label="Success" value={processed} />
+              <LegendDot color="bg-emerald-500" label="Positive" value={positiveOutcomes} />
+              <LegendDot color="bg-orange-500" label="Not Attended" value={stats.noResponse} />
               <LegendDot color="bg-red-500" label="Failed" value={stats.failed} />
               <LegendDot color="bg-amber-500" label="Pending" value={ready} />
             </div>
@@ -136,9 +162,9 @@ export default function DashboardOverview({
       <Pipeline stats={stats} total={total} />
 
       <div className="grid items-start gap-4 xl:grid-cols-[1fr_1fr_1.15fr]">
-        <ActivityCard rows={rows} onViewAllActivity={onViewAllActivity} />
+        <ActivityCard events={activityEvents.slice(0, 5)} onViewAllActivity={onViewAllActivity} />
         <LeadsStatusChart slices={statusSlices} total={stats.total} />
-        <TrendChart />
+        <TrendChart data={trendData} />
       </div>
     </div>
   );
@@ -153,7 +179,7 @@ function Metric({ label, value }: { label: string; value: number }) {
   );
 }
 
-function Donut({ value }: { value: number }) {
+function Donut({ value, label }: { value: number; label: string }) {
   return (
     <div
       className="grid h-28 w-28 place-items-center rounded-full"
@@ -162,7 +188,7 @@ function Donut({ value }: { value: number }) {
       <div className="grid h-20 w-20 place-items-center rounded-full bg-card text-center shadow-inner">
         <div>
           <div className="text-xl font-bold">{value}%</div>
-          <div className="text-xs text-muted-foreground">Success Rate</div>
+          <div className="text-xs text-muted-foreground">{label}</div>
         </div>
       </div>
     </div>
@@ -183,7 +209,7 @@ function Pipeline({ stats, total }: { stats: DashboardStats; total: number }) {
   const items = [
     { label: 'Imported', value: stats.total, icon: Users, color: 'sky' },
     { label: 'Ready to Schedule', value: stats.readyToSchedule, icon: Send, color: 'blue' },
-    { label: 'Demo Scheduled', value: stats.demoScheduled, icon: CalendarCheck2, color: 'cyan' },
+    { label: 'Scheduled Leads', value: stats.demoScheduled, icon: CalendarCheck2, color: 'cyan' },
     { label: 'Demo Done', value: stats.demoDone, icon: CheckCircle2, color: 'green' },
     { label: 'Not Attended', value: stats.noResponse, icon: Mail, color: 'orange' },
     { label: 'Failed / Needs Fix', value: stats.failed, icon: AlertTriangle, color: 'red' }
@@ -218,52 +244,32 @@ function Pipeline({ stats, total }: { stats: DashboardStats; total: number }) {
   );
 }
 
-function ActivityCard({ rows, onViewAllActivity }: { rows: ExcelRow[]; onViewAllActivity: () => void }) {
-  const activity = rows.slice(0, 5).map((row, index) => {
-    const status = getLeadStatus(row);
-    const failed = status === 'Failed';
-    const success = status === LEAD_STATUS.DEMO_DONE || status === LEAD_STATUS.DEMO_SCHEDULED;
-    const icon = failed ? AlertTriangle : success ? (index % 2 === 0 ? CheckCircle2 : CalendarCheck2) : (index % 2 === 0 ? Send : FileSpreadsheet);
-    return {
-      title: `Lead #${rows.length - index} - ${row.full_name || 'Unnamed lead'}`,
-      description: String(row.Remarks || (success ? 'Workflow updated successfully' : 'Waiting for next action')),
-      tone: failed ? 'failed' : success ? 'success' : 'progress',
-      icon,
-      time: index === 0 ? 'Just now' : `${index * 2 - 1} min ago`,
-      meta: failed ? 'Invalid email address' : undefined
-    };
-  });
-
+function ActivityCard({ events, onViewAllActivity }: { events: DashboardActivityEvent[]; onViewAllActivity: () => void }) {
   return (
     <Card className="tk-premium-card h-fit overflow-hidden">
       <CardHeader className="flex flex-row items-center justify-between px-4 pb-3 pt-4">
         <CardTitle className="flex items-center gap-2 text-base">
-          Automation Activity
-          <span className="font-semibold text-sky-600 dark:text-sky-300">(Live)</span>
-          <span className="relative flex h-5 w-5 items-center justify-center rounded-full bg-sky-100 dark:bg-sky-950">
-            <span className="absolute h-3 w-3 animate-ping rounded-full bg-sky-400/60" />
-            <span className="h-2 w-2 rounded-full bg-sky-600" />
-          </span>
+          Recent Automation Activity
         </CardTitle>
         <span className="inline-flex items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm">
           <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          Live Updates
+          Database History
         </span>
       </CardHeader>
       <CardContent className="px-4 pb-4">
-        {activity.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Import a sheet to see live automation activity.</p>
+        {events.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No automation activity recorded yet.</p>
         ) : (
           <div className="relative space-y-3">
             <span className="absolute left-[7px] top-5 h-[calc(100%-2.5rem)] w-px bg-slate-200 dark:bg-slate-800" />
-            {activity.map((item) => (
+            {events.map((item) => (
               <ActivityItem
-                key={item.title}
+                key={item.id}
                 title={item.title}
                 description={item.description}
                 tone={item.tone}
-                Icon={item.icon}
-                time={item.time}
+                Icon={activityIcon(item)}
+                time={formatActivityTime(item.occurredAt)}
                 meta={item.meta}
               />
             ))}
@@ -275,6 +281,36 @@ function ActivityCard({ rows, onViewAllActivity }: { rows: ExcelRow[]; onViewAll
       </CardContent>
     </Card>
   );
+}
+
+function activityIcon(event: DashboardActivityEvent) {
+  if (event.tone === 'failed') return AlertTriangle;
+  if (event.type === 'lead-schedule') return CalendarCheck2;
+  if (event.type === 'email-delivery') return Mail;
+  if (event.type === 'sheet-sync') return FileSpreadsheet;
+  if (event.tone === 'success') return CheckCircle2;
+  return Send;
+}
+
+function formatActivityTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Time unavailable';
+  const diffSeconds = Math.round((date.getTime() - Date.now()) / 1000);
+  const absSeconds = Math.abs(diffSeconds);
+  const formatter = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  if (absSeconds < 60) return formatter.format(diffSeconds, 'second');
+  const diffMinutes = Math.round(diffSeconds / 60);
+  if (Math.abs(diffMinutes) < 60) return formatter.format(diffMinutes, 'minute');
+  const diffHours = Math.round(diffMinutes / 60);
+  if (Math.abs(diffHours) < 24) return formatter.format(diffHours, 'hour');
+  const diffDays = Math.round(diffHours / 24);
+  if (Math.abs(diffDays) < 7) return formatter.format(diffDays, 'day');
+  return date.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 function ActivityItem({
@@ -393,12 +429,14 @@ function buildConicGradient(slices: Array<{ value: number; color: string }>) {
   return `conic-gradient(${stops.join(', ')})`;
 }
 
-function TrendChart() {
-  const max = Math.max(...trendData);
-  const points = trendData
-    .map((value, index) => {
-      const x = 24 + index * 54;
-      const y = 132 - (value / max) * 96;
+function TrendChart({ data }: { data: DashboardTrendPoint[] }) {
+  const chartData = data.length ? data : [{ date: 'Today', count: 0 }];
+  const max = Math.max(1, ...chartData.map((point) => point.count));
+  const xStep = chartData.length > 1 ? 324 / (chartData.length - 1) : 0;
+  const points = chartData
+    .map((point, index) => {
+      const x = chartData.length > 1 ? 24 + index * xStep : 186;
+      const y = 132 - (point.count / max) * 96;
       return `${x},${y}`;
     })
     .join(' ');
@@ -406,7 +444,7 @@ function TrendChart() {
   return (
     <Card className="tk-premium-card h-fit">
       <CardHeader className="flex flex-row items-center justify-between px-4 pb-2 pt-4">
-        <CardTitle className="text-base">Daily Automation Trend</CardTitle>
+        <CardTitle className="text-base">Daily Scheduled Leads</CardTitle>
         <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">Last 7 Days</span>
       </CardHeader>
       <CardContent className="px-4 pb-4">
@@ -422,14 +460,14 @@ function TrendChart() {
           ))}
           <polygon points={`24,140 ${points} 348,140`} fill="url(#tkTrend)" />
           <polyline points={points} fill="none" stroke="#0284c7" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-          {trendData.map((value, index) => {
-            const x = 24 + index * 54;
-              const y = 132 - (value / max) * 96;
+          {chartData.map((point, index) => {
+            const x = chartData.length > 1 ? 24 + index * xStep : 186;
+            const y = 132 - (point.count / max) * 96;
             return (
-              <g key={trendLabels[index]}>
+              <g key={point.date}>
                 <circle cx={x} cy={y} r="4" fill="#fff" stroke="#0284c7" strokeWidth="3" />
-                <text x={x} y={y - 12} textAnchor="middle" className="fill-muted-foreground text-[10px]">{value}</text>
-                <text x={x} y="152" textAnchor="middle" className="fill-muted-foreground text-[10px]">{trendLabels[index].replace('May ', '')}</text>
+                <text x={x} y={y - 12} textAnchor="middle" className="fill-muted-foreground text-[10px]">{point.count}</text>
+                <text x={x} y="152" textAnchor="middle" className="fill-muted-foreground text-[10px]">{point.date.replace(/^[A-Za-z]+ /, '')}</text>
               </g>
             );
           })}

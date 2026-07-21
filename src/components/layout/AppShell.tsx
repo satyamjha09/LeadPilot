@@ -3,10 +3,14 @@ import Header from '@/src/components/layout/Header';
 import Sidebar from '@/src/components/layout/Sidebar';
 import { DashboardView } from '@/src/lib/rowUtils';
 import { AuthStatus, NotificationCounts, SheetSource } from '@/src/types';
+import type { EmailBrandKey } from '@/src/lib/emailBrand';
 
 interface AppShellProps {
   children: ReactNode;
   authStatus: AuthStatus | null;
+  emailBrand: EmailBrandKey;
+  pageTitle: string;
+  pageDescription: string;
   onRefreshAuth: () => void;
   onClearAuth: () => void;
   source: SheetSource;
@@ -22,6 +26,9 @@ interface AppShellProps {
 export default function AppShell({
   children,
   authStatus,
+  emailBrand,
+  pageTitle,
+  pageDescription,
   onRefreshAuth,
   onClearAuth,
   source,
@@ -39,6 +46,8 @@ export default function AppShell({
     <div className="tk-grid-background flex min-h-screen">
       {!sidebarCollapsed && (
         <Sidebar
+          authStatus={authStatus}
+          emailBrand={emailBrand}
           activeView={activeView}
           onNavigate={onNavigate}
           source={source}
@@ -53,6 +62,9 @@ export default function AppShell({
       <div className="flex min-w-0 flex-1 flex-col">
         <Header
           authStatus={authStatus}
+          emailBrand={emailBrand}
+          pageTitle={pageTitle}
+          pageDescription={pageDescription}
           onRefreshAuth={onRefreshAuth}
           onClearAuth={onClearAuth}
           source={source}

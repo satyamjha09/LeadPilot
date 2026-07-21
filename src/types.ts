@@ -97,3 +97,34 @@ export interface AuthStatus {
   requiresReconnect?: boolean;
   authError?: string;
 }
+
+export interface DashboardTrendPoint {
+  date: string;
+  count: number;
+}
+
+export type DashboardActivityTone = 'success' | 'failed' | 'progress';
+
+export interface DashboardActivityEvent {
+  id: string;
+  type: 'lead-schedule' | 'email-delivery' | 'sheet-sync' | 'process-job';
+  title: string;
+  description: string;
+  status: string;
+  tone: DashboardActivityTone;
+  occurredAt: string;
+  meta?: string;
+}
+
+export interface DashboardHealthSummary {
+  emailFailures: number;
+  emailUnknown: number;
+  emailRetryPending: number;
+  sheetSyncFailed: number;
+  sheetSyncPending: number;
+  failedProcessJobs: number;
+  activeProcessJobs: number;
+  issueCount: number;
+  warningCount: number;
+  updatedAt: string;
+}

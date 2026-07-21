@@ -17,7 +17,8 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { DashboardView } from '@/src/lib/rowUtils';
-import type { NotificationCounts, SheetSource } from '@/src/types';
+import type { AuthStatus, NotificationCounts, SheetSource } from '@/src/types';
+import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
 
 const navItems: { id: DashboardView; label: string; icon: ComponentType<{ className?: string }> }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -29,6 +30,8 @@ const navItems: { id: DashboardView; label: string; icon: ComponentType<{ classN
 ];
 
 interface SidebarProps {
+  authStatus?: AuthStatus | null;
+  emailBrand: EmailBrandKey;
   activeView: DashboardView;
   onNavigate: (view: DashboardView) => void;
   source: SheetSource;
@@ -39,9 +42,25 @@ interface SidebarProps {
   className?: string;
 }
 
-export default function Sidebar({ activeView, onNavigate, source, onSyncNow, isSyncing, notificationCounts, onCollapse, className }: SidebarProps) {
+function getProfileLabel(email?: string) {
+  return String(email || '').split('@')[0] || 'Profile';
+}
+
+function getProfileInitials(email?: string) {
+  const localPart = getProfileLabel(email);
+  const parts = localPart.split(/[._\-\s]+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  return localPart.slice(0, 2).toUpperCase();
+}
+
+export default function Sidebar({ authStatus, emailBrand, activeView, onNavigate, source, onSyncNow, isSyncing, notificationCounts, onCollapse, className }: SidebarProps) {
   const isGoogleSheet = source.type === 'google-sheet';
-  const sourceName = isGoogleSheet ? source.sheetName || 'TallyKonnect Leads' : 'Excel import';
+  const brandLabel = emailBrandLabel(emailBrand);
+  const sourceName = isGoogleSheet ? source.sheetName || `${brandLabel} Leads` : 'Excel import';
+  const profileEmail = authStatus?.connectedEmail || authStatus?.email || '';
+  const profileLabel = getProfileLabel(profileEmail);
+  const profileInitials = getProfileInitials(profileEmail);
+  const sourceMode = isGoogleSheet ? 'Google Sheet source' : 'Excel source';
 
   return (
     <aside
@@ -53,7 +72,7 @@ export default function Sidebar({ activeView, onNavigate, source, onSyncNow, isS
             <Rocket className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-base font-bold leading-tight">TallyKonnect</p>
+            <p className="text-base font-bold leading-tight">{brandLabel}</p>
             <p className="text-xs text-slate-400">Automation Workspace</p>
           </div>
           {onCollapse && (
@@ -98,7 +117,7 @@ export default function Sidebar({ activeView, onNavigate, source, onSyncNow, isS
             <div className="min-w-0">
               <p className="text-sm font-semibold">{isGoogleSheet ? 'Google Sheet' : 'Local Sheet'}</p>
               <p className="truncate text-xs text-slate-400">{sourceName}</p>
-              <p className="text-xs text-slate-500">{isGoogleSheet ? 'Ready to sync' : 'Upload mode'}</p>
+              <p className="text-xs text-slate-500">{sourceMode}</p>
             </div>
           </div>
           <Button
@@ -113,12 +132,12 @@ export default function Sidebar({ activeView, onNavigate, source, onSyncNow, isS
             {isSyncing ? 'Syncing' : 'Sync Now'}
           </Button>
         </div>
-        <div className="flex items-center gap-3 rounded-2xl p-2 hover:bg-white/5">
-          <div className="grid h-10 w-10 place-items-center rounded-full bg-slate-200 text-slate-700">
-            <Users className="h-5 w-5" />
+        <div className="flex items-center gap-3 rounded-2xl p-2 hover:bg-white/5" title={profileEmail || 'Profile'}>
+          <div className="grid h-10 w-10 place-items-center rounded-full bg-slate-200 text-xs font-bold text-slate-700">
+            {profileEmail ? profileInitials : <Users className="h-5 w-5" />}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">demo.tallykonnect</p>
+            <p className="truncate text-sm font-semibold">{profileLabel}</p>
             <p className="text-xs text-slate-400">Admin</p>
           </div>
           <ChevronDown className="h-4 w-4 text-slate-400" />

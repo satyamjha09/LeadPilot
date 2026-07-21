@@ -15,7 +15,7 @@ type Stats = {
 const items = [
   { key: 'total', label: 'Total Leads', description: 'Imported rows', icon: List },
   { key: 'readyToSchedule', label: 'Ready to Schedule', description: 'Valid demo rows', icon: Clock3 },
-  { key: 'demoScheduled', label: 'Demo Scheduled', description: 'Invite workflow done', icon: CalendarCheck2 },
+  { key: 'demoScheduled', label: 'Scheduled Leads', description: 'Invite workflow done', icon: CalendarCheck2 },
   { key: 'reschedule', label: 'Reschedule', description: 'Needs active demo update', icon: RotateCw },
   { key: 'demoDone', label: 'Demo Done', description: 'Thank-you workflow done', icon: CheckCircle2 },
   { key: 'noResponse', label: 'Not Attended', description: 'Closed missed demos', icon: UserX },

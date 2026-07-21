@@ -12,6 +12,8 @@ interface ProcessingPanelProps {
     success: number;
     failed: number;
     skipped: number;
+    isIndeterminate?: boolean;
+    statusLabel?: string;
     currentEmail?: string;
     currentName?: string;
     currentStep?: string;
@@ -35,7 +37,7 @@ export default function ProcessingPanel({
   if (isProcessing && processingProgress) {
     const steps = processingProgress.steps?.length
       ? processingProgress.steps
-      : ['Validating lead', 'Creating calendar', 'Sending email', 'Updating sheet', 'Done'];
+      : ['Processing on server'];
     const currentStep = processingProgress.currentStep || steps[processingProgress.stepIndex || 0] || steps[0];
     const matchedStepIndex = steps.findIndex((step) => step === currentStep);
     const stepIndex = matchedStepIndex >= 0 ? matchedStepIndex : 0;
@@ -43,6 +45,7 @@ export default function ProcessingPanel({
       processingProgress.total > 0
         ? Math.round((processingProgress.current / processingProgress.total) * 100)
         : 0;
+    const isIndeterminate = !!processingProgress.isIndeterminate;
 
     return (
       <Card className="tk-hover-card overflow-hidden border-sky-200/70 bg-sky-50/30 dark:border-sky-900/50 dark:bg-sky-950/20">
@@ -56,16 +59,18 @@ export default function ProcessingPanel({
                 Running automation
               </CardTitle>
               <CardDescription>
-                Processing {processingProgress.current} of {processingProgress.total} leads
+                {isIndeterminate
+                  ? `Processing ${processingProgress.total} lead${processingProgress.total === 1 ? '' : 's'} on the server`
+                  : `Processing ${processingProgress.current} of ${processingProgress.total} leads`}
               </CardDescription>
             </div>
             <div className="rounded-full border bg-background px-3 py-1 text-sm font-semibold text-sky-700 dark:text-sky-300">
-              {percent}%
+              {isIndeterminate ? 'Running' : `${percent}%`}
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Progress value={percent} />
+          <Progress value={isIndeterminate ? undefined : percent} />
           <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr]">
             <div className="rounded-lg border bg-card p-4">
               <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -80,7 +85,7 @@ export default function ProcessingPanel({
                   <div className="break-all text-sm text-muted-foreground">{processingProgress.currentEmail}</div>
                 )}
                 <div className="pt-2 text-sm">
-                  Step: <span className="font-semibold text-foreground">{currentStep}</span>
+                  Status: <span className="font-semibold text-foreground">{processingProgress.statusLabel || currentStep}</span>
                 </div>
               </div>
             </div>

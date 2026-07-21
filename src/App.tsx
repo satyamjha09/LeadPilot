@@ -31,16 +31,24 @@ import {
 } from '@/src/lib/rowUtils';
 import { LEAD_STATUS, LeadStatusLabel } from '@/src/lib/leadStatus';
 import { getLeadStatus } from '@/src/lib/rowUtils';
-import { ExcelRow, AuthStatus, NotificationCounts, ScheduleSummary, SheetSource } from '@/src/types';
+import {
+  ExcelRow,
+  AuthStatus,
+  DashboardActivityEvent,
+  DashboardHealthSummary,
+  DashboardTrendPoint,
+  NotificationCounts,
+  ScheduleSummary,
+  SheetSource
+} from '@/src/types';
 import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
 import { cn } from '@/lib/utils';
 
-const ROWS_STORAGE_KEY = 'excel-meet-scheduler.rows';
-const SELECTED_STORAGE_KEY = 'excel-meet-scheduler.selectedRowIds';
-const SOURCE_STORAGE_KEY = 'excel-meet-scheduler.source';
+const LEGACY_ROWS_STORAGE_KEY = 'excel-meet-scheduler.rows';
+const LEGACY_SELECTED_STORAGE_KEY = 'excel-meet-scheduler.selectedRowIds';
+const LEGACY_SOURCE_STORAGE_KEY = 'excel-meet-scheduler.source';
 const EMAIL_BRAND_STORAGE_KEY = 'excel-meet-scheduler.emailBrand';
-const AUTOMATION_STEPS = ['Validating lead', 'Creating calendar', 'Sending email', 'Updating sheet', 'Done'];
-
+const WORKSPACE_STORAGE_PREFIX = 'excel-meet-scheduler';
 const EMAIL_BRANDS: Array<{ key: EmailBrandKey; label: string; description: string }> = [
   { key: 'tallykonnect', label: emailBrandLabel('tallykonnect'), description: 'Use TallyKonnect logo, website, and footer.' },
   { key: 'anywheretally', label: emailBrandLabel('anywheretally'), description: 'Use AnyWhereTally logo, website, and footer.' }
@@ -99,6 +107,8 @@ type ProcessingProgress = {
   success: number;
   failed: number;
   skipped: number;
+  isIndeterminate?: boolean;
+  statusLabel?: string;
   currentEmail?: string;
   currentName?: string;
   currentStep?: string;
@@ -115,20 +125,30 @@ type WorkspaceRequestKey =
   | 'process-polling'
   | 'reconcile';
 
-const loadStoredRows = (): ExcelRow[] => {
+const workspaceStorageKey = (brand: EmailBrandKey, key: 'rows' | 'selectedRowIds' | 'source') =>
+  `${WORKSPACE_STORAGE_PREFIX}.${brand}.${key}`;
+
+const getScopedStorageItem = (brand: EmailBrandKey, key: 'rows' | 'selectedRowIds' | 'source', legacyKey: string) => {
+  if (typeof window === 'undefined') return null;
+  const scoped = window.localStorage.getItem(workspaceStorageKey(brand, key));
+  if (scoped !== null) return scoped;
+  return brand === 'tallykonnect' ? window.localStorage.getItem(legacyKey) : null;
+};
+
+const loadStoredRows = (brand: EmailBrandKey): ExcelRow[] => {
   if (typeof window === 'undefined') return [];
   try {
-    const stored = window.localStorage.getItem(ROWS_STORAGE_KEY);
+    const stored = getScopedStorageItem(brand, 'rows', LEGACY_ROWS_STORAGE_KEY);
     return stored ? JSON.parse(stored) : [];
   } catch {
     return [];
   }
 };
 
-const loadStoredSelectedIds = () => {
+const loadStoredSelectedIds = (brand: EmailBrandKey) => {
   if (typeof window === 'undefined') return new Set<string>();
   try {
-    const stored = window.localStorage.getItem(SELECTED_STORAGE_KEY);
+    const stored = getScopedStorageItem(brand, 'selectedRowIds', LEGACY_SELECTED_STORAGE_KEY);
     const ids = stored ? JSON.parse(stored) : [];
     return new Set<string>(Array.isArray(ids) ? ids : []);
   } catch {
@@ -136,17 +156,36 @@ const loadStoredSelectedIds = () => {
   }
 };
 
-const loadStoredSource = (): SheetSource => {
+const normalizeStoredSource = (source: any): SheetSource => {
+  if (source?.type === 'google_sheet') {
+    return { ...source, type: 'google-sheet', headers: source.headers || [] };
+  }
+  if (source?.type === 'google-sheet') {
+    return { ...source, headers: source.headers || [] };
+  }
+  return { type: 'excel' };
+};
+
+const loadStoredSource = (brand: EmailBrandKey): SheetSource => {
   if (typeof window === 'undefined') return { type: 'excel' };
   try {
-    const stored = window.localStorage.getItem(SOURCE_STORAGE_KEY);
+    const stored = getScopedStorageItem(brand, 'source', LEGACY_SOURCE_STORAGE_KEY);
     const parsed = stored ? JSON.parse(stored) : { type: 'excel' };
-    if (parsed?.type === 'google_sheet') {
-      return { ...parsed, type: 'google-sheet', headers: parsed.headers || [] };
-    }
-    return parsed;
+    return normalizeStoredSource(parsed);
   } catch {
     return { type: 'excel' };
+  }
+};
+
+const removeStoredWorkspace = (brand: EmailBrandKey) => {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(workspaceStorageKey(brand, 'rows'));
+  window.localStorage.removeItem(workspaceStorageKey(brand, 'selectedRowIds'));
+  window.localStorage.removeItem(workspaceStorageKey(brand, 'source'));
+  if (brand === 'tallykonnect') {
+    window.localStorage.removeItem(LEGACY_ROWS_STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_SELECTED_STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_SOURCE_STORAGE_KEY);
   }
 };
 
@@ -193,12 +232,14 @@ const getLockedBrandsForRows = (rows: ExcelRow[]) =>
   );
 
 export default function App() {
+  const initialEmailBrand = loadStoredEmailBrand();
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [isAuthStatusLoading, setIsAuthStatusLoading] = useState(true);
-  const [rows, setRows] = useState<ExcelRow[]>(loadStoredRows);
-  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(loadStoredSelectedIds);
-  const [source, setSource] = useState<SheetSource>(loadStoredSource);
-  const [selectedEmailBrand, setSelectedEmailBrand] = useState<EmailBrandKey>(loadStoredEmailBrand);
+  const [selectedEmailBrand, setSelectedEmailBrand] = useState<EmailBrandKey>(initialEmailBrand);
+  const [workspaceBrand, setWorkspaceBrand] = useState<EmailBrandKey>(initialEmailBrand);
+  const [rows, setRows] = useState<ExcelRow[]>(() => loadStoredRows(initialEmailBrand));
+  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => loadStoredSelectedIds(initialEmailBrand));
+  const [source, setSource] = useState<SheetSource>(() => loadStoredSource(initialEmailBrand));
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<DashboardView>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
@@ -221,6 +262,9 @@ export default function App() {
   const [processingProgress, setProcessingProgress] = useState<ProcessingProgress | null>(null);
   const [isLoadingFile, setIsLoadingFile] = useState(false);
   const [lastSummary, setLastSummary] = useState<ScheduleSummary | null>(null);
+  const [dashboardTrendData, setDashboardTrendData] = useState<DashboardTrendPoint[]>([]);
+  const [dashboardActivityEvents, setDashboardActivityEvents] = useState<DashboardActivityEvent[]>([]);
+  const [dashboardHealthSummary, setDashboardHealthSummary] = useState<DashboardHealthSummary | null>(null);
 
   const didReconcileStoredRows = useRef(false);
   const importRef = useRef<HTMLDivElement>(null);
@@ -254,6 +298,38 @@ export default function App() {
       workspaceRequestControllersRef.current[key]?.abort();
       workspaceRequestControllersRef.current[key] = null;
     });
+  };
+
+  const resetTransientWorkspaceUi = () => {
+    isSyncingRef.current = false;
+    setUploadedFileName(null);
+    setSearchQuery('');
+    setStatusFilter('all');
+    setLastSummary(null);
+    setDashboardTrendData([]);
+    setDashboardActivityEvents([]);
+    setDashboardHealthSummary(null);
+    setProcessingProgress(null);
+    setProcessTargetRows([]);
+    setProcessPreview(null);
+    setStatusRevertMap({});
+    setIsProcessing(false);
+    setIsLoadingFile(false);
+    setIsPreflightLoading(false);
+    setConfirmProcessOpen(false);
+  };
+
+  const loadWorkspaceForBrand = (brand: EmailBrandKey) => {
+    workspaceGenerationRef.current += 1;
+    abortWorkspaceRequests();
+    const storedRows = loadStoredRows(brand);
+    setWorkspaceBrand(brand);
+    setRows(storedRows);
+    setSelectedRowIds(loadStoredSelectedIds(brand));
+    setSource(loadStoredSource(brand));
+    didReconcileStoredRows.current = false;
+    resetTransientWorkspaceUi();
+    setActiveView(storedRows.length > 0 ? 'dashboard' : 'leads');
   };
 
   const stats = useMemo(() => computeStats(rows), [rows]);
@@ -394,6 +470,51 @@ export default function App() {
     }
   };
 
+  const fetchDashboardTrend = async (brand: EmailBrandKey = selectedEmailBrand, signal?: AbortSignal) => {
+    try {
+      const res = await fetch(`/api/dashboard/trend?brand=${encodeURIComponent(brand)}&days=7`, { signal });
+      if (!res.ok) throw new Error('Trend server unreachable');
+      const data = await res.json();
+      if (selectedEmailBrandRef.current === brand) {
+        setDashboardTrendData(Array.isArray(data.data) ? data.data : []);
+      }
+    } catch (err: unknown) {
+      if (!isAbortError(err)) {
+        console.error('Failed to load dashboard trend:', err);
+      }
+    }
+  };
+
+  const fetchDashboardActivity = async (brand: EmailBrandKey = selectedEmailBrand, signal?: AbortSignal) => {
+    try {
+      const res = await fetch(`/api/dashboard/activity?brand=${encodeURIComponent(brand)}&limit=25`, { signal });
+      if (!res.ok) throw new Error('Activity server unreachable');
+      const data = await res.json();
+      if (selectedEmailBrandRef.current === brand) {
+        setDashboardActivityEvents(Array.isArray(data.data) ? data.data : []);
+      }
+    } catch (err: unknown) {
+      if (!isAbortError(err)) {
+        console.error('Failed to load dashboard activity:', err);
+      }
+    }
+  };
+
+  const fetchDashboardHealth = async (brand: EmailBrandKey = selectedEmailBrand, signal?: AbortSignal) => {
+    try {
+      const res = await fetch(`/api/dashboard/health?brand=${encodeURIComponent(brand)}`, { signal });
+      if (!res.ok) throw new Error('Health server unreachable');
+      const data = await res.json();
+      if (selectedEmailBrandRef.current === brand) {
+        setDashboardHealthSummary(data.data || null);
+      }
+    } catch (err: unknown) {
+      if (!isAbortError(err)) {
+        console.error('Failed to load dashboard health:', err);
+      }
+    }
+  };
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
     window.localStorage.setItem('theme', isDark ? 'dark' : 'light');
@@ -401,7 +522,16 @@ export default function App() {
 
   useEffect(() => {
     selectedEmailBrandRef.current = selectedEmailBrand;
-  }, [selectedEmailBrand]);
+    if (
+      selectedEmailBrand !== workspaceBrand &&
+      processTargetRows.length === 0 &&
+      !confirmProcessOpen &&
+      !isPreflightLoading &&
+      !isProcessing
+    ) {
+      loadWorkspaceForBrand(selectedEmailBrand);
+    }
+  }, [selectedEmailBrand, workspaceBrand, processTargetRows.length, confirmProcessOpen, isPreflightLoading, isProcessing]);
 
   useEffect(() => {
     fetchAuthStatus(selectedEmailBrand);
@@ -416,26 +546,44 @@ export default function App() {
     return () => window.removeEventListener('message', handleMessage);
   }, [selectedEmailBrand]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    setDashboardTrendData([]);
+    setDashboardActivityEvents([]);
+    setDashboardHealthSummary(null);
+    void fetchDashboardTrend(selectedEmailBrand, controller.signal);
+    void fetchDashboardActivity(selectedEmailBrand, controller.signal);
+    void fetchDashboardHealth(selectedEmailBrand, controller.signal);
+    return () => controller.abort();
+  }, [
+    selectedEmailBrand,
+    lastSummary?.scheduled,
+    lastSummary?.demoScheduled,
+    lastSummary?.reschedule,
+    lastSummary?.demoDone,
+    lastSummary?.noResponse
+  ]);
+
   useEffect(() => () => abortWorkspaceRequests(), []);
 
   useEffect(() => {
     try {
-      if (rows.length > 0) window.localStorage.setItem(ROWS_STORAGE_KEY, JSON.stringify(rows));
-      else window.localStorage.removeItem(ROWS_STORAGE_KEY);
+      if (rows.length > 0) window.localStorage.setItem(workspaceStorageKey(workspaceBrand, 'rows'), JSON.stringify(rows));
+      else window.localStorage.removeItem(workspaceStorageKey(workspaceBrand, 'rows'));
     } catch {}
-  }, [rows]);
+  }, [rows, workspaceBrand]);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(SELECTED_STORAGE_KEY, JSON.stringify(Array.from(selectedRowIds)));
+      window.localStorage.setItem(workspaceStorageKey(workspaceBrand, 'selectedRowIds'), JSON.stringify(Array.from(selectedRowIds)));
     } catch {}
-  }, [selectedRowIds]);
+  }, [selectedRowIds, workspaceBrand]);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(SOURCE_STORAGE_KEY, JSON.stringify(source));
+      window.localStorage.setItem(workspaceStorageKey(workspaceBrand, 'source'), JSON.stringify(source));
     } catch {}
-  }, [source]);
+  }, [source, workspaceBrand]);
 
   useEffect(() => {
     try {
@@ -474,6 +622,7 @@ export default function App() {
     });
     if (!reconciledRows) return;
     if (!isCurrentWorkspace(generation)) return;
+    setWorkspaceBrand(selectedEmailBrand);
     setSource({ type: 'excel' });
     setRows(reconciledRows);
     const initiallySelected = new Set<string>();
@@ -488,6 +637,7 @@ export default function App() {
   const handleGoogleSheetDataParsed = async (parsedRows: ExcelRow[], sheetSource: SheetSource) => {
     const generation = getWorkspaceGeneration();
     if (!isCurrentWorkspace(generation)) return;
+    setWorkspaceBrand(selectedEmailBrand);
     setSource(sheetSource);
     setRows(parsedRows);
     const initiallySelected = new Set<string>();
@@ -616,6 +766,7 @@ export default function App() {
   ) => {
     const summary = applyProcessSummary(rawSummary, processTargetRows.length);
     const updatedById = new Map(updatedRows.map((row) => [row.id, row]));
+    setWorkspaceBrand(selectedEmailBrand);
     setRows((current) => current.map((row) => updatedById.get(row.id) || row));
     if (source.type === 'google-sheet' && Array.isArray(headers)) {
       setSource({ ...source, headers });
@@ -748,41 +899,20 @@ export default function App() {
       return;
     }
 
-    const firstRow = processTargetRows[0];
     setProcessingProgress({
-      current: Math.min(1, processTargetRows.length),
+      current: 0,
       total: processTargetRows.length,
       success: 0,
       failed: 0,
       skipped: 0,
-      currentName: String(firstRow?.full_name || 'Preparing batch'),
-      currentEmail: firstRow?.email ? String(firstRow.email) : undefined,
-      currentStep: AUTOMATION_STEPS[0],
+      isIndeterminate: true,
+      statusLabel: 'Waiting for backend result',
+      currentName: 'Processing on server',
+      currentStep: 'Processing on server',
       stepIndex: 0,
-      steps: AUTOMATION_STEPS
+      steps: ['Processing on server']
     });
     toast.info('Processing started...');
-    let tick = 0;
-    const progressTimer = window.setInterval(() => {
-      tick += 1;
-      if (!isCurrentWorkspace(generation)) return;
-      setProcessingProgress((current) => {
-        if (!current) return current;
-        const rowIndex = Math.min(processTargetRows.length - 1, Math.floor(tick / AUTOMATION_STEPS.length));
-        const stepIndex = tick % AUTOMATION_STEPS.length;
-        const row = processTargetRows[rowIndex];
-        const simulatedDone = stepIndex === AUTOMATION_STEPS.length - 1 ? rowIndex + 1 : rowIndex;
-        return {
-          ...current,
-          current: Math.min(processTargetRows.length, rowIndex + 1),
-          currentName: String(row?.full_name || 'Processing lead'),
-          currentEmail: row?.email ? String(row.email) : undefined,
-          currentStep: AUTOMATION_STEPS[stepIndex],
-          stepIndex,
-          success: Math.min(processTargetRows.length, simulatedDone)
-        };
-      });
-    }, 1200);
 
     const signal = createWorkspaceRequestSignal('lead-processing');
     try {
@@ -808,7 +938,6 @@ export default function App() {
       );
     } finally {
       clearWorkspaceRequestSignal('lead-processing', signal);
-      window.clearInterval(progressTimer);
       if (isCurrentWorkspace(generation)) {
         setIsProcessing(false);
         setProcessingProgress(null);
@@ -958,32 +1087,17 @@ export default function App() {
     }
   };
 
-  const clearWorkspaceState = () => {
+  const clearWorkspaceState = (brand: EmailBrandKey = workspaceBrand) => {
     workspaceGenerationRef.current += 1;
     abortWorkspaceRequests();
-    isSyncingRef.current = false;
+    removeStoredWorkspace(brand);
+    setWorkspaceBrand(brand);
     setRows([]);
     setSelectedRowIds(new Set());
     setSource({ type: 'excel' });
-    setUploadedFileName(null);
-    setSearchQuery('');
-    setStatusFilter('all');
-    setLastSummary(null);
-    setProcessingProgress(null);
-    setProcessTargetRows([]);
-    setProcessPreview(null);
-    setStatusRevertMap({});
-    setIsProcessing(false);
-    setIsLoadingFile(false);
-    setIsPreflightLoading(false);
-    setConfirmProcessOpen(false);
+    didReconcileStoredRows.current = false;
+    resetTransientWorkspaceUi();
     setActiveView('dashboard');
-
-    try {
-      window.localStorage.removeItem(ROWS_STORAGE_KEY);
-      window.localStorage.removeItem(SELECTED_STORAGE_KEY);
-      window.localStorage.removeItem(SOURCE_STORAGE_KEY);
-    } catch {}
   };
 
   const cancelWorkspaceRequestsForReset = () => {
@@ -1036,13 +1150,16 @@ export default function App() {
 
   const isAuthActive = authMatchesSelection;
   const showLeadsSection = rows.length > 0 && activeView === 'leads';
-  const showImport = activeView === 'dashboard' || activeView === 'import';
+  const showImport = activeView === 'leads' || activeView === 'import';
   const viewCopy = getViewCopy(activeView);
 
   return (
     <TooltipProvider>
         <AppShell
           authStatus={authStatus}
+          emailBrand={selectedEmailBrand}
+          pageTitle={viewCopy.title}
+          pageDescription={viewCopy.description}
         onRefreshAuth={() => fetchAuthStatus(selectedEmailBrand)}
         onClearAuth={() => setConfirmClearAuthOpen(true)}
         source={source}
@@ -1064,7 +1181,10 @@ export default function App() {
             emailBrand={selectedEmailBrand}
             onResetStart={cancelWorkspaceRequestsForReset}
             onResetComplete={() => {
-              clearWorkspaceState();
+              clearWorkspaceState(selectedEmailBrand);
+              void fetchDashboardTrend(selectedEmailBrand);
+              void fetchDashboardActivity(selectedEmailBrand);
+              void fetchDashboardHealth(selectedEmailBrand);
               toast.success(`${emailBrandLabel(selectedEmailBrand)} workflow and browser workspace reset. Import a fresh sheet to continue.`);
             }}
           />
@@ -1074,13 +1194,19 @@ export default function App() {
               <DashboardOverview
                 rows={rows}
                 stats={stats}
+                trendData={dashboardTrendData}
+                activityEvents={dashboardActivityEvents}
+                healthSummary={dashboardHealthSummary}
+                authStatus={authStatus}
+                isAuthStatusLoading={isAuthStatusLoading}
+                emailBrand={selectedEmailBrand}
                 selectedCount={selectedRowIds.size}
                 onRunAutomation={() => openProcessPreflight(processTargetFromSelection)}
                 onViewAllActivity={() => setActiveView('activity')}
               />
             )}
 
-            {activeView === 'activity' && <ActivityView rows={rows} />}
+            {activeView === 'activity' && <ActivityView events={dashboardActivityEvents} />}
             {activeView === 'manual-review' && (
               <ManualReviewView rows={manualReviewRows} emailBrand={selectedEmailBrand} />
             )}
@@ -1179,6 +1305,8 @@ export default function App() {
             Object.entries(statusRevertMap).forEach(([rowId, previous]) =>
               revertRowStatus(rowId, previous as LeadStatusLabel | 'Failed' | '')
             );
+            setProcessTargetRows([]);
+            setProcessPreview(null);
             setStatusRevertMap({});
           }
         }}
@@ -1423,7 +1551,7 @@ function getViewCopy(view: DashboardView) {
   const copy: Record<DashboardView, { title: string; description: string }> = {
     dashboard: {
       title: 'Dashboard',
-      description: 'Import leads, review workload, and run demo scheduling automations from one place.'
+      description: 'Review workload, delivery health, and demo scheduling automation progress from one place.'
     },
     leads: {
       title: 'Leads',
