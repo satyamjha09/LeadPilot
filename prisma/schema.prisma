@@ -89,9 +89,11 @@ model DataSource {
   rows      SourceRow[]
 
   @@unique([workspaceId, type, externalFileId])
+  @@unique([workspaceId, type, checksum])
   @@index([workspaceId])
   @@index([workspaceId, type])
   @@index([workspaceId, archivedAt])
+  @@index([workspaceId, connectionStatus])
 }
 
 model DataSourceTab {

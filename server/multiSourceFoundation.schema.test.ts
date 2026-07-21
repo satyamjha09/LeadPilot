@@ -44,7 +44,9 @@ describe('multi-source Phase 1 Prisma foundation', () => {
   it('scopes DataSource uniqueness to one workspace', () => {
     const block = modelBlock('DataSource');
     expect(block).toContain('@@unique([workspaceId, type, externalFileId])');
+    expect(block).toContain('@@unique([workspaceId, type, checksum])');
     expect(block).toContain('@@index([workspaceId, type])');
+    expect(block).toContain('@@index([workspaceId, connectionStatus])');
   });
 
   it('scopes tab external IDs to one DataSource', () => {

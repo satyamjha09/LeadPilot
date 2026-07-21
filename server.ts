@@ -9,6 +9,8 @@ import { registerAuthRoutes } from './server/routes/authRoutes';
 import { registerLeadRoutes } from './server/routes/leadRoutes';
 import { registerReminderRoutes } from './server/routes/reminderRoutes';
 import { createSheetSyncService } from './server/services/sheetSyncService';
+import { isMultiSourceV2Enabled } from './server/modules/multiSourceConfig';
+import { registerSourceRoutes } from './server/modules/source/source.routes';
 
 dotenv.config();
 
@@ -45,6 +47,9 @@ async function startServer() {
   registerLeadRoutes(app, { runSheetSync: sheetSyncService.runSheetSync });
   registerAuthRoutes(app);
   registerReminderRoutes(app);
+  if (isMultiSourceV2Enabled()) {
+    registerSourceRoutes(app);
+  }
 
   await configureFrontend(app);
 

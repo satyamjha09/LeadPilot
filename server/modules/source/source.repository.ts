@@ -3,8 +3,11 @@ import type {
   DataSourceCreateInput,
   DataSourceTabCreateInput,
   SourceRowCreateInput,
-  SourceSnapshotCreateInput
+  SourceDetailsUpdateInput,
+  SourceSnapshotCreateInput,
+  SourceWithTabsInput
 } from './source.types';
+import { buildInitialTabRows, buildTabRefreshPlan } from './sourceTabRefresh';
 
 export async function createDataSource(input: DataSourceCreateInput) {
   return prisma.dataSource.create({
@@ -36,12 +39,181 @@ export async function findDataSourceByExternalFile(input: {
   });
 }
 
+export async function findWorkspaceSourceById(workspaceId: string, sourceId: string) {
+  return prisma.dataSource.findFirst({
+    where: { id: sourceId, workspaceId, archivedAt: null },
+    include: { tabs: { orderBy: { position: 'asc' } } }
+  });
+}
+
+export async function findExcelSourceByChecksum(workspaceId: string, checksum: string) {
+  return prisma.dataSource.findUnique({
+    where: {
+      workspaceId_type_checksum: {
+        workspaceId,
+        type: 'EXCEL',
+        checksum
+      }
+    },
+    include: { tabs: { orderBy: { position: 'asc' } } }
+  });
+}
+
+export async function findSourceWithTabs(workspaceId: string, sourceId: string) {
+  return prisma.dataSource.findFirst({
+    where: { id: sourceId, workspaceId },
+    include: { tabs: { orderBy: { position: 'asc' } } }
+  });
+}
+
 export async function listDataSourcesForWorkspace(workspaceId: string) {
   return prisma.dataSource.findMany({
     where: { workspaceId, archivedAt: null },
     orderBy: { updatedAt: 'desc' },
     include: { tabs: true }
   });
+}
+
+export async function listSourcesWithTabs(workspaceId: string) {
+  return prisma.dataSource.findMany({
+    where: { workspaceId, archivedAt: null },
+    orderBy: { updatedAt: 'desc' },
+    include: { tabs: { orderBy: { position: 'asc' } } }
+  });
+}
+
+export async function createSourceWithTabs(input: SourceWithTabsInput) {
+  return prisma.$transaction(async (tx) => {
+    const source = await tx.dataSource.create({
+      data: {
+        workspaceId: input.workspaceId,
+        type: input.type,
+        displayName: input.displayName,
+        externalFileId: input.externalFileId ?? null,
+        originalFileName: input.originalFileName ?? null,
+        storageKey: input.storageKey ?? null,
+        mimeType: input.mimeType ?? null,
+        checksum: input.checksum ?? null,
+        fileSize: input.fileSize ?? null,
+        connectionStatus: input.connectionStatus || 'CONNECTED',
+        syncEnabled: input.syncEnabled ?? true
+      }
+    });
+
+    await tx.dataSourceTab.createMany({
+      data: buildInitialTabRows({
+        dataSourceId: source.id,
+        tabs: input.tabs,
+        preferredTabId: input.preferredTabId
+      })
+    });
+
+    return tx.dataSource.findUniqueOrThrow({
+      where: { id: source.id },
+      include: { tabs: { orderBy: { position: 'asc' } } }
+    });
+  });
+}
+
+export async function refreshSourceWithTabs(input: {
+  workspaceId: string;
+  sourceId: string;
+  source: SourceDetailsUpdateInput;
+  tabs: SourceWithTabsInput['tabs'];
+}) {
+  return prisma.$transaction(async (tx) => {
+    const existingSource = await tx.dataSource.findFirstOrThrow({
+      where: { id: input.sourceId, workspaceId: input.workspaceId },
+      include: { tabs: true }
+    });
+    const plan = buildTabRefreshPlan({
+      dataSourceId: existingSource.id,
+      existingTabs: existingSource.tabs,
+      inspectedTabs: input.tabs
+    });
+
+    await tx.dataSource.update({
+      where: { id: existingSource.id },
+      data: input.source
+    });
+
+    for (const update of plan.updates) {
+      await tx.dataSourceTab.update({
+        where: { id: update.id },
+        data: update.data
+      });
+    }
+
+    if (plan.creates.length > 0) {
+      await tx.dataSourceTab.createMany({ data: plan.creates });
+    }
+
+    return tx.dataSource.findUniqueOrThrow({
+      where: { id: existingSource.id },
+      include: { tabs: { orderBy: { position: 'asc' } } }
+    });
+  });
+}
+
+export async function updateSourceDetails(input: {
+  workspaceId: string;
+  sourceId: string;
+  data: SourceDetailsUpdateInput;
+}) {
+  await prisma.dataSource.updateMany({
+    where: { id: input.sourceId, workspaceId: input.workspaceId },
+    data: input.data
+  });
+  return findSourceWithTabs(input.workspaceId, input.sourceId);
+}
+
+export async function updateSourceHealth(input: {
+  workspaceId: string;
+  sourceId: string;
+  connectionStatus?: DataSourceCreateInput['connectionStatus'];
+  lastError?: string | null;
+}) {
+  return updateSourceDetails({
+    workspaceId: input.workspaceId,
+    sourceId: input.sourceId,
+    data: {
+      connectionStatus: input.connectionStatus,
+      lastError: input.lastError ?? null,
+      lastValidatedAt: new Date()
+    }
+  });
+}
+
+export async function updateSourceTab(input: {
+  workspaceId: string;
+  sourceId: string;
+  tabId: string;
+  isEnabled: boolean;
+}) {
+  await prisma.dataSourceTab.updateMany({
+    where: {
+      id: input.tabId,
+      dataSource: {
+        id: input.sourceId,
+        workspaceId: input.workspaceId,
+        archivedAt: null
+      }
+    },
+    data: { isEnabled: input.isEnabled }
+  });
+  return findSourceWithTabs(input.workspaceId, input.sourceId);
+}
+
+export async function archiveSource(workspaceId: string, sourceId: string) {
+  await prisma.dataSource.updateMany({
+    where: { id: sourceId, workspaceId },
+    data: {
+      archivedAt: new Date(),
+      connectionStatus: 'ARCHIVED',
+      syncEnabled: false
+    }
+  });
+  return findSourceWithTabs(workspaceId, sourceId);
 }
 
 export async function createDataSourceTab(input: DataSourceTabCreateInput) {

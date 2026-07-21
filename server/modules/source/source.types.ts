@@ -1,6 +1,7 @@
 import type {
   DataSourceConnectionStatus,
   DataSourceType,
+  Prisma,
   SourceRowValidationStatus,
   SourceSnapshotStatus
 } from '@prisma/client';
@@ -24,7 +25,7 @@ export type DataSourceTabCreateInput = {
   externalTabId: string;
   name: string;
   position?: number | null;
-  headersJson: any;
+  headersJson: Prisma.InputJsonValue;
   headerHash?: string | null;
   rowCount?: number;
 };
@@ -44,8 +45,8 @@ export type SourceRowCreateInput = {
   sourceTabId: string;
   externalRowId: string;
   rowHash: string;
-  rawData: any;
-  normalizedData: any;
+  rawData: Prisma.InputJsonValue;
+  normalizedData: Prisma.InputJsonValue;
   rowNumber?: number | null;
   automationId?: string | null;
   email?: string | null;
@@ -56,6 +57,37 @@ export type SourceRowCreateInput = {
   meetingLink?: string | null;
   remarks?: string | null;
   validationStatus?: SourceRowValidationStatus;
-  validationErrors?: any;
+  validationErrors?: Prisma.InputJsonValue;
   canonicalLeadId?: string | null;
+};
+
+export type SourceTabUpsertInput = {
+  externalTabId: string;
+  name: string;
+  position: number;
+  headersJson: Prisma.InputJsonValue;
+  headerHash: string;
+  isEnabled?: boolean;
+};
+
+export type SourceWithTabsInput = DataSourceCreateInput & {
+  tabs: SourceTabUpsertInput[];
+  preferredTabId?: string | null;
+};
+
+export type SourceDetailsUpdateInput = {
+  displayName?: string;
+  externalFileId?: string | null;
+  originalFileName?: string | null;
+  storageKey?: string | null;
+  mimeType?: string | null;
+  checksum?: string | null;
+  fileSize?: number | null;
+  syncEnabled?: boolean;
+  connectionStatus?: DataSourceConnectionStatus;
+  archivedAt?: Date | null;
+  lastValidatedAt?: Date | null;
+  lastSyncedAt?: Date | null;
+  lastSyncStatus?: string | null;
+  lastError?: string | null;
 };

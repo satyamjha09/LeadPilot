@@ -1,6 +1,6 @@
 import type { WorkspaceStatus } from '@prisma/client';
 
-export type WorkspaceKey = 'tallykonnect' | 'anywheretally' | string;
+export type WorkspaceKey = 'tallykonnect' | 'anywheretally';
 
 export type WorkspaceCreateInput = {
   key: WorkspaceKey;
