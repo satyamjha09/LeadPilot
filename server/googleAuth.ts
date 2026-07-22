@@ -770,6 +770,39 @@ export async function updateCalendarMeeting(
   }
 }
 
+export async function cancelCalendarMeeting(
+  calendarEventId: string,
+  senderAccountKey?: unknown
+) {
+  const senderKey = coerceStoredSenderAccountKey(senderAccountKey);
+  if (!calendarEventId) {
+    throw new Error('Calendar event ID is required to cancel this demo.');
+  }
+
+  try {
+    const oauth2Client = await getOAuthClient(senderKey);
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    await withCalendarRetry(() =>
+      calendar.events.delete({
+        calendarId: 'primary',
+        eventId: calendarEventId,
+        sendUpdates: 'all'
+      })
+    );
+
+    return { cancelled: true as const, alreadyDeleted: false as const };
+  } catch (err: any) {
+    const status = err?.response?.status || err?.status || err?.code;
+    if (status === 404 || status === 410) {
+      return { cancelled: true as const, alreadyDeleted: true as const };
+    }
+    const details = getGoogleErrorDetails(err);
+    console.error('CALENDAR_EVENT_CANCEL_FAILED', details);
+    throw new Error(friendlyGoogleError(err, 'Calendar event cancellation'));
+  }
+}
+
 type EmailSendContext = {
   row: ExcelRow;
   meetLink?: string;

@@ -91,6 +91,7 @@ describe('brand-scoped background email delivery', () => {
     ]);
     prismaMock.customerDemoState.findUnique.mockResolvedValue({
       emailBrand: 'anywheretally',
+      senderAccountKey: 'anywheretally-google',
       userId: 'lead_123',
       status: 'Demo Scheduled',
       activeDemoSessionId: 'session-awt',
@@ -136,6 +137,7 @@ describe('brand-scoped background email delivery', () => {
     ]);
     prismaMock.customerDemoState.findUnique.mockResolvedValue({
       emailBrand: 'tallykonnect',
+      senderAccountKey: 'tallykonnect-google',
       userId: 'lead_456',
       status: 'Demo Scheduled',
       activeDemoSessionId: 'session-tk',

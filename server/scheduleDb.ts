@@ -5,12 +5,8 @@ import { parseExcelDateTime } from './googleAuth';
 import { LEAD_STATUS, normalizeLeadStatus } from './leadStatus';
 import { normalizeDisplayDate, normalizeIsoDate } from '../src/lib/dateFormat';
 import { coerceStoredEmailBrand, EMAIL_BRAND_KEYS, type EmailBrandKey } from '../src/lib/emailBrand';
-import {
-  coerceStoredSenderAccountKey,
-  defaultSenderAccountForBrand,
-  type SenderAccountKey
-} from '../src/lib/senderAccount';
-import { EmailBrandMismatchError } from './brandOwnership';
+import { parseSenderAccountKey, type SenderAccountKey } from '../src/lib/senderAccount';
+import { EmailBrandMismatchError, SenderAccountMismatchError } from './brandOwnership';
 
 const DEFAULT_TIMEZONE = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Kolkata';
 const DEMO_EXPIRED_STATUS = 'Expired';
@@ -187,6 +183,21 @@ export async function getCustomerDemoState(row: ExcelRow, emailBrand: EmailBrand
   });
 }
 
+function requirePersistedSenderAccountKey(value: unknown): SenderAccountKey {
+  return parseSenderAccountKey(value);
+}
+
+function lifecycleOwnerFromActive(active: {
+  state: { emailBrand: string; senderAccountKey?: string | null };
+  history?: { senderAccountKey?: string | null } | null;
+}) {
+  const emailBrand = coerceStoredEmailBrand(active.state.emailBrand);
+  const senderAccountKey = requirePersistedSenderAccountKey(
+    active.state.senderAccountKey || active.history?.senderAccountKey
+  );
+  return { emailBrand, senderAccountKey };
+}
+
 export async function getActiveDemoForRow(row: ExcelRow, emailBrand: EmailBrandKey) {
   const state = await getCustomerDemoState(row, emailBrand);
   if (!state || !isActiveDemo(state) || !state.activeDemoSessionId) return null;
@@ -203,9 +214,10 @@ export async function getActiveDemoForRow(row: ExcelRow, emailBrand: EmailBrandK
 export async function assertDemoBrandOwnership(row: ExcelRow, selectedBrand: EmailBrandKey) {
   const selectedActive = await getActiveDemoForRow(row, selectedBrand);
   if (selectedActive?.state) {
+    const owner = lifecycleOwnerFromActive(selectedActive);
     return {
       ...selectedActive,
-      emailBrand: coerceStoredEmailBrand(selectedActive.state.emailBrand)
+      ...owner
     };
   }
 
@@ -214,8 +226,8 @@ export async function assertDemoBrandOwnership(row: ExcelRow, selectedBrand: Ema
     const otherActive = await getActiveDemoForRow(row, brand);
     if (otherActive?.state) {
       throw new EmailBrandMismatchError(
-        coerceStoredEmailBrand(otherActive.state.emailBrand),
-        selectedBrand
+          lifecycleOwnerFromActive(otherActive).emailBrand,
+          selectedBrand
       );
     }
   }
@@ -223,7 +235,17 @@ export async function assertDemoBrandOwnership(row: ExcelRow, selectedBrand: Ema
   throw new Error('No active demo session exists.');
 }
 
-export const assertDemoSenderOwnership = assertDemoBrandOwnership;
+export async function assertDemoLifecycleOwnership(
+  row: ExcelRow,
+  selectedBrand: EmailBrandKey,
+  selectedSenderAccountKey: SenderAccountKey
+) {
+  const active = await assertDemoBrandOwnership(row, selectedBrand);
+  if (active.senderAccountKey !== selectedSenderAccountKey) {
+    throw new SenderAccountMismatchError(active.senderAccountKey, selectedSenderAccountKey);
+  }
+  return active;
+}
 
 export async function assertCanCreateOrReuseActiveDemo(row: ExcelRow, emailBrand: EmailBrandKey) {
   const active = await getActiveDemoForRow(row, emailBrand);
@@ -254,7 +276,7 @@ export async function ensureScheduledDemoHistory(
     calendarEventId: string;
     scheduledEmailSentAt?: string;
   },
-  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey; senderAccountKey?: SenderAccountKey }
+  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey; senderAccountKey: SenderAccountKey }
 ) {
   const userId = getLeadUserId(row);
   if (!userId || !data.meetingLink || !data.calendarEventId) return null;
@@ -265,9 +287,7 @@ export async function ensureScheduledDemoHistory(
   const { scheduledStartUtc, scheduledEndUtc } = getScheduledWindow(row);
   const timestamp = nowIso();
   const emailBrand = options.emailBrand;
-  const senderAccountKey = coerceStoredSenderAccountKey(
-    options.senderAccountKey || defaultSenderAccountForBrand(emailBrand)
-  );
+  const senderAccountKey = parseSenderAccountKey(options.senderAccountKey);
 
   return prisma.$transaction(async (tx) => {
     const existingState = await tx.customerDemoState.findUnique({
@@ -438,11 +458,16 @@ export async function ensureScheduledDemoHistory(
   });
 }
 
-export async function forceCloseActiveDemoForRow(row: ExcelRow, remarks: string | undefined, emailBrand: EmailBrandKey) {
+export async function forceCloseActiveDemoForRow(
+  row: ExcelRow,
+  remarks: string | undefined,
+  emailBrand: EmailBrandKey,
+  senderAccountKey: SenderAccountKey
+) {
   const userId = getLeadUserId(row);
   if (!userId) throw new Error('Email is missing.');
 
-  const active = await assertDemoBrandOwnership(row, emailBrand);
+  const active = await assertDemoLifecycleOwnership(row, emailBrand, senderAccountKey);
 
   const message = remarks?.trim() || 'Previous active demo force closed by user.';
   await expireActiveDemoState(active.state, message);
@@ -450,6 +475,7 @@ export async function forceCloseActiveDemoForRow(row: ExcelRow, remarks: string 
   return {
     ...row,
     __emailBrand: active.emailBrand,
+    __senderAccountKey: active.senderAccountKey,
     'Meeting Details': '',
     lead_status: LEAD_STATUS.DEMO_SCHEDULED,
     Remarks: `${message} You can schedule this lead again.`
@@ -472,7 +498,7 @@ export async function rescheduleActiveDemoForRow(
     calendarEventId: string;
   },
   emailBrand: EmailBrandKey,
-  senderAccountKey?: SenderAccountKey
+  senderAccountKey: SenderAccountKey
 ) {
   const userId = getLeadUserId(row);
   if (!userId) throw new Error('Email is missing.');
@@ -506,12 +532,13 @@ export async function rescheduleActiveDemoForRow(
     if (!history || history.status !== LEAD_STATUS.DEMO_SCHEDULED) {
       throw new Error('Active demo history record is not schedulable.');
     }
-    const owningSenderAccountKey = coerceStoredSenderAccountKey(
-      senderAccountKey ||
-        state.senderAccountKey ||
-        history.senderAccountKey ||
-        defaultSenderAccountForBrand(emailBrand)
+    const owningSenderAccountKey = requirePersistedSenderAccountKey(
+      state.senderAccountKey || history.senderAccountKey
     );
+    const selectedSenderAccountKey = parseSenderAccountKey(senderAccountKey);
+    if (owningSenderAccountKey !== selectedSenderAccountKey) {
+      throw new SenderAccountMismatchError(owningSenderAccountKey, selectedSenderAccountKey);
+    }
 
     const updatedState = await tx.customerDemoState.update({
       where: {
@@ -559,7 +586,7 @@ export async function closeActiveDemoForRow(
   row: ExcelRow,
   status: typeof LEAD_STATUS.DEMO_DONE | typeof LEAD_STATUS.NO_RESPONSE,
   emailBrand: EmailBrandKey,
-  options?: { emailSentAt?: string }
+  options: { emailSentAt?: string; senderAccountKey: SenderAccountKey }
 ) {
   const userId = getLeadUserId(row);
   if (!userId) throw new Error('Email is missing.');
@@ -585,18 +612,25 @@ export async function closeActiveDemoForRow(
       where: { sessionId: state.activeDemoSessionId }
     });
     if (!history) throw new Error('Active demo history record was not found.');
+    const owningSenderAccountKey = requirePersistedSenderAccountKey(
+      state.senderAccountKey || history.senderAccountKey
+    );
+    const selectedSenderAccountKey = parseSenderAccountKey(options.senderAccountKey);
+    if (owningSenderAccountKey !== selectedSenderAccountKey) {
+      throw new SenderAccountMismatchError(owningSenderAccountKey, selectedSenderAccountKey);
+    }
 
     const historyData =
       status === LEAD_STATUS.DEMO_DONE
         ? {
             status,
             completedAt: history.completedAt || timestamp,
-            demoDoneEmailSentAt: options?.emailSentAt || history.demoDoneEmailSentAt || null
+            demoDoneEmailSentAt: options.emailSentAt || history.demoDoneEmailSentAt || null
           }
         : {
             status,
             noResponseAt: history.noResponseAt || timestamp,
-            noResponseEmailSentAt: options?.emailSentAt || history.noResponseEmailSentAt || null
+            noResponseEmailSentAt: options.emailSentAt || history.noResponseEmailSentAt || null
           };
 
     const updatedHistory = await tx.demoHistory.update({
@@ -744,15 +778,13 @@ async function saveLeadScheduleRow(
     status: string;
     remarks?: string | null;
   },
-  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey; senderAccountKey?: SenderAccountKey }
+  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey; senderAccountKey: SenderAccountKey }
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
 
   const emailBrand = options.emailBrand;
-  const senderAccountKey = coerceStoredSenderAccountKey(
-    options.senderAccountKey || defaultSenderAccountForBrand(emailBrand)
-  );
+  const senderAccountKey = parseSenderAccountKey(options.senderAccountKey);
   const existing = await findLeadSchedule(row, emailBrand);
   const writeData = {
     senderAccountKey,
@@ -813,9 +845,7 @@ export async function applyDbTruthToRow(row: ExcelRow, emailBrand: EmailBrandKey
       return {
         ...row,
         __emailBrand: coerceStoredEmailBrand(active.state.emailBrand),
-        __senderAccountKey: coerceStoredSenderAccountKey(
-          active.state.senderAccountKey || defaultSenderAccountForBrand(coerceStoredEmailBrand(active.state.emailBrand))
-        ),
+        __senderAccountKey: lifecycleOwnerFromActive(active).senderAccountKey,
         'Meeting Details': active.state.meetingLink || row['Meeting Details'] || '',
         lead_status: isOutcomeRequest(requestedStatus) ? requestedStatus : LEAD_STATUS.DEMO_SCHEDULED,
         Remarks: isOutcomeRequest(requestedStatus)
@@ -836,9 +866,7 @@ export async function applyDbTruthToRow(row: ExcelRow, emailBrand: EmailBrandKey
       return {
         ...row,
         __emailBrand: coerceStoredEmailBrand(active.state.emailBrand),
-        __senderAccountKey: coerceStoredSenderAccountKey(
-          active.state.senderAccountKey || defaultSenderAccountForBrand(coerceStoredEmailBrand(active.state.emailBrand))
-        ),
+        __senderAccountKey: lifecycleOwnerFromActive(active).senderAccountKey,
         __schedulerStatus: 'Failed',
         Remarks: 'This customer already has an active demo.'
       };
@@ -862,9 +890,7 @@ export async function applyDbTruthToRow(row: ExcelRow, emailBrand: EmailBrandKey
   return {
     ...row,
     __emailBrand: coerceStoredEmailBrand(schedule.emailBrand),
-    __senderAccountKey: coerceStoredSenderAccountKey(
-      schedule.senderAccountKey || defaultSenderAccountForBrand(coerceStoredEmailBrand(schedule.emailBrand))
-    ),
+    __senderAccountKey: requirePersistedSenderAccountKey(schedule.senderAccountKey),
     full_name: row.full_name || schedule.fullName || '',
     email: row.email || schedule.email,
     'Date of Demo': normalizeLeadDate(schedule.dateOfDemo || row['Date of Demo']),
@@ -894,7 +920,7 @@ export async function saveLeadScheduleFailure(
     calendarEventId?: string;
     gmailMessageId?: string;
     emailBrand: EmailBrandKey;
-    senderAccountKey?: SenderAccountKey;
+    senderAccountKey: SenderAccountKey;
   }
 ) {
   const keys = getLeadUniqueKeys(row);
@@ -926,7 +952,7 @@ export async function saveLeadScheduleSuccess(
     remarks: string;
     status?: string;
   },
-  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey; senderAccountKey?: SenderAccountKey }
+  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey; senderAccountKey: SenderAccountKey }
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
@@ -950,7 +976,7 @@ export async function saveLeadStatusUpdate(
     status: string;
     remarks?: string;
   },
-  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey; senderAccountKey?: SenderAccountKey }
+  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey; senderAccountKey: SenderAccountKey }
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;

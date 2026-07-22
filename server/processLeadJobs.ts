@@ -2,8 +2,7 @@ import { ExcelRow } from '../src/types';
 import { prisma } from './db';
 import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
 import {
-  coerceStoredSenderAccountKey,
-  defaultSenderAccountForBrand,
+  parseSenderAccountKey,
   type SenderAccountKey
 } from '../src/lib/senderAccount';
 import { getWorkflowGenerationForNewJob } from './workflowControl';
@@ -53,9 +52,7 @@ export async function createProcessLeadJob(input: ProcessLeadJobInput) {
   const emailBrand = coerceStoredEmailBrand(input.emailBrand || input.emailBrandKey || input.workspaceKey);
   const emailBrandKey = coerceStoredEmailBrand(input.emailBrandKey || emailBrand);
   const workspaceKey = coerceStoredEmailBrand(input.workspaceKey || emailBrand);
-  const senderAccountKey = coerceStoredSenderAccountKey(
-    input.senderAccountKey || defaultSenderAccountForBrand(emailBrandKey)
-  );
+  const senderAccountKey = parseSenderAccountKey(input.senderAccountKey);
   const generation = await getWorkflowGenerationForNewJob(emailBrand);
 
   return prisma.processLeadJob.create({
@@ -154,9 +151,7 @@ export function serializeProcessLeadJob(job: Awaited<ReturnType<typeof getProces
     sourceType: job.sourceType,
     emailBrand: coerceStoredEmailBrand(job.emailBrand),
     workspaceKey: coerceStoredEmailBrand(job.workspaceKey || job.emailBrand),
-    senderAccountKey: coerceStoredSenderAccountKey(
-      job.senderAccountKey || defaultSenderAccountForBrand(coerceStoredEmailBrand(job.emailBrand))
-    ),
+    senderAccountKey: parseSenderAccountKey(job.senderAccountKey),
     emailBrandKey: coerceStoredEmailBrand(job.emailBrandKey || job.emailBrand),
     spreadsheetId: job.spreadsheetId || undefined,
     sheetName: job.sheetName || undefined,
@@ -176,9 +171,7 @@ export function parseProcessLeadJobInput(job: Awaited<ReturnType<typeof getProce
   return {
     sourceType: job.sourceType === 'google-sheet' ? 'google-sheet' : 'excel',
     workspaceKey: coerceStoredEmailBrand(job.workspaceKey || job.emailBrand),
-    senderAccountKey: coerceStoredSenderAccountKey(
-      job.senderAccountKey || defaultSenderAccountForBrand(coerceStoredEmailBrand(job.emailBrand))
-    ),
+    senderAccountKey: parseSenderAccountKey(job.senderAccountKey),
     emailBrandKey: coerceStoredEmailBrand(job.emailBrandKey || job.emailBrand),
     emailBrand: coerceStoredEmailBrand(job.emailBrand),
     spreadsheetId: job.spreadsheetId || undefined,

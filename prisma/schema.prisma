@@ -522,7 +522,7 @@ model LeadMergeHistory {
 model LeadSchedule {
   id               String   @id @default(cuid())
   emailBrand       String   @default("tallykonnect")
-  senderAccountKey String?
+  senderAccountKey String
   automationId     String?
   fullName         String?
   email            String
@@ -550,7 +550,7 @@ model LeadSchedule {
 model CustomerDemoState {
   id                  String   @id @default(cuid())
   emailBrand          String   @default("tallykonnect")
-  senderAccountKey    String?
+  senderAccountKey    String
   userId              String
   fullName            String?
   email               String
@@ -580,7 +580,7 @@ model CustomerDemoState {
 model DemoHistory {
   id                      String   @id @default(cuid())
   emailBrand              String   @default("tallykonnect")
-  senderAccountKey        String?
+  senderAccountKey        String
   sessionId               String   @unique
   userId                  String
   fullName                String?
@@ -763,7 +763,7 @@ model ProcessLeadJob {
   emailBrand       String   @default("tallykonnect")
   workspaceKey     String?
   emailBrandKey    String?
-  senderAccountKey String?
+  senderAccountKey String
   spreadsheetId    String?
   sheetName        String?
   headersJson      String?

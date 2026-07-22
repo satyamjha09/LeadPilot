@@ -20,11 +20,11 @@ import {
   getSheetTitleByGid,
   updateGoogleSheetRow
 } from '../googleSheets';
-import { sendGmailTemplate } from '../googleAuth';
+import { cancelCalendarMeeting, sendGmailTemplate } from '../googleAuth';
 import { updateGoogleSheetRowsResilient } from '../googleSheets';
 import { isValidLeadStatus, LEAD_STATUS, normalizeLeadStatus } from '../leadStatus';
 import { resetDemoTestData } from '../adminDb';
-import { applyDbTruthToRows, forceCloseActiveDemoForRow } from '../scheduleDb';
+import { applyDbTruthToRows, assertDemoLifecycleOwnership, forceCloseActiveDemoForRow } from '../scheduleDb';
 import {
   findSheetSyncJobById,
   listSheetSyncJobsForRow,
@@ -39,7 +39,7 @@ import {
   sendThankYouForRow,
   updateLeadStatusOnly
 } from '../leadWorkflow';
-import { assertProcessBatchBrandOwnership } from '../lifecycleOwnership';
+import { assertProcessBatchLifecycleOwnership } from '../lifecycleOwnership';
 import {
   createProcessLeadJob,
   getProcessLeadJob,
@@ -820,7 +820,12 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           return res.status(400).json({ error: 'Row is required.' });
         }
 
-        const updatedRow = await forceCloseActiveDemoForRow(row, remarks, keys.emailBrandKey);
+        const active = await assertDemoLifecycleOwnership(row, keys.emailBrandKey, keys.senderAccountKey);
+        const calendarEventId = active.state.calendarEventId;
+        if (calendarEventId) {
+          await cancelCalendarMeeting(calendarEventId, active.senderAccountKey);
+        }
+        const updatedRow = await forceCloseActiveDemoForRow(row, remarks, keys.emailBrandKey, active.senderAccountKey);
         if (sourceType === 'google-sheet' && spreadsheetId && sheetName && headers?.length && row.__sheetRowNumber) {
           await updateGoogleSheetRow(spreadsheetId, sheetName, row.__sheetRowNumber, headers, {
             'Meeting Details': '',
@@ -1056,16 +1061,12 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       }
 
       const dbRows = await applyDbTruthToRows(rows, keys.emailBrandKey);
-      const ownership = await assertProcessBatchBrandOwnership(dbRows, keys.emailBrandKey);
-      const lockedSenderAccountKeys = Array.from(
-        new Set(
-          dbRows
-            .map((row) => row.__senderAccountKey)
-            .filter((sender): sender is SenderAccountKey =>
-              sender === 'tallykonnect-google' || sender === 'anywheretally-google'
-            )
-        )
+      const ownership = await assertProcessBatchLifecycleOwnership(
+        dbRows,
+        keys.emailBrandKey,
+        keys.senderAccountKey
       );
+      const lockedSenderAccountKeys = ownership.lockedSenderAccountKeys;
       const plan = await buildProcessLeadPlan(dbRows);
       const flattenPlannedRows = (items: any[]) =>
         items.map((item) => ({
@@ -1145,7 +1146,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         }
 
         const dbRows = await applyDbTruthToRows(rows, keys.emailBrandKey);
-        await assertProcessBatchBrandOwnership(dbRows, keys.emailBrandKey);
+        await assertProcessBatchLifecycleOwnership(dbRows, keys.emailBrandKey, keys.senderAccountKey);
         const job = await createProcessLeadJob({
           sourceType: sourceType || 'excel',
           workspaceKey: keys.workspaceKey,
@@ -1217,7 +1218,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         }
 
         const dbRows = await applyDbTruthToRows(rows, keys.emailBrandKey);
-        await assertProcessBatchBrandOwnership(dbRows, keys.emailBrandKey);
+        await assertProcessBatchLifecycleOwnership(dbRows, keys.emailBrandKey, keys.senderAccountKey);
         const result = await processLeadsByStatus(dbRows, {
           sourceType: sourceType || 'excel',
           spreadsheetId,

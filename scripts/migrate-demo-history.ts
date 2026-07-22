@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from '../server/db';
 import { LEAD_STATUS, normalizeLeadStatus } from '../server/leadStatus';
+import { coerceStoredEmailBrand } from '../src/lib/emailBrand';
+import { defaultSenderAccountForBrand, parseSenderAccountKey } from '../src/lib/senderAccount';
 
 const DEFAULT_TIMEZONE = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Kolkata';
 
@@ -38,7 +40,10 @@ async function main() {
 
     const displayDate = schedule.dateOfDemo || '';
     const displayTime = schedule.timeOfDemo || '';
-    const emailBrand = schedule.emailBrand || 'tallykonnect';
+    const emailBrand = coerceStoredEmailBrand(schedule.emailBrand);
+    const senderAccountKey = schedule.senderAccountKey
+      ? parseSenderAccountKey(schedule.senderAccountKey)
+      : defaultSenderAccountForBrand(emailBrand);
     const existingState = await prisma.customerDemoState.findUnique({
       where: {
         emailBrand_userId: {
@@ -59,6 +64,7 @@ async function main() {
       },
       create: {
         emailBrand,
+        senderAccountKey,
         userId,
         fullName: schedule.fullName,
         email: userId,
@@ -74,6 +80,7 @@ async function main() {
         sheetRowNumber: schedule.sheetRowNumber
       },
       update: {
+        senderAccountKey,
         fullName: schedule.fullName,
         email: userId,
         status: LEAD_STATUS.DEMO_SCHEDULED,
@@ -93,6 +100,7 @@ async function main() {
       where: { sessionId },
       create: {
         emailBrand,
+        senderAccountKey,
         sessionId,
         userId,
         fullName: schedule.fullName,
@@ -109,6 +117,7 @@ async function main() {
         scheduledAt
       },
       update: {
+        senderAccountKey,
         fullName: schedule.fullName,
         email: userId,
         status: LEAD_STATUS.DEMO_SCHEDULED,

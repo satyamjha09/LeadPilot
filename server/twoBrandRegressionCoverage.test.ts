@@ -15,7 +15,8 @@ describe('two-brand workflow regression coverage', () => {
     expect(leadWorkflow).toContain('emailBrandKeyForContext(sheetContext)');
     expect(leadWorkflow).toContain('updateCalendarMeeting(');
     expect(leadWorkflow).toContain('contextForOwnerBrand(');
-    expect(leadWorkflow).toContain('active.state.senderAccountKey || active.history?.senderAccountKey');
+    expect(leadWorkflow).toContain('active.senderAccountKey');
+    expect(leadWorkflow).toContain('assertDemoLifecycleOwnership(row, context.emailBrand, senderAccountKeyForContext(context))');
     expect(leadWorkflow).toContain('sendGmailRescheduleInvite(updatedRow, meetLink');
     expect(leadWorkflow).toContain('senderAccountKeyForContext(ownerContext)');
     expect(leadWorkflow).toContain('sendThankYouEmail({');

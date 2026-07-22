@@ -29,6 +29,7 @@ vi.mock('./db', () => ({
 
 const {
   assertDemoBrandOwnership,
+  assertDemoLifecycleOwnership,
   applyDbTruthToRows,
   findLeadSchedule,
   getCustomerDemoState,
@@ -101,6 +102,7 @@ describe('brand-scoped schedule state', () => {
       if (where.emailBrand !== 'tallykonnect') return null;
       return {
         emailBrand: 'tallykonnect',
+        senderAccountKey: 'tallykonnect-google',
         automationId: 'lead_123',
         fullName: 'Moh Agarwal',
         email: 'moh@example.com',
@@ -126,6 +128,7 @@ describe('brand-scoped schedule state', () => {
       if (where.emailBrand_userId.emailBrand !== 'tallykonnect') return null;
       return {
         emailBrand: 'tallykonnect',
+        senderAccountKey: 'tallykonnect-google',
         userId: 'lead_123',
         email: 'moh@example.com',
         status: 'Demo Scheduled',
@@ -139,6 +142,7 @@ describe('brand-scoped schedule state', () => {
     });
     prismaMock.demoHistory.findUnique.mockResolvedValue({
       sessionId: 'session-tk',
+      senderAccountKey: 'tallykonnect-google',
       status: 'Demo Scheduled'
     });
 
@@ -148,6 +152,58 @@ describe('brand-scoped schedule state', () => {
       requiredBrand: 'tallykonnect',
       selectedBrand: 'anywheretally'
     });
+  });
+
+  it('allows a cross-combination lifecycle owner and rejects the wrong sender', async () => {
+    prismaMock.customerDemoState.findUnique.mockImplementation(async ({ where }: any) => {
+      if (where.emailBrand_userId.emailBrand !== 'anywheretally') return null;
+      return {
+        emailBrand: 'anywheretally',
+        senderAccountKey: 'tallykonnect-google',
+        userId: 'lead_123',
+        email: 'moh@example.com',
+        status: 'Demo Scheduled',
+        activeDemoSessionId: 'session-cross',
+        meetingLink: 'https://meet.google.com/cross-demo',
+        calendarEventId: 'calendar-cross',
+        demoDate: '15-06-2026',
+        demoTime: '15:30',
+        demoStartUtc: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      };
+    });
+    prismaMock.demoHistory.findUnique.mockResolvedValue({
+      sessionId: 'session-cross',
+      senderAccountKey: 'tallykonnect-google',
+      status: 'Demo Scheduled'
+    });
+
+    const owner = await assertDemoLifecycleOwnership(baseRow, 'anywheretally', 'tallykonnect-google');
+
+    expect(owner.emailBrand).toBe('anywheretally');
+    expect(owner.senderAccountKey).toBe('tallykonnect-google');
+    await expect(
+      assertDemoLifecycleOwnership(baseRow, 'anywheretally', 'anywheretally-google')
+    ).rejects.toMatchObject({
+      code: 'SENDER_ACCOUNT_MISMATCH',
+      statusCode: 409,
+      requiredSenderAccountKey: 'tallykonnect-google',
+      selectedSenderAccountKey: 'anywheretally-google'
+    });
+  });
+
+  it('makes lifecycle sender ownership required in the Prisma schema', () => {
+    const schema = fs.readFileSync(path.join(process.cwd(), 'prisma', 'schema.prisma'), 'utf-8');
+    const modelBody = (name: string) => {
+      const start = schema.indexOf(`model ${name}`);
+      const end = schema.indexOf('\nmodel ', start + 1);
+      expect(start).toBeGreaterThanOrEqual(0);
+      return schema.slice(start, end > start ? end : schema.length);
+    };
+
+    expect(modelBody('LeadSchedule')).toContain('senderAccountKey String');
+    expect(modelBody('CustomerDemoState')).toContain('senderAccountKey    String');
+    expect(modelBody('DemoHistory')).toContain('senderAccountKey        String');
+    expect(modelBody('ProcessLeadJob')).toContain('senderAccountKey String');
   });
 
   it('defines DemoHistory relation through the brand-specific customer state', () => {

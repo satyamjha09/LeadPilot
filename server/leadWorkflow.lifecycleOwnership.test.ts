@@ -16,7 +16,7 @@ describe('lead workflow lifecycle ownership guards', () => {
   it('checks reschedule ownership before updating Calendar', () => {
     const body = functionSource(source, 'rescheduleDemoForRow', 'updateLeadStatusOnly');
 
-    expect(body.indexOf('assertDemoBrandOwnership(row, context.emailBrand)')).toBeLessThan(
+    expect(body.indexOf('assertDemoLifecycleOwnership(row, context.emailBrand, senderAccountKeyForContext(context))')).toBeLessThan(
       body.indexOf('updateCalendarMeeting(')
     );
     expect(body).toContain('sendGmailRescheduleInvite(updatedRow, meetLink');
@@ -28,6 +28,7 @@ describe('lead workflow lifecycle ownership guards', () => {
     const body = functionSource(source, 'sendThankYouForRow', 'sendNoResponseForRow');
 
     expect(body).toContain('const ownerBrand = active.emailBrand');
+    expect(body).toContain('__senderAccountKey: senderAccountKeyForContext(ownerContext)');
     expect(body).toContain('sendThankYouEmail({');
     expect(body).toContain('senderAccountKey: senderAccountKeyForContext(ownerContext)');
     expect(body).toContain('emailBrandKey: emailBrandKeyForContext(ownerContext)');
@@ -38,9 +39,26 @@ describe('lead workflow lifecycle ownership guards', () => {
     const body = functionSource(source, 'sendNoResponseForRow', 'rescheduleDemoForRow');
 
     expect(body).toContain('const ownerBrand = active.emailBrand');
+    expect(body).toContain('__senderAccountKey: senderAccountKeyForContext(ownerContext)');
     expect(body).toContain('sendNoResponseEmail({');
     expect(body).toContain('senderAccountKey: senderAccountKeyForContext(ownerContext)');
     expect(body).toContain('emailBrandKey: emailBrandKeyForContext(ownerContext)');
     expect(body).toContain('closeActiveDemoForRow(ownerRow, LEAD_STATUS.NO_RESPONSE, ownerBrand');
+  });
+
+  it('force-close cancels Calendar before clearing database ownership', () => {
+    const routeSource = fs.readFileSync(path.join(process.cwd(), 'server', 'routes', 'leadRoutes.ts'), 'utf-8');
+    const start = routeSource.indexOf("app.post('/api/active-demo/force-close'");
+    const end = routeSource.indexOf("app.post('/api/email-deliveries/:deliveryId/mark-sent'", start + 1);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const body = routeSource.slice(start, end);
+
+    expect(body.indexOf('assertDemoLifecycleOwnership(row, keys.emailBrandKey, keys.senderAccountKey)')).toBeLessThan(
+      body.indexOf('cancelCalendarMeeting(calendarEventId, active.senderAccountKey)')
+    );
+    expect(body.indexOf('cancelCalendarMeeting(calendarEventId, active.senderAccountKey)')).toBeLessThan(
+      body.indexOf('forceCloseActiveDemoForRow(row, remarks, keys.emailBrandKey, active.senderAccountKey)')
+    );
   });
 });
