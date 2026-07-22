@@ -897,11 +897,12 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         }
 
         try {
+          const senderAccountKey = parseSenderAccountKey(delivery.senderAccountKey);
           const result = await sendGmailTemplate(delivery.recipient, {
             subject: delivery.subject,
             text: delivery.textBody,
             html: delivery.htmlBody
-          }, delivery.senderAccountKey);
+          }, senderAccountKey);
           await markEmailDeliverySent({ deliveryId, providerMessageId: result.messageId });
           const updated = await findEmailDeliveryById(deliveryId);
           return res.json({ success: true, delivery: serializeDelivery(updated) });

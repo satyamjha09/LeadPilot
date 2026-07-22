@@ -119,6 +119,55 @@ describe('brand-scoped background email delivery', () => {
     );
   });
 
+  it('sends cross-combination reminders with persisted brand and sender', async () => {
+    const start = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    prismaMock.demoHistory.findMany.mockResolvedValue([
+      {
+        sessionId: 'session-cross',
+        userId: 'lead_cross',
+        emailBrand: 'anywheretally',
+        senderAccountKey: 'tallykonnect-google',
+        fullName: 'Cross Owner',
+        email: 'cross@example.com',
+        displayDate: '17-06-2026',
+        displayTime: '12:00',
+        meetingLink: 'https://meet.google.com/cross-demo',
+        scheduledStartUtc: start
+      }
+    ]);
+    prismaMock.customerDemoState.findUnique.mockResolvedValue({
+      emailBrand: 'anywheretally',
+      senderAccountKey: 'tallykonnect-google',
+      userId: 'lead_cross',
+      status: 'Demo Scheduled',
+      activeDemoSessionId: 'session-cross',
+      meetingLink: 'https://meet.google.com/cross-demo',
+      demoDate: '17-06-2026',
+      demoTime: '12:00'
+    });
+
+    await checkAndSendReminders();
+
+    expect(buildReminderEmailMock).toHaveBeenCalledWith(
+      expect.objectContaining({ brand: 'anywheretally' })
+    );
+    expect(emailDeliveryMock.claimEmailDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        emailBrand: 'anywheretally',
+        senderAccountKey: 'tallykonnect-google'
+      })
+    );
+    expect(sendGmailReminderMock).toHaveBeenCalledWith(
+      'Cross Owner',
+      'cross@example.com',
+      '17-06-2026',
+      '12:00',
+      'https://meet.google.com/cross-demo',
+      'tallykonnect-google',
+      'anywheretally'
+    );
+  });
+
   it('sends TallyKonnect reminders with the DemoHistory brand', async () => {
     const start = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     prismaMock.demoHistory.findMany.mockResolvedValue([
@@ -159,6 +208,169 @@ describe('brand-scoped background email delivery', () => {
     );
   });
 
+  it('skips reminders when active state sender ownership differs', async () => {
+    const start = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    prismaMock.demoHistory.findMany.mockResolvedValue([
+      {
+        sessionId: 'session-mismatch',
+        userId: 'lead_mismatch',
+        emailBrand: 'anywheretally',
+        senderAccountKey: 'tallykonnect-google',
+        fullName: 'Mismatch Owner',
+        email: 'mismatch@example.com',
+        displayDate: '18-06-2026',
+        displayTime: '13:00',
+        meetingLink: 'https://meet.google.com/mismatch-demo',
+        scheduledStartUtc: start
+      }
+    ]);
+    prismaMock.customerDemoState.findUnique.mockResolvedValue({
+      emailBrand: 'anywheretally',
+      senderAccountKey: 'anywheretally-google',
+      userId: 'lead_mismatch',
+      status: 'Demo Scheduled',
+      activeDemoSessionId: 'session-mismatch',
+      meetingLink: 'https://meet.google.com/mismatch-demo',
+      demoDate: '18-06-2026',
+      demoTime: '13:00'
+    });
+
+    await checkAndSendReminders();
+
+    expect(emailDeliveryMock.claimEmailDelivery).not.toHaveBeenCalled();
+    expect(sendGmailReminderMock).not.toHaveBeenCalled();
+    expect(prismaMock.demoHistory.update).not.toHaveBeenCalled();
+  });
+
+  it('skips stale reminder sessions without side effects', async () => {
+    const start = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    prismaMock.demoHistory.findMany.mockResolvedValue([
+      {
+        sessionId: 'old-session',
+        userId: 'lead_stale',
+        emailBrand: 'tallykonnect',
+        senderAccountKey: 'tallykonnect-google',
+        fullName: 'Stale Owner',
+        email: 'stale@example.com',
+        displayDate: '19-06-2026',
+        displayTime: '14:00',
+        meetingLink: 'https://meet.google.com/stale-demo',
+        scheduledStartUtc: start
+      }
+    ]);
+    prismaMock.customerDemoState.findUnique.mockResolvedValue({
+      emailBrand: 'tallykonnect',
+      senderAccountKey: 'tallykonnect-google',
+      userId: 'lead_stale',
+      status: 'Demo Scheduled',
+      activeDemoSessionId: 'new-session',
+      meetingLink: 'https://meet.google.com/stale-demo',
+      demoDate: '19-06-2026',
+      demoTime: '14:00'
+    });
+
+    await checkAndSendReminders();
+
+    expect(emailDeliveryMock.claimEmailDelivery).not.toHaveBeenCalled();
+    expect(sendGmailReminderMock).not.toHaveBeenCalled();
+    expect(prismaMock.demoHistory.update).not.toHaveBeenCalled();
+  });
+
+  it('reconciles already-sent reminder deliveries without sending Gmail again', async () => {
+    const start = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    prismaMock.demoHistory.findMany.mockResolvedValue([
+      {
+        sessionId: 'session-sent',
+        userId: 'lead_sent',
+        emailBrand: 'tallykonnect',
+        senderAccountKey: 'tallykonnect-google',
+        fullName: 'Sent Owner',
+        email: 'sent@example.com',
+        displayDate: '20-06-2026',
+        displayTime: '15:00',
+        meetingLink: 'https://meet.google.com/sent-demo',
+        scheduledStartUtc: start
+      }
+    ]);
+    prismaMock.customerDemoState.findUnique.mockResolvedValue({
+      emailBrand: 'tallykonnect',
+      senderAccountKey: 'tallykonnect-google',
+      userId: 'lead_sent',
+      status: 'Demo Scheduled',
+      activeDemoSessionId: 'session-sent',
+      meetingLink: 'https://meet.google.com/sent-demo',
+      demoDate: '20-06-2026',
+      demoTime: '15:00'
+    });
+    emailDeliveryMock.claimEmailDelivery.mockResolvedValue({
+      claimed: false,
+      reason: 'ALREADY_SENT',
+      deliveryId: 'delivery-sent',
+      providerMessageId: 'gmail-sent'
+    });
+
+    await checkAndSendReminders();
+
+    expect(sendGmailReminderMock).not.toHaveBeenCalled();
+    expect(prismaMock.demoHistory.update).toHaveBeenCalledWith({
+      where: { sessionId: 'session-sent' },
+      data: expect.objectContaining({ reminder1HourSentAt: expect.any(String) })
+    });
+  });
+
+  it('isolates invalid reminder sender ownership and continues later reminders', async () => {
+    const start = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    prismaMock.demoHistory.findMany.mockResolvedValue([
+      {
+        sessionId: 'session-invalid-sender',
+        userId: 'lead_invalid_sender',
+        emailBrand: 'anywheretally',
+        senderAccountKey: 'broken-sender',
+        fullName: 'Broken Sender',
+        email: 'broken@example.com',
+        displayDate: '21-06-2026',
+        displayTime: '16:00',
+        meetingLink: 'https://meet.google.com/broken-demo',
+        scheduledStartUtc: start
+      },
+      {
+        sessionId: 'session-valid-after-invalid',
+        userId: 'lead_valid_after_invalid',
+        emailBrand: 'tallykonnect',
+        senderAccountKey: 'tallykonnect-google',
+        fullName: 'Valid Sender',
+        email: 'valid@example.com',
+        displayDate: '21-06-2026',
+        displayTime: '16:30',
+        meetingLink: 'https://meet.google.com/valid-demo',
+        scheduledStartUtc: start
+      }
+    ]);
+    prismaMock.customerDemoState.findUnique.mockResolvedValue({
+      emailBrand: 'tallykonnect',
+      senderAccountKey: 'tallykonnect-google',
+      userId: 'lead_valid_after_invalid',
+      status: 'Demo Scheduled',
+      activeDemoSessionId: 'session-valid-after-invalid',
+      meetingLink: 'https://meet.google.com/valid-demo',
+      demoDate: '21-06-2026',
+      demoTime: '16:30'
+    });
+
+    await checkAndSendReminders();
+
+    expect(emailDeliveryMock.claimEmailDelivery).toHaveBeenCalledTimes(1);
+    expect(sendGmailReminderMock).toHaveBeenCalledWith(
+      'Valid Sender',
+      'valid@example.com',
+      '21-06-2026',
+      '16:30',
+      'https://meet.google.com/valid-demo',
+      'tallykonnect-google',
+      'tallykonnect'
+    );
+  });
+
   it('sends automatic retries with EmailDelivery.senderAccountKey', async () => {
     emailDeliveryMock.listDueEmailRetries.mockResolvedValue([
       {
@@ -193,10 +405,124 @@ describe('brand-scoped background email delivery', () => {
     );
   });
 
+  it('fails an invalid retry sender without stopping the next due retry', async () => {
+    emailDeliveryMock.listDueEmailRetries.mockResolvedValue([
+      {
+        id: 'retry-invalid',
+        eventKey: 'event-invalid',
+        automationId: 'lead_invalid',
+        emailBrand: 'anywheretally',
+        senderAccountKey: 'broken-sender',
+        emailType: 'DEMO_DONE',
+        recipient: 'invalid@example.com',
+        payloadHash: 'payload-invalid',
+        subject: 'Retry invalid',
+        textBody: 'Retry text',
+        htmlBody: '<p>Retry</p>',
+        attemptCount: 1,
+        retryCount: 1,
+        maxRetries: 3,
+        nextRetryAt: new Date()
+      },
+      {
+        id: 'retry-valid',
+        eventKey: 'event-valid',
+        automationId: 'lead_valid',
+        emailBrand: 'anywheretally',
+        senderAccountKey: 'tallykonnect-google',
+        emailType: 'DEMO_DONE',
+        recipient: 'valid-retry@example.com',
+        payloadHash: 'payload-valid',
+        subject: 'Retry valid',
+        textBody: 'Retry text',
+        htmlBody: '<p>Retry</p>',
+        attemptCount: 1,
+        retryCount: 1,
+        maxRetries: 3,
+        nextRetryAt: new Date()
+      }
+    ]);
+
+    await runEmailRetryScanner();
+
+    expect(sendGmailTemplateMock).toHaveBeenCalledTimes(1);
+    expect(sendGmailTemplateMock).toHaveBeenCalledWith(
+      'valid-retry@example.com',
+      {
+        subject: 'Retry valid',
+        text: 'Retry text',
+        html: '<p>Retry</p>'
+      },
+      'tallykonnect-google'
+    );
+    expect(emailDeliveryMock.markEmailDeliveryFailed).toHaveBeenCalledWith(
+      expect.objectContaining({ deliveryId: 'retry-invalid' })
+    );
+  });
+
+  it('does not retry when stored email payload is missing', async () => {
+    emailDeliveryMock.listDueEmailRetries.mockResolvedValue([
+      {
+        id: 'retry-missing-payload',
+        eventKey: 'event-missing',
+        automationId: 'lead_missing',
+        emailBrand: 'tallykonnect',
+        senderAccountKey: 'tallykonnect-google',
+        emailType: 'DEMO_DONE',
+        recipient: 'missing@example.com',
+        payloadHash: 'payload-missing',
+        subject: null,
+        textBody: 'Retry text',
+        htmlBody: '<p>Retry</p>',
+        attemptCount: 1,
+        retryCount: 1,
+        maxRetries: 3,
+        nextRetryAt: new Date()
+      }
+    ]);
+
+    await runEmailRetryScanner();
+
+    expect(emailDeliveryMock.claimEmailRetryById).not.toHaveBeenCalled();
+    expect(sendGmailTemplateMock).not.toHaveBeenCalled();
+    expect(emailDeliveryMock.markEmailDeliveryFailed).toHaveBeenCalledWith(
+      expect.objectContaining({ deliveryId: 'retry-missing-payload' })
+    );
+  });
+
+  it('does not send Gmail when another worker already claimed the retry', async () => {
+    emailDeliveryMock.claimEmailRetryById.mockResolvedValue(false);
+    emailDeliveryMock.listDueEmailRetries.mockResolvedValue([
+      {
+        id: 'retry-claimed',
+        eventKey: 'event-claimed',
+        automationId: 'lead_claimed',
+        emailBrand: 'tallykonnect',
+        senderAccountKey: 'tallykonnect-google',
+        emailType: 'DEMO_DONE',
+        recipient: 'claimed@example.com',
+        payloadHash: 'payload-claimed',
+        subject: 'Retry',
+        textBody: 'Retry text',
+        htmlBody: '<p>Retry</p>',
+        attemptCount: 1,
+        retryCount: 1,
+        maxRetries: 3,
+        nextRetryAt: new Date()
+      }
+    ]);
+
+    await runEmailRetryScanner();
+
+    expect(sendGmailTemplateMock).not.toHaveBeenCalled();
+    expect(emailDeliveryMock.markEmailDeliverySent).not.toHaveBeenCalled();
+  });
+
   it('manual retry route uses persisted delivery sender account', () => {
     const routeSource = fs.readFileSync(path.join(process.cwd(), 'server', 'routes', 'leadRoutes.ts'), 'utf-8');
 
     expect(routeSource).toContain('sendGmailTemplate(delivery.recipient');
-    expect(routeSource).toContain('}, delivery.senderAccountKey)');
+    expect(routeSource).toContain('const senderAccountKey = parseSenderAccountKey(delivery.senderAccountKey)');
+    expect(routeSource).toContain('}, senderAccountKey)');
   });
 });

@@ -5,6 +5,7 @@ import {
   markEmailDeliverySent
 } from './emailDelivery';
 import { sendGmailTemplate } from './googleAuth';
+import { parseSenderAccountKey } from '../src/lib/senderAccount';
 
 const RETRY_SCAN_INTERVAL_MS = Number(process.env.EMAIL_RETRY_SCAN_INTERVAL_MS || 60_000);
 const RETRY_BATCH_SIZE = Number(process.env.EMAIL_RETRY_BATCH_SIZE || 10);
@@ -36,6 +37,7 @@ export async function runEmailRetryScanner() {
       if (!claimed) continue;
 
       try {
+        const senderAccountKey = parseSenderAccountKey(delivery.senderAccountKey);
         console.log('EMAIL_RETRY_STARTED', {
           deliveryId: delivery.id,
           eventKey: delivery.eventKey,
@@ -48,7 +50,7 @@ export async function runEmailRetryScanner() {
           subject: delivery.subject,
           text: delivery.textBody,
           html: delivery.htmlBody
-        }, delivery.senderAccountKey);
+        }, senderAccountKey);
 
         await markEmailDeliverySent({
           deliveryId: delivery.id,

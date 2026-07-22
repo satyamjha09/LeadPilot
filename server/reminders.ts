@@ -112,35 +112,35 @@ export async function checkAndSendReminders() {
   const sentField = reminderSentField(config.offsetMinutes);
 
   for (const history of histories) {
-    const emailBrand = coerceStoredEmailBrand(history.emailBrand);
-    const senderAccountKey = parseSenderAccountKey(history.senderAccountKey);
-    const activeState = await prisma.customerDemoState.findUnique({
-      where: {
-        emailBrand_userId: {
-          emailBrand,
-          userId: history.userId
-        }
-      }
-    });
-    const stillActive =
-      activeState?.status === LEAD_STATUS.DEMO_SCHEDULED &&
-      activeState.activeDemoSessionId === history.sessionId &&
-      activeState.senderAccountKey === senderAccountKey &&
-      activeState.meetingLink === history.meetingLink &&
-      activeState.demoDate === history.displayDate &&
-      activeState.demoTime === history.displayTime;
-
-    if (!stillActive) continue;
-
-    console.log('REMINDER_SEND_DUE', {
-      sessionId: history.sessionId,
-      userId: history.userId,
-      recipient: history.email,
-      offsetMinutes: config.offsetMinutes
-    });
-
     let activeDeliveryId = '';
     try {
+      const emailBrand = coerceStoredEmailBrand(history.emailBrand);
+      const senderAccountKey = parseSenderAccountKey(history.senderAccountKey);
+      const activeState = await prisma.customerDemoState.findUnique({
+        where: {
+          emailBrand_userId: {
+            emailBrand,
+            userId: history.userId
+          }
+        }
+      });
+      const stillActive =
+        activeState?.status === LEAD_STATUS.DEMO_SCHEDULED &&
+        activeState.activeDemoSessionId === history.sessionId &&
+        activeState.senderAccountKey === senderAccountKey &&
+        activeState.meetingLink === history.meetingLink &&
+        activeState.demoDate === history.displayDate &&
+        activeState.demoTime === history.displayTime;
+
+      if (!stillActive) continue;
+
+      console.log('REMINDER_SEND_DUE', {
+        sessionId: history.sessionId,
+        userId: history.userId,
+        recipient: history.email,
+        offsetMinutes: config.offsetMinutes
+      });
+
       const eventKey = createEmailEventKey({
         automationId: history.userId,
         recipient: history.email,
