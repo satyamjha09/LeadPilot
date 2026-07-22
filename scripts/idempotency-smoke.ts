@@ -52,6 +52,7 @@ async function main() {
         emailType: EMAIL_TYPES.DEMO_SCHEDULED,
         recipient,
         emailBrand: 'tallykonnect',
+        senderAccountKey: 'tallykonnect-google',
         payloadHash
       }),
       claimEmailDelivery({
@@ -60,6 +61,7 @@ async function main() {
         emailType: EMAIL_TYPES.DEMO_SCHEDULED,
         recipient,
         emailBrand: 'tallykonnect',
+        senderAccountKey: 'tallykonnect-google',
         payloadHash
       })
     ]);
@@ -80,6 +82,7 @@ async function main() {
       emailType: EMAIL_TYPES.DEMO_SCHEDULED,
       recipient,
       emailBrand: 'tallykonnect',
+      senderAccountKey: 'tallykonnect-google',
       payloadHash
     });
     assert.equal(sentClaim.claimed, false);
@@ -96,6 +99,7 @@ async function main() {
       emailType: EMAIL_TYPES.DEMO_SCHEDULED,
       recipient,
       emailBrand: 'tallykonnect',
+      senderAccountKey: 'tallykonnect-google',
       payloadHash
     });
     assert.equal(retryClaim.claimed, true);

@@ -4,7 +4,7 @@ import type { EmailType } from './emailIdentity';
 import type { ExcelRow } from '../src/types';
 import { getAutomationId, type EmailIdentityContext } from './emailIdentity';
 import type { EmailBrandKey } from '../src/lib/emailBrand';
-import { defaultSenderAccountForBrand, type SenderAccountKey } from '../src/lib/senderAccount';
+import { type SenderAccountKey } from '../src/lib/senderAccount';
 
 export const EMAIL_DELIVERY_STATUS = {
   PROCESSING: 'PROCESSING',
@@ -23,7 +23,7 @@ export type EmailClaimInput = {
   recipient: string;
   payloadHash: string;
   emailBrand: EmailBrandKey;
-  senderAccountKey?: SenderAccountKey;
+  senderAccountKey: SenderAccountKey;
   subject?: string;
   text?: string;
   html?: string;
@@ -130,6 +130,10 @@ export async function findEmailDeliveryById(deliveryId: string) {
 }
 
 export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailClaimResult> {
+  if (!input.senderAccountKey) {
+    throw new Error('senderAccountKey is required to claim an email delivery.');
+  }
+
   const existingBeforeCreate = await prisma.emailDelivery.findUnique({
     where: {
       emailBrand_eventKey: {
@@ -145,7 +149,7 @@ export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailC
   const deliveryId = randomUUID();
   const now = new Date();
   const emailBrand = input.emailBrand;
-  const senderAccountKey = input.senderAccountKey || defaultSenderAccountForBrand(emailBrand);
+  const senderAccountKey = input.senderAccountKey;
   const inserted = await prisma.$executeRaw`
     INSERT INTO "EmailDelivery" (
       "id",

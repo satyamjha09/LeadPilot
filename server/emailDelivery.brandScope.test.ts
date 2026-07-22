@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ExcelRow } from '../src/types';
 import { EMAIL_TYPES } from './emailIdentity';
+import type { EmailClaimInput } from './emailDelivery';
 
 const prismaMock = vi.hoisted(() => ({
   emailDelivery: {
@@ -71,6 +72,7 @@ describe('brand-scoped email delivery idempotency', () => {
       automationId: 'lead_123',
       emailType: EMAIL_TYPES.DEMO_SCHEDULED,
       recipient: 'moh@example.com',
+      senderAccountKey: 'tallykonnect-google',
       payloadHash: 'hash'
     });
     const anyWhereTallyClaim = await claimEmailDelivery({
@@ -79,6 +81,7 @@ describe('brand-scoped email delivery idempotency', () => {
       automationId: 'lead_123',
       emailType: EMAIL_TYPES.DEMO_SCHEDULED,
       recipient: 'moh@example.com',
+      senderAccountKey: 'anywheretally-google',
       payloadHash: 'hash'
     });
 
@@ -99,11 +102,45 @@ describe('brand-scoped email delivery idempotency', () => {
       automationId: 'lead_123',
       emailType: EMAIL_TYPES.DEMO_SCHEDULED,
       recipient: 'moh@example.com',
+      senderAccountKey: 'tallykonnect-google',
       payloadHash: 'hash'
     });
 
     const rawSql = prismaMock.$executeRaw.mock.calls[0][0].join('');
     expect(rawSql).toContain('ON CONFLICT ("emailBrand", "eventKey") DO NOTHING');
+  });
+
+  it('persists email brand and sender account independently for cross-combinations', async () => {
+    await claimEmailDelivery({
+      emailBrand: 'anywheretally',
+      senderAccountKey: 'tallykonnect-google',
+      eventKey: 'cross-combo-event',
+      automationId: 'lead_456',
+      emailType: EMAIL_TYPES.DEMO_DONE,
+      recipient: 'sai@example.com',
+      payloadHash: 'hash-cross'
+    });
+
+    expect(prismaMock.$executeRaw.mock.calls[0]).toEqual(
+      expect.arrayContaining(['anywheretally', 'tallykonnect-google'])
+    );
+  });
+
+  it('rejects a missing senderAccountKey before database insert', async () => {
+    // @ts-expect-error senderAccountKey is intentionally required by EmailClaimInput.
+    const missingSenderInput: EmailClaimInput = {
+      emailBrand: 'anywheretally',
+      eventKey: 'missing-sender-event',
+      automationId: 'lead_789',
+      emailType: EMAIL_TYPES.DEMO_DONE,
+      recipient: 'no-sender@example.com',
+      payloadHash: 'hash-missing'
+    };
+
+    await expect(claimEmailDelivery(missingSenderInput as any)).rejects.toThrow('senderAccountKey is required');
+
+    expect(prismaMock.emailDelivery.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('filters row delivery history by selected brand and automation id', async () => {
