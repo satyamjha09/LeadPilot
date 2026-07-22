@@ -5,11 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ExcelRow, SheetSource } from '@/src/types';
-import type { EmailBrandKey } from '@/src/lib/emailBrand';
+import type { WorkspaceKey } from '@/src/lib/senderAccount';
 
 interface GoogleSheetImportProps {
   onDataParsed: (rows: ExcelRow[], source: SheetSource) => void | Promise<void>;
-  emailBrand: EmailBrandKey;
+  workspaceKey: WorkspaceKey;
   isLoading: boolean;
   setIsLoading: (val: boolean) => void;
   getWorkspaceGeneration: () => number;
@@ -20,7 +20,7 @@ interface GoogleSheetImportProps {
 
 export default function GoogleSheetImport({
   onDataParsed,
-  emailBrand,
+  workspaceKey,
   isLoading,
   setIsLoading,
   getWorkspaceGeneration,
@@ -48,7 +48,7 @@ export default function GoogleSheetImport({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal,
-        body: JSON.stringify({ sheetUrl: trimmedUrl, emailBrand })
+        body: JSON.stringify({ sheetUrl: trimmedUrl, workspaceKey })
       });
 
       if (!response.ok) {

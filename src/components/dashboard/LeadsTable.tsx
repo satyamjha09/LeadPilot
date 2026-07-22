@@ -38,6 +38,7 @@ import {
   isActiveDemoRow,
 } from '@/src/lib/rowUtils';
 import type { EmailBrandKey } from '@/src/lib/emailBrand';
+import type { WorkspaceKey } from '@/src/lib/senderAccount';
 import { ExcelRow } from '@/src/types';
 import { cn } from '@/lib/utils';
 
@@ -51,7 +52,8 @@ interface LeadsTableProps {
   onForceCloseActiveDemo?: (row: ExcelRow, remarks: string) => void;
   onProcessRow?: (row: ExcelRow) => void;
   isProcessing?: boolean;
-  emailBrand: EmailBrandKey;
+  workspaceKey: WorkspaceKey;
+  selectedEmailBrand: EmailBrandKey;
 }
 
 export default function LeadsTable({
@@ -64,7 +66,8 @@ export default function LeadsTable({
   onForceCloseActiveDemo,
   onProcessRow,
   isProcessing = false,
-  emailBrand
+  workspaceKey,
+  selectedEmailBrand
 }: LeadsTableProps) {
   const [detailsRow, setDetailsRow] = useState<ExcelRow | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
@@ -373,7 +376,8 @@ export default function LeadsTable({
 
       <RowDetailsDialog
         row={detailsRow}
-        emailBrand={emailBrand}
+        workspaceKey={workspaceKey}
+        selectedEmailBrand={selectedEmailBrand}
         open={!!detailsRow}
         onOpenChange={(open) => !open && setDetailsRow(null)}
       />

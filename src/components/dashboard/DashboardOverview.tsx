@@ -20,6 +20,7 @@ import { LEAD_STATUS } from '@/src/lib/leadStatus';
 import { canProcessLead } from '@/src/lib/rowUtils';
 import { AuthStatus, DashboardActivityEvent, DashboardHealthSummary, DashboardTrendPoint, ExcelRow } from '@/src/types';
 import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
+import { senderAccountEmail, type SenderAccountKey, type WorkspaceKey } from '@/src/lib/senderAccount';
 
 type DashboardStats = {
   total: number;
@@ -40,7 +41,9 @@ export default function DashboardOverview({
   healthSummary,
   authStatus,
   isAuthStatusLoading,
+  workspaceKey,
   emailBrand,
+  senderAccountKey,
   selectedCount,
   onRunAutomation,
   onViewAllActivity
@@ -52,7 +55,9 @@ export default function DashboardOverview({
   healthSummary: DashboardHealthSummary | null;
   authStatus: AuthStatus | null;
   isAuthStatusLoading: boolean;
+  workspaceKey: WorkspaceKey;
   emailBrand: EmailBrandKey;
+  senderAccountKey: SenderAccountKey;
   selectedCount: number;
   onRunAutomation: () => void;
   onViewAllActivity: () => void;
@@ -72,7 +77,9 @@ export default function DashboardOverview({
     !!authStatus?.authError
   );
   const issues = workspaceIssues + backendIssues + (authIssue ? 1 : 0);
+  const sourceWorkspaceLabel = emailBrandLabel(workspaceKey);
   const brandLabel = emailBrandLabel(emailBrand);
+  const senderEmail = authStatus?.connectedEmail || authStatus?.email || senderAccountEmail(senderAccountKey);
   const healthPercent = stats.total > 0 ? Math.min(100, Math.round((actionedLeads / total) * 100)) : 0;
   const healthMessage = issues > 0
     ? `${issues} health item${issues > 1 ? 's' : ''} need review`
@@ -102,8 +109,13 @@ export default function DashboardOverview({
                   {healthMessage}
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {brandLabel} health checks include workspace rows, email delivery, sheet sync, jobs, and Google auth.
+                  Workspace rows are scoped to {sourceWorkspaceLabel}; automation history is scoped to {brandLabel}.
                 </p>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <ScopePill label="Source Workspace" value={sourceWorkspaceLabel} />
+                <ScopePill label="Email Brand" value={brandLabel} />
+                <ScopePill label="Google Sender" value={senderEmail} />
               </div>
               <div className="flex flex-wrap gap-4 text-sm">
                 <Metric label="Total Leads" value={stats.total} />
@@ -167,6 +179,15 @@ export default function DashboardOverview({
         <TrendChart data={trendData} />
       </div>
     </div>
+  );
+}
+
+function ScopePill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 rounded-md border bg-white/70 px-2 py-1 text-muted-foreground dark:bg-slate-950/45">
+      <span className="font-medium text-foreground">{label}:</span>
+      <span className="truncate">{value}</span>
+    </span>
   );
 }
 

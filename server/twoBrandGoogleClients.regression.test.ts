@@ -102,22 +102,52 @@ function lastOAuthClientId() {
 
 const brandCases = [
   {
-    brand: 'tallykonnect' as const,
+    label: 'Default TallyKonnect',
+    workspaceKey: 'tallykonnect' as const,
+    emailBrand: 'tallykonnect' as const,
+    senderAccountKey: 'tallykonnect-google' as const,
     googleAccountKey: 'tallykonnect-google' as const,
     clientId: 'tally-client',
-    sender: 'TallyKonnect <demo.tallykonnect@gmail.com>',
+    fromEmail: 'demo.tallykonnect@gmail.com',
     calendarName: 'TallyKonnect',
     emailName: 'TallyKonnect',
     meetLink: 'https://meet.google.com/tally-demo'
   },
   {
-    brand: 'anywheretally' as const,
+    label: 'Default AnyWhereTally',
+    workspaceKey: 'anywheretally' as const,
+    emailBrand: 'anywheretally' as const,
+    senderAccountKey: 'anywheretally-google' as const,
     googleAccountKey: 'anywheretally-google' as const,
     clientId: 'awt-client',
-    sender: 'AnyWhereTally <info.anywheretally@gmail.com>',
+    fromEmail: 'info.anywheretally@gmail.com',
     calendarName: 'AnyWhereTally',
     emailName: 'AnyWhereTally',
     meetLink: 'https://meet.google.com/awt-demo'
+  },
+  {
+    label: 'AnyWhereTally business through TallyKonnect Google',
+    workspaceKey: 'tallykonnect' as const,
+    emailBrand: 'anywheretally' as const,
+    senderAccountKey: 'tallykonnect-google' as const,
+    googleAccountKey: 'tallykonnect-google' as const,
+    clientId: 'tally-client',
+    fromEmail: 'demo.tallykonnect@gmail.com',
+    calendarName: 'AnyWhereTally',
+    emailName: 'AnyWhereTally',
+    meetLink: 'https://meet.google.com/awt-through-tally-google'
+  },
+  {
+    label: 'TallyKonnect business through AnyWhereTally Google',
+    workspaceKey: 'anywheretally' as const,
+    emailBrand: 'tallykonnect' as const,
+    senderAccountKey: 'anywheretally-google' as const,
+    googleAccountKey: 'anywheretally-google' as const,
+    clientId: 'awt-client',
+    fromEmail: 'info.anywheretally@gmail.com',
+    calendarName: 'TallyKonnect',
+    emailName: 'TallyKonnect',
+    meetLink: 'https://meet.google.com/tally-through-awt-google'
   }
 ];
 
@@ -165,8 +195,8 @@ describe('two-brand Google client routing regression', () => {
     googleMock.sheetsBatchUpdate.mockResolvedValue({ data: {} });
   });
 
-  it.each(brandCases)('creates demo Calendar events and invitation emails using $emailName', async (entry) => {
-    await scheduleMeeting(row, entry.brand);
+  it.each(brandCases)('creates demo Calendar events and invitation emails for $label', async (entry) => {
+    await scheduleMeeting(row, entry.senderAccountKey, entry.emailBrand);
 
     expect(lastOAuthClientId()).toBe(entry.clientId);
     expect(googleMock.calendarInsert).toHaveBeenCalledWith(
@@ -178,17 +208,22 @@ describe('two-brand Google client routing regression', () => {
       })
     );
 
-    await sendGmailInvite(row, entry.meetLink, entry.brand);
+    await sendGmailInvite({
+      row,
+      meetLink: entry.meetLink,
+      senderAccountKey: entry.senderAccountKey,
+      emailBrandKey: entry.emailBrand
+    });
     const decoded = decodeRawEmail(googleMock.gmailSend.mock.calls.at(-1)?.[0].requestBody.raw);
 
     expect(lastOAuthClientId()).toBe(entry.clientId);
-    expect(decoded).toContain(`From: ${entry.sender}`);
+    expect(decoded).toContain(`From: ${entry.emailName} <${entry.fromEmail}>`);
     expect(decoded).toContain(entry.emailName);
     expect(decoded).toContain(entry.meetLink);
   });
 
-  it.each(brandCases)('routes reschedule, Demo Done, Not Attended, and reminder emails through $emailName', async (entry) => {
-    await updateCalendarMeeting(row, 'calendar-event-1', entry.brand);
+  it.each(brandCases)('routes reschedule, Demo Done, Not Attended, and reminder emails for $label', async (entry) => {
+    await updateCalendarMeeting(row, 'calendar-event-1', entry.senderAccountKey, entry.emailBrand);
     expect(lastOAuthClientId()).toBe(entry.clientId);
     expect(googleMock.calendarPatch).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -200,19 +235,34 @@ describe('two-brand Google client routing regression', () => {
       })
     );
 
-    await sendGmailRescheduleInvite(row, entry.meetLink, { date: '14-06-2026', time: '14:30' }, entry.brand);
-    await sendThankYouEmail(row, entry.brand);
-    await sendNoResponseEmail(row, entry.brand);
-    await sendGmailReminder('Codekar', 'lead@example.com', '15-06-2026', '15:30', entry.meetLink, entry.brand);
+    await sendGmailRescheduleInvite({
+      row,
+      meetLink: entry.meetLink,
+      previous: { date: '14-06-2026', time: '14:30' },
+      senderAccountKey: entry.senderAccountKey,
+      emailBrandKey: entry.emailBrand
+    });
+    await sendThankYouEmail({ row, senderAccountKey: entry.senderAccountKey, emailBrandKey: entry.emailBrand });
+    await sendNoResponseEmail({ row, senderAccountKey: entry.senderAccountKey, emailBrandKey: entry.emailBrand });
+    await sendGmailReminder({
+      row,
+      fullName: 'Codekar',
+      email: 'lead@example.com',
+      dateStr: '15-06-2026',
+      timeStr: '15:30',
+      meetLink: entry.meetLink,
+      senderAccountKey: entry.senderAccountKey,
+      emailBrandKey: entry.emailBrand
+    });
 
     const sentMessages = googleMock.gmailSend.mock.calls.slice(-4).map((call) => decodeRawEmail(call[0].requestBody.raw));
     for (const decoded of sentMessages) {
-      expect(decoded).toContain(`From: ${entry.sender}`);
+      expect(decoded).toContain(`From: ${entry.emailName} <${entry.fromEmail}>`);
       expect(decoded).toContain(entry.emailName);
     }
   });
 
-  it.each(brandCases)('updates Google Sheets using $emailName OAuth', async (entry) => {
+  it.each(brandCases)('updates Google Sheets using $label OAuth ownership', async (entry) => {
     await updateGoogleSheetRowsResilient(
       'spreadsheet-1',
       'Leads',
@@ -228,7 +278,7 @@ describe('two-brand Google client routing regression', () => {
         }
       ],
       {},
-      { workspaceKey: entry.brand, googleAccountKey: entry.googleAccountKey }
+      { workspaceKey: entry.workspaceKey, googleAccountKey: entry.googleAccountKey }
     );
 
     expect(lastOAuthClientId()).toBe(entry.clientId);

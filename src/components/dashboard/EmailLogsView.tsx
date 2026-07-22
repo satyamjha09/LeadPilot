@@ -16,16 +16,19 @@ import {
 } from '@/src/components/dashboard/reviewTypes';
 import { ExcelRow } from '@/src/types';
 import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
+import type { WorkspaceKey } from '@/src/lib/senderAccount';
 
 export default function EmailLogsView({
   rows,
-  emailBrand
+  workspaceKey,
+  selectedEmailBrand
 }: {
   rows: ExcelRow[];
-  emailBrand: EmailBrandKey;
+  workspaceKey: WorkspaceKey;
+  selectedEmailBrand: EmailBrandKey;
 }) {
   const [detailsRow, setDetailsRow] = useState<ExcelRow | null>(null);
-  const brandLabel = emailBrandLabel(emailBrand);
+  const brandLabel = emailBrandLabel(selectedEmailBrand);
 
   return (
     <>
@@ -56,7 +59,7 @@ export default function EmailLogsView({
               <div key={row.id}>
                 <EmailLogRow
                   row={row}
-                  emailBrand={emailBrand}
+                  selectedEmailBrand={selectedEmailBrand}
                   brandLabel={brandLabel}
                   onViewDetails={() => setDetailsRow(row)}
                 />
@@ -68,7 +71,8 @@ export default function EmailLogsView({
 
       <RowDetailsDialog
         row={detailsRow}
-        emailBrand={emailBrand}
+        workspaceKey={workspaceKey}
+        selectedEmailBrand={selectedEmailBrand}
         open={!!detailsRow}
         onOpenChange={(open) => !open && setDetailsRow(null)}
       />
@@ -78,12 +82,12 @@ export default function EmailLogsView({
 
 function EmailLogRow({
   row,
-  emailBrand,
+  selectedEmailBrand,
   brandLabel,
   onViewDetails
 }: {
   row: ExcelRow;
-  emailBrand: EmailBrandKey;
+  selectedEmailBrand: EmailBrandKey;
   brandLabel: string;
   onViewDetails: () => void;
 }) {
@@ -92,12 +96,13 @@ function EmailLogRow({
   const rowBrandLabel = row.__emailBrand ? emailBrandLabel(row.__emailBrand) : brandLabel;
 
   const loadLogs = useCallback(async () => {
+    const businessEmailBrand = row.__emailBrand || selectedEmailBrand;
     setIsLoading(true);
     try {
       const res = await fetch('/api/leads/email-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ row, emailBrand })
+        body: JSON.stringify({ row, emailBrand: businessEmailBrand })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not load email history.');
@@ -108,7 +113,7 @@ function EmailLogRow({
     } finally {
       setIsLoading(false);
     }
-  }, [row, emailBrand]);
+  }, [row, selectedEmailBrand]);
 
   useEffect(() => {
     loadLogs();

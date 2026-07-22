@@ -26,16 +26,18 @@ import {
 } from '@/src/components/dashboard/reviewTypes';
 import { getLeadStatus, hasMeetLink } from '@/src/lib/rowUtils';
 import type { EmailBrandKey } from '@/src/lib/emailBrand';
+import type { WorkspaceKey } from '@/src/lib/senderAccount';
 import { ExcelRow } from '@/src/types';
 
 interface RowDetailsDialogProps {
   row: ExcelRow | null;
-  emailBrand?: EmailBrandKey;
+  workspaceKey?: WorkspaceKey;
+  selectedEmailBrand?: EmailBrandKey;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-export default function RowDetailsDialog({ row, emailBrand, open, onOpenChange }: RowDetailsDialogProps) {
+export default function RowDetailsDialog({ row, workspaceKey, selectedEmailBrand, open, onOpenChange }: RowDetailsDialogProps) {
   const [logs, setLogs] = useState<EmailHistoryLog[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [historyError, setHistoryError] = useState('');
@@ -44,11 +46,11 @@ export default function RowDetailsDialog({ row, emailBrand, open, onOpenChange }
   const [isLoadingSheetJobs, setIsLoadingSheetJobs] = useState(false);
   const [sheetJobError, setSheetJobError] = useState('');
   const [sheetRetryId, setSheetRetryId] = useState<string | null>(null);
-  const effectiveEmailBrand = row?.__emailBrand || emailBrand;
-  const effectiveWorkspaceKey = row?.__workspaceKey || effectiveEmailBrand;
+  const effectiveEmailBrand = row?.__emailBrand || selectedEmailBrand;
+  const effectiveWorkspaceKey = row?.__workspaceKey || workspaceKey;
 
   const loadEmailHistory = useCallback(async () => {
-    if (!row) return;
+    if (!row || !effectiveEmailBrand) return;
     setIsLoadingLogs(true);
     setHistoryError('');
 
@@ -56,7 +58,7 @@ export default function RowDetailsDialog({ row, emailBrand, open, onOpenChange }
       const res = await fetch('/api/leads/email-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ row, workspaceKey: effectiveWorkspaceKey, emailBrand: effectiveEmailBrand })
+        body: JSON.stringify({ row, emailBrand: effectiveEmailBrand })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not load email history.');
@@ -67,10 +69,10 @@ export default function RowDetailsDialog({ row, emailBrand, open, onOpenChange }
     } finally {
       setIsLoadingLogs(false);
     }
-  }, [row, effectiveWorkspaceKey, effectiveEmailBrand]);
+  }, [row, effectiveEmailBrand]);
 
   const loadSheetSyncJobs = useCallback(async () => {
-    if (!row) return;
+    if (!row || !effectiveWorkspaceKey || !effectiveEmailBrand) return;
     setIsLoadingSheetJobs(true);
     setSheetJobError('');
 

@@ -4,12 +4,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ExcelUpload from '@/src/components/import/ExcelUpload';
 import GoogleSheetImport from '@/src/components/import/GoogleSheetImport';
 import { ExcelRow, SheetSource } from '@/src/types';
-import type { EmailBrandKey } from '@/src/lib/emailBrand';
+import type { WorkspaceKey } from '@/src/lib/senderAccount';
 
 interface ImportPanelProps {
   onExcelParsed: (rows: ExcelRow[]) => void | Promise<void>;
   onGoogleSheetParsed: (rows: ExcelRow[], source: SheetSource) => void | Promise<void>;
-  emailBrand: EmailBrandKey;
+  workspaceKey: WorkspaceKey;
   isLoading: boolean;
   setIsLoading: (val: boolean) => void;
   uploadedFileName: string | null;
@@ -24,7 +24,7 @@ interface ImportPanelProps {
 export default function ImportPanel({
   onExcelParsed,
   onGoogleSheetParsed,
-  emailBrand,
+  workspaceKey,
   isLoading,
   setIsLoading,
   uploadedFileName,
@@ -71,7 +71,7 @@ export default function ImportPanel({
           <TabsContent value="google-sheet" className="mt-4">
             <GoogleSheetImport
               onDataParsed={onGoogleSheetParsed}
-              emailBrand={emailBrand}
+              workspaceKey={workspaceKey}
               isLoading={isLoading}
               setIsLoading={setIsLoading}
               getWorkspaceGeneration={getWorkspaceGeneration}

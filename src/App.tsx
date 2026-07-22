@@ -29,6 +29,14 @@ import {
   hasEmailActivity,
   needsManualReview
 } from '@/src/lib/rowUtils';
+import {
+  loadStoredRows,
+  loadStoredSelectedIds,
+  loadStoredSource,
+  removeStoredWorkspace,
+  workspaceStorageKey
+} from '@/src/lib/workspaceStorage';
+import { dashboardScopeMatches, type DashboardRequestScope } from '@/src/lib/dashboardScope';
 import { LEAD_STATUS, LeadStatusLabel } from '@/src/lib/leadStatus';
 import { getLeadStatus } from '@/src/lib/rowUtils';
 import {
@@ -52,14 +60,10 @@ import {
 } from '@/src/lib/senderAccount';
 import { cn } from '@/lib/utils';
 
-const LEGACY_ROWS_STORAGE_KEY = 'excel-meet-scheduler.rows';
-const LEGACY_SELECTED_STORAGE_KEY = 'excel-meet-scheduler.selectedRowIds';
-const LEGACY_SOURCE_STORAGE_KEY = 'excel-meet-scheduler.source';
 const LEGACY_EMAIL_BRAND_STORAGE_KEY = 'excel-meet-scheduler.emailBrand';
 const WORKSPACE_KEY_STORAGE = 'leadpilot.workspaceKey';
 const SENDER_ACCOUNT_STORAGE = 'leadpilot.senderAccountKey';
 const EMAIL_BRAND_STORAGE_KEY = 'leadpilot.emailBrandKey';
-const WORKSPACE_STORAGE_PREFIX = 'excel-meet-scheduler';
 const EMAIL_BRANDS: Array<{ key: EmailBrandKey; label: string; description: string }> = [
   { key: 'tallykonnect', label: emailBrandLabel('tallykonnect'), description: 'Use TallyKonnect logo, website, and footer.' },
   { key: 'anywheretally', label: emailBrandLabel('anywheretally'), description: 'Use AnyWhereTally logo, website, and footer.' }
@@ -140,70 +144,6 @@ type WorkspaceRequestKey =
   | 'lead-processing'
   | 'process-polling'
   | 'reconcile';
-
-const workspaceStorageKey = (brand: EmailBrandKey, key: 'rows' | 'selectedRowIds' | 'source') =>
-  `${WORKSPACE_STORAGE_PREFIX}.${brand}.${key}`;
-
-const getScopedStorageItem = (brand: EmailBrandKey, key: 'rows' | 'selectedRowIds' | 'source', legacyKey: string) => {
-  if (typeof window === 'undefined') return null;
-  const scoped = window.localStorage.getItem(workspaceStorageKey(brand, key));
-  if (scoped !== null) return scoped;
-  return brand === 'tallykonnect' ? window.localStorage.getItem(legacyKey) : null;
-};
-
-const loadStoredRows = (brand: EmailBrandKey): ExcelRow[] => {
-  if (typeof window === 'undefined') return [];
-  try {
-    const stored = getScopedStorageItem(brand, 'rows', LEGACY_ROWS_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
-  }
-};
-
-const loadStoredSelectedIds = (brand: EmailBrandKey) => {
-  if (typeof window === 'undefined') return new Set<string>();
-  try {
-    const stored = getScopedStorageItem(brand, 'selectedRowIds', LEGACY_SELECTED_STORAGE_KEY);
-    const ids = stored ? JSON.parse(stored) : [];
-    return new Set<string>(Array.isArray(ids) ? ids : []);
-  } catch {
-    return new Set<string>();
-  }
-};
-
-const normalizeStoredSource = (source: any): SheetSource => {
-  if (source?.type === 'google_sheet') {
-    return { ...source, type: 'google-sheet', headers: source.headers || [] };
-  }
-  if (source?.type === 'google-sheet') {
-    return { ...source, headers: source.headers || [] };
-  }
-  return { type: 'excel' };
-};
-
-const loadStoredSource = (brand: EmailBrandKey): SheetSource => {
-  if (typeof window === 'undefined') return { type: 'excel' };
-  try {
-    const stored = getScopedStorageItem(brand, 'source', LEGACY_SOURCE_STORAGE_KEY);
-    const parsed = stored ? JSON.parse(stored) : { type: 'excel' };
-    return normalizeStoredSource(parsed);
-  } catch {
-    return { type: 'excel' };
-  }
-};
-
-const removeStoredWorkspace = (brand: EmailBrandKey) => {
-  if (typeof window === 'undefined') return;
-  window.localStorage.removeItem(workspaceStorageKey(brand, 'rows'));
-  window.localStorage.removeItem(workspaceStorageKey(brand, 'selectedRowIds'));
-  window.localStorage.removeItem(workspaceStorageKey(brand, 'source'));
-  if (brand === 'tallykonnect') {
-    window.localStorage.removeItem(LEGACY_ROWS_STORAGE_KEY);
-    window.localStorage.removeItem(LEGACY_SELECTED_STORAGE_KEY);
-    window.localStorage.removeItem(LEGACY_SOURCE_STORAGE_KEY);
-  }
-};
 
 const loadStoredEmailBrand = (): EmailBrandKey => {
   if (typeof window === 'undefined') return 'tallykonnect';
@@ -331,6 +271,8 @@ export default function App() {
   const selectedSenderAccountKeyRef = useRef(selectedSenderAccountKey);
   const workspaceKeyRef = useRef(workspaceKey);
   const workspaceGenerationRef = useRef(0);
+  const dashboardRequestGenerationRef = useRef(0);
+  const dashboardRequestControllerRef = useRef<AbortController | null>(null);
   const workspaceRequestControllersRef = useRef<Record<WorkspaceRequestKey, AbortController | null>>({
     'excel-preview': null,
     'google-sheet-import': null,
@@ -343,6 +285,18 @@ export default function App() {
 
   const getWorkspaceGeneration = () => workspaceGenerationRef.current;
   const isCurrentWorkspace = (generation: number) => generation === workspaceGenerationRef.current;
+  const createDashboardScope = (): DashboardRequestScope => ({
+    workspaceKey,
+    emailBrand: selectedEmailBrand,
+    generation: ++dashboardRequestGenerationRef.current
+  });
+  const isCurrentDashboardScope = (scope: DashboardRequestScope) =>
+    dashboardScopeMatches(scope, {
+      workspaceKey: workspaceKeyRef.current,
+      emailBrand: selectedEmailBrandRef.current,
+      generation: dashboardRequestGenerationRef.current,
+      senderAccountKey: selectedSenderAccountKeyRef.current
+    });
   const createWorkspaceRequestSignal = (key: WorkspaceRequestKey) => {
     workspaceRequestControllersRef.current[key]?.abort();
     const controller = new AbortController();
@@ -359,6 +313,11 @@ export default function App() {
       workspaceRequestControllersRef.current[key]?.abort();
       workspaceRequestControllersRef.current[key] = null;
     });
+  };
+  const abortDashboardRequests = () => {
+    dashboardRequestControllerRef.current?.abort();
+    dashboardRequestControllerRef.current = null;
+    dashboardRequestGenerationRef.current += 1;
   };
 
   const resetTransientWorkspaceUi = () => {
@@ -380,14 +339,15 @@ export default function App() {
     setConfirmProcessOpen(false);
   };
 
-  const loadWorkspaceForBrand = (brand: EmailBrandKey) => {
+  const loadWorkspace = (nextWorkspaceKey: WorkspaceKey) => {
     workspaceGenerationRef.current += 1;
     abortWorkspaceRequests();
-    const storedRows = loadStoredRows(brand);
-    setWorkspaceBrand(brand);
+    abortDashboardRequests();
+    const storedRows = loadStoredRows(nextWorkspaceKey);
+    setWorkspaceBrand(nextWorkspaceKey);
     setRows(storedRows);
-    setSelectedRowIds(loadStoredSelectedIds(brand));
-    setSource(loadStoredSource(brand));
+    setSelectedRowIds(loadStoredSelectedIds(nextWorkspaceKey));
+    setSource(loadStoredSource(nextWorkspaceKey));
     didReconcileStoredRows.current = false;
     resetTransientWorkspaceUi();
     setActiveView(storedRows.length > 0 ? 'dashboard' : 'leads');
@@ -551,12 +511,12 @@ export default function App() {
     }
   };
 
-  const fetchDashboardTrend = async (brand: WorkspaceKey = workspaceKey, signal?: AbortSignal) => {
+  const fetchDashboardTrend = async (scope: DashboardRequestScope, signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/dashboard/trend?workspaceKey=${encodeURIComponent(brand)}&days=7`, { signal });
+      const res = await fetch(`/api/dashboard/trend?emailBrand=${encodeURIComponent(scope.emailBrand)}&days=7`, { signal });
       if (!res.ok) throw new Error('Trend server unreachable');
       const data = await res.json();
-      if (workspaceKeyRef.current === brand) {
+      if (isCurrentDashboardScope(scope) && data.emailBrand === scope.emailBrand) {
         setDashboardTrendData(Array.isArray(data.data) ? data.data : []);
       }
     } catch (err: unknown) {
@@ -566,12 +526,12 @@ export default function App() {
     }
   };
 
-  const fetchDashboardActivity = async (brand: WorkspaceKey = workspaceKey, signal?: AbortSignal) => {
+  const fetchDashboardActivity = async (scope: DashboardRequestScope, signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/dashboard/activity?workspaceKey=${encodeURIComponent(brand)}&limit=25`, { signal });
+      const res = await fetch(`/api/dashboard/activity?emailBrand=${encodeURIComponent(scope.emailBrand)}&limit=25`, { signal });
       if (!res.ok) throw new Error('Activity server unreachable');
       const data = await res.json();
-      if (workspaceKeyRef.current === brand) {
+      if (isCurrentDashboardScope(scope) && data.emailBrand === scope.emailBrand) {
         setDashboardActivityEvents(Array.isArray(data.data) ? data.data : []);
       }
     } catch (err: unknown) {
@@ -581,12 +541,12 @@ export default function App() {
     }
   };
 
-  const fetchDashboardHealth = async (brand: WorkspaceKey = workspaceKey, signal?: AbortSignal) => {
+  const fetchDashboardHealth = async (scope: DashboardRequestScope, signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/dashboard/health?workspaceKey=${encodeURIComponent(brand)}`, { signal });
+      const res = await fetch(`/api/dashboard/health?emailBrand=${encodeURIComponent(scope.emailBrand)}`, { signal });
       if (!res.ok) throw new Error('Health server unreachable');
       const data = await res.json();
-      if (workspaceKeyRef.current === brand) {
+      if (isCurrentDashboardScope(scope) && data.emailBrand === scope.emailBrand) {
         setDashboardHealthSummary(data.data || null);
       }
     } catch (err: unknown) {
@@ -637,15 +597,24 @@ export default function App() {
 
   useEffect(() => {
     const controller = new AbortController();
+    dashboardRequestControllerRef.current?.abort();
+    dashboardRequestControllerRef.current = controller;
+    const scope = createDashboardScope();
     setDashboardTrendData([]);
     setDashboardActivityEvents([]);
     setDashboardHealthSummary(null);
-    void fetchDashboardTrend(workspaceKey, controller.signal);
-    void fetchDashboardActivity(workspaceKey, controller.signal);
-    void fetchDashboardHealth(workspaceKey, controller.signal);
-    return () => controller.abort();
+    void fetchDashboardTrend(scope, controller.signal);
+    void fetchDashboardActivity(scope, controller.signal);
+    void fetchDashboardHealth(scope, controller.signal);
+    return () => {
+      controller.abort();
+      if (dashboardRequestControllerRef.current === controller) {
+        dashboardRequestControllerRef.current = null;
+      }
+    };
   }, [
     workspaceKey,
+    selectedEmailBrand,
     lastSummary?.scheduled,
     lastSummary?.demoScheduled,
     lastSummary?.reschedule,
@@ -1197,11 +1166,12 @@ export default function App() {
     }
   };
 
-  const clearWorkspaceState = (brand: EmailBrandKey = workspaceBrand) => {
+  const clearWorkspaceState = (targetWorkspaceKey: WorkspaceKey = workspaceBrand) => {
     workspaceGenerationRef.current += 1;
     abortWorkspaceRequests();
-    removeStoredWorkspace(brand);
-    setWorkspaceBrand(brand);
+    abortDashboardRequests();
+    removeStoredWorkspace(targetWorkspaceKey);
+    setWorkspaceBrand(targetWorkspaceKey);
     setRows([]);
     setSelectedRowIds(new Set());
     setSource({ type: 'excel' });
@@ -1213,6 +1183,7 @@ export default function App() {
   const cancelWorkspaceRequestsForReset = () => {
     workspaceGenerationRef.current += 1;
     abortWorkspaceRequests();
+    abortDashboardRequests();
     isSyncingRef.current = false;
     setIsProcessing(false);
     setIsLoadingFile(false);
@@ -1287,14 +1258,11 @@ export default function App() {
 
         {activeView === 'settings' ? (
           <SettingsPanel
-            emailBrand={workspaceKey}
+            emailBrand={selectedEmailBrand}
             onResetStart={cancelWorkspaceRequestsForReset}
             onResetComplete={() => {
               clearWorkspaceState(workspaceKey);
-              void fetchDashboardTrend(workspaceKey);
-              void fetchDashboardActivity(workspaceKey);
-              void fetchDashboardHealth(workspaceKey);
-              toast.success(`${emailBrandLabel(workspaceKey)} workflow and browser workspace reset. Import a fresh sheet to continue.`);
+              toast.success(`${emailBrandLabel(selectedEmailBrand)} workflow and browser workspace reset. Import a fresh sheet to continue.`);
             }}
           />
         ) : (
@@ -1308,7 +1276,9 @@ export default function App() {
                 healthSummary={dashboardHealthSummary}
                 authStatus={authStatus}
                 isAuthStatusLoading={isAuthStatusLoading}
-                emailBrand={workspaceKey}
+                workspaceKey={workspaceKey}
+                emailBrand={selectedEmailBrand}
+                senderAccountKey={selectedSenderAccountKey}
                 selectedCount={selectedRowIds.size}
                 onRunAutomation={() => openProcessPreflight(processTargetFromSelection)}
                 onViewAllActivity={() => setActiveView('activity')}
@@ -1317,10 +1287,10 @@ export default function App() {
 
             {activeView === 'activity' && <ActivityView events={dashboardActivityEvents} />}
             {activeView === 'manual-review' && (
-              <ManualReviewView rows={manualReviewRows} emailBrand={workspaceKey} />
+              <ManualReviewView rows={manualReviewRows} workspaceKey={workspaceKey} selectedEmailBrand={selectedEmailBrand} />
             )}
             {activeView === 'email-logs' && (
-              <EmailLogsView rows={emailLogRows} emailBrand={workspaceKey} />
+              <EmailLogsView rows={emailLogRows} workspaceKey={workspaceKey} selectedEmailBrand={selectedEmailBrand} />
             )}
 
             {showImport && (
@@ -1333,7 +1303,7 @@ export default function App() {
                   uploadedFileName={uploadedFileName}
                   setUploadedFileName={setUploadedFileName}
                   defaultTab={source.type === 'google-sheet' ? 'google-sheet' : 'excel'}
-                  emailBrand={workspaceKey}
+                  workspaceKey={workspaceKey}
                   getWorkspaceGeneration={getWorkspaceGeneration}
                   isCurrentWorkspace={isCurrentWorkspace}
                   createWorkspaceRequestSignal={createWorkspaceRequestSignal}
@@ -1379,7 +1349,8 @@ export default function App() {
                   onForceCloseActiveDemo={handleForceCloseActiveDemo}
                   onProcessRow={handleProcessRow}
                   isProcessing={isProcessing}
-                  emailBrand={workspaceKey}
+                  workspaceKey={workspaceKey}
+                  selectedEmailBrand={selectedEmailBrand}
                 />
               </>
             )}
@@ -1399,7 +1370,8 @@ export default function App() {
                 onForceCloseActiveDemo={handleForceCloseActiveDemo}
                 onProcessRow={handleProcessRow}
                 isProcessing={isProcessing}
-                emailBrand={workspaceKey}
+                workspaceKey={workspaceKey}
+                selectedEmailBrand={selectedEmailBrand}
               />
             )}
           </>

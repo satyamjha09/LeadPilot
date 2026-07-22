@@ -1,6 +1,6 @@
 import { LeadStatusLabel } from '@/src/lib/leadStatus';
 import type { EmailBrandKey } from '@/src/lib/emailBrand';
-import type { SenderAccountKey } from '@/src/lib/senderAccount';
+import type { SenderAccountKey, WorkspaceKey } from '@/src/lib/senderAccount';
 
 export interface ExcelRow {
   id: string;
@@ -121,14 +121,20 @@ export interface DashboardActivityEvent {
   tone: DashboardActivityTone;
   occurredAt: string;
   meta?: string;
+  emailBrand?: EmailBrandKey;
+  workspaceKey?: WorkspaceKey;
+  senderAccountKey?: SenderAccountKey;
+  googleAccountKey?: SenderAccountKey;
 }
 
 export interface DashboardHealthSummary {
   emailFailures: number;
   emailUnknown: number;
   emailRetryPending: number;
+  emailProcessingStale?: number;
   sheetSyncFailed: number;
   sheetSyncPending: number;
+  sheetSyncProcessingStale?: number;
   failedProcessJobs: number;
   activeProcessJobs: number;
   issueCount: number;

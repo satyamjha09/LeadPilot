@@ -19,14 +19,17 @@ import {
 } from '@/src/components/dashboard/reviewTypes';
 import { getLeadStatus } from '@/src/lib/rowUtils';
 import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
+import type { WorkspaceKey } from '@/src/lib/senderAccount';
 import { ExcelRow } from '@/src/types';
 
 export default function ManualReviewView({
   rows,
-  emailBrand
+  workspaceKey,
+  selectedEmailBrand
 }: {
   rows: ExcelRow[];
-  emailBrand: EmailBrandKey;
+  workspaceKey: WorkspaceKey;
+  selectedEmailBrand: EmailBrandKey;
 }) {
   const [detailsRow, setDetailsRow] = useState<ExcelRow | null>(null);
 
@@ -57,7 +60,12 @@ export default function ManualReviewView({
           ) : (
             rows.map((row) => (
               <div key={row.id}>
-                <ManualReviewRow row={row} emailBrand={emailBrand} onViewDetails={() => setDetailsRow(row)} />
+                <ManualReviewRow
+                  row={row}
+                  workspaceKey={workspaceKey}
+                  selectedEmailBrand={selectedEmailBrand}
+                  onViewDetails={() => setDetailsRow(row)}
+                />
               </div>
             ))
           )}
@@ -66,7 +74,8 @@ export default function ManualReviewView({
 
       <RowDetailsDialog
         row={detailsRow}
-        emailBrand={emailBrand}
+        workspaceKey={workspaceKey}
+        selectedEmailBrand={selectedEmailBrand}
         open={!!detailsRow}
         onOpenChange={(open) => !open && setDetailsRow(null)}
       />
@@ -76,11 +85,13 @@ export default function ManualReviewView({
 
 function ManualReviewRow({
   row,
-  emailBrand,
+  workspaceKey,
+  selectedEmailBrand,
   onViewDetails
 }: {
   row: ExcelRow;
-  emailBrand: EmailBrandKey;
+  workspaceKey: WorkspaceKey;
+  selectedEmailBrand: EmailBrandKey;
   onViewDetails: () => void;
 }) {
   const [logs, setLogs] = useState<EmailHistoryLog[]>([]);
@@ -89,18 +100,20 @@ function ManualReviewRow({
   const [actionId, setActionId] = useState<string | null>(null);
 
   const loadReviewData = useCallback(async () => {
+    const businessEmailBrand = row.__emailBrand || selectedEmailBrand;
+    const sourceWorkspaceKey = row.__workspaceKey || workspaceKey;
     setIsLoading(true);
     try {
       const [emailRes, sheetRes] = await Promise.all([
         fetch('/api/leads/email-history', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ row, emailBrand })
+          body: JSON.stringify({ row, emailBrand: businessEmailBrand })
         }),
         fetch('/api/sheet-sync/jobs-for-row', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ row, workspaceKey: row.__workspaceKey || emailBrand, emailBrand })
+          body: JSON.stringify({ row, workspaceKey: sourceWorkspaceKey, emailBrand: businessEmailBrand })
         })
       ]);
 
@@ -116,7 +129,7 @@ function ManualReviewRow({
     } finally {
       setIsLoading(false);
     }
-  }, [row, emailBrand]);
+  }, [row, workspaceKey, selectedEmailBrand]);
 
   useEffect(() => {
     loadReviewData();
@@ -227,7 +240,7 @@ function ManualReviewRow({
                       <div>
                         <p className="text-sm font-semibold">{formatLogType(log.type)}</p>
                         <p className="text-xs text-muted-foreground">
-                          {formatStatus(log.status)} | {emailBrandLabel(log.emailBrand || row.__emailBrand || emailBrand)} | attempts {log.attemptCount || 1}
+                          {formatStatus(log.status)} | {emailBrandLabel(log.emailBrand || row.__emailBrand || selectedEmailBrand)} | attempts {log.attemptCount || 1}
                         </p>
                       </div>
                       <Badge variant={canReview ? 'outline' : 'destructive'}>{formatStatus(log.status)}</Badge>
