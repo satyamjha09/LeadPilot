@@ -17,6 +17,7 @@ import {
 import { ExcelRow } from '@/src/types';
 import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
 import type { WorkspaceKey } from '@/src/lib/senderAccount';
+import { apiFetch } from '@/src/lib/authClient';
 
 export default function EmailLogsView({
   rows,
@@ -99,7 +100,7 @@ function EmailLogRow({
     const businessEmailBrand = row.__emailBrand || selectedEmailBrand;
     setIsLoading(true);
     try {
-      const res = await fetch('/api/leads/email-history', {
+      const res = await apiFetch('/api/leads/email-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ row, emailBrand: businessEmailBrand })

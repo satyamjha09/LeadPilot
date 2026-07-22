@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ExcelRow, SheetSource } from '@/src/types';
 import type { WorkspaceKey } from '@/src/lib/senderAccount';
+import { apiFetch } from '@/src/lib/authClient';
 
 interface GoogleSheetImportProps {
   onDataParsed: (rows: ExcelRow[], source: SheetSource) => void | Promise<void>;
@@ -44,7 +45,7 @@ export default function GoogleSheetImport({
 
     const signal = createWorkspaceRequestSignal('google-sheet-import');
     try {
-      const response = await fetch('/api/sheets/import', {
+      const response = await apiFetch('/api/sheets/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal,

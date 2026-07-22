@@ -5,13 +5,21 @@ import { registerAuthRoutes } from './authRoutes';
 
 const googleAuthMock = vi.hoisted(() => ({
   clearSenderCredentials: vi.fn(),
-  createSenderAuthUrl: vi.fn(),
+  createSenderAuthUrlForOperator: vi.fn(),
   exchangeCodeAndSaveFromState: vi.fn(),
   getSenderAuthStatus: vi.fn(),
   listGoogleSenderAccounts: vi.fn()
 }));
 
 vi.mock('../googleAuth', () => googleAuthMock);
+
+vi.mock('../operatorAuth/session', () => ({
+  resolveOperatorSession: vi.fn(async () => ({
+    operator: { id: 'operator-1', email: 'admin@example.com', displayName: null, role: 'ADMIN' },
+    sessionId: 'session-1',
+    csrfHash: 'csrf-hash'
+  }))
+}));
 
 function createApp() {
   const app = express();
@@ -35,7 +43,10 @@ describe('OAuth callback route hardening', () => {
       })
       .expect(200);
 
-    expect(googleAuthMock.exchangeCodeAndSaveFromState).toHaveBeenCalledWith('SECRET_CODE', 'SECRET_STATE');
+    expect(googleAuthMock.exchangeCodeAndSaveFromState).toHaveBeenCalledWith('SECRET_CODE', 'SECRET_STATE', {
+      operatorId: 'operator-1',
+      operatorSessionId: 'session-1'
+    });
     expect(response.text).toContain("type: 'OAUTH_AUTH_SUCCESS'");
     expect(response.text).toContain('senderAccountKey: "tallykonnect-google"');
     expect(response.text).toContain('window.location.origin');

@@ -93,6 +93,10 @@ enum LeadMatchConflictType {
   INVALID_IDENTITY
 }
 
+enum OperatorRole {
+  ADMIN
+}
+
 model Workspace {
   id        String          @id @default(cuid())
   key       String          @unique
@@ -754,15 +758,71 @@ model GoogleAuth {
 }
 
 model GoogleOAuthState {
-  id               String    @id @default(cuid())
-  stateHash        String    @unique
-  senderAccountKey String
-  expiresAt        DateTime
-  consumedAt       DateTime?
-  createdAt        DateTime  @default(now())
+  id                String    @id @default(cuid())
+  stateHash         String    @unique
+  senderAccountKey  String
+  operatorId        String?
+  operatorSessionId String?
+  expiresAt         DateTime
+  consumedAt        DateTime?
+  createdAt         DateTime  @default(now())
 
   @@index([senderAccountKey])
+  @@index([operatorId])
+  @@index([operatorSessionId])
   @@index([expiresAt])
+}
+
+model Operator {
+  id              String       @id @default(cuid())
+  email           String
+  normalizedEmail String       @unique
+  displayName     String?
+  passwordHash    String
+  role            OperatorRole @default(ADMIN)
+  isActive        Boolean      @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  sessions OperatorSession[]
+
+  @@index([role])
+  @@index([isActive])
+}
+
+model OperatorSession {
+  id            String    @id @default(cuid())
+  operatorId    String
+  tokenHash     String    @unique
+  csrfHash      String
+  createdAt     DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  expiresAt     DateTime
+  idleExpiresAt DateTime?
+  revokedAt     DateTime?
+  userAgentHash String?
+  ipHash        String?
+
+  operator Operator @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+
+  @@index([operatorId])
+  @@index([expiresAt])
+  @@index([idleExpiresAt])
+  @@index([revokedAt])
+}
+
+model OperatorLoginThrottle {
+  id                  String    @id @default(cuid())
+  normalizedEmailHash String
+  ipHash              String
+  failureCount        Int       @default(0)
+  windowStartedAt     DateTime  @default(now())
+  blockedUntil        DateTime?
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([normalizedEmailHash, ipHash])
+  @@index([blockedUntil])
 }
 
 model WorkflowControl {

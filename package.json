@@ -20,7 +20,11 @@
     "db:deploy": "prisma migrate deploy",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:generate": "prisma generate"
+    "db:generate": "prisma generate",
+    "operator:create": "tsx scripts/operator-admin.ts create",
+    "operator:reset-password": "tsx scripts/operator-admin.ts reset-password",
+    "operator:list": "tsx scripts/operator-admin.ts list",
+    "operator:revoke-sessions": "tsx scripts/operator-admin.ts revoke-sessions"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

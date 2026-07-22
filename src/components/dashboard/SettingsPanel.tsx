@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ReminderConfig, ScheduledReminder } from '@/src/types';
 import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
+import { apiFetch } from '@/src/lib/authClient';
 
 const reminderOptions = [
   { label: 'Off', value: 'off', enabled: false, offsetMinutes: 120 },
@@ -45,12 +46,11 @@ export default function SettingsPanel({
   const [isSaving, setIsSaving] = useState(false);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
-  const [adminResetToken, setAdminResetToken] = useState('');
   const [resetConfirmationInput, setResetConfirmationInput] = useState('');
 
   const loadStatus = async () => {
     try {
-      const res = await fetch('/api/reminders/status');
+      const res = await apiFetch('/api/reminders/status');
       if (!res.ok) throw new Error('Could not load reminder settings.');
       const data = await res.json();
       setConfig(data.config || { offsetMinutes: 120, enabled: false });
@@ -69,7 +69,7 @@ export default function SettingsPanel({
   const saveConfig = async (updatedConfig: ReminderConfig) => {
     setIsSaving(true);
     try {
-      const res = await fetch('/api/reminders/config', {
+      const res = await apiFetch('/api/reminders/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedConfig)
@@ -98,11 +98,10 @@ export default function SettingsPanel({
     setIsResetting(true);
     onResetStart?.();
     try {
-      const res = await fetch('/api/admin/reset-demo-test-data', {
+      const res = await apiFetch('/api/admin/reset-demo-test-data', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'X-Admin-Reset-Token': adminResetToken.trim()
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ emailBrand, confirmation: resetConfirmationInput.trim() })
       });
@@ -114,7 +113,6 @@ export default function SettingsPanel({
       if (onResetComplete) onResetComplete();
       else toast.success(`${brandLabel} workflow data deleted`);
       setConfirmResetOpen(false);
-      setAdminResetToken('');
       setResetConfirmationInput('');
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Database reset failed');
@@ -215,17 +213,6 @@ export default function SettingsPanel({
             Confirmation phrase: {resetConfirmation}
           </p>
           <div className="space-y-2">
-            <Label htmlFor="admin-reset-token">Admin reset key</Label>
-            <Input
-              id="admin-reset-token"
-              type="password"
-              value={adminResetToken}
-              onChange={(event) => setAdminResetToken(event.target.value)}
-              placeholder="Enter admin reset key"
-              autoComplete="off"
-            />
-          </div>
-          <div className="space-y-2">
             <Label htmlFor="admin-reset-confirmation">Type confirmation phrase</Label>
             <Input
               id="admin-reset-confirmation"
@@ -241,7 +228,6 @@ export default function SettingsPanel({
               variant="outline"
               onClick={() => {
                 setConfirmResetOpen(false);
-                setAdminResetToken('');
                 setResetConfirmationInput('');
               }}
               disabled={isResetting}
@@ -252,7 +238,7 @@ export default function SettingsPanel({
               type="button"
               variant="destructive"
               onClick={resetDatabase}
-              disabled={isResetting || !adminResetToken.trim() || resetConfirmationInput.trim() !== resetConfirmation}
+              disabled={isResetting || resetConfirmationInput.trim() !== resetConfirmation}
             >
               {isResetting ? 'Resetting...' : 'Confirm Reset'}
             </Button>

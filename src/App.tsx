@@ -21,6 +21,7 @@ import LeadsTable from '@/src/components/dashboard/LeadsTable';
 import ManualReviewView from '@/src/components/dashboard/ManualReviewView';
 import ProcessingPanel from '@/src/components/dashboard/ProcessingPanel';
 import SettingsPanel from '@/src/components/dashboard/SettingsPanel';
+import OperatorLogin from '@/src/components/auth/OperatorLogin';
 import {
   canProcessLead,
   computeStats,
@@ -60,6 +61,22 @@ import {
   type WorkspaceKey
 } from '@/src/lib/senderAccount';
 import { cn } from '@/lib/utils';
+import {
+  apiFetch,
+  clearCsrfToken,
+  readJsonOrThrow,
+  setCsrfToken,
+  setUnauthorizedHandler,
+  type OperatorSessionOperator,
+  type OperatorSessionResponse
+} from '@/src/lib/authClient';
+import {
+  ACTIVE_ACCOUNTS,
+  ACTIVE_ACCOUNT_LIST,
+  ACTIVE_ACCOUNT_STORAGE_KEY,
+  parseActiveAccountKey,
+  type ActiveAccountKey
+} from '@/src/lib/activeAccount';
 
 const LEGACY_EMAIL_BRAND_STORAGE_KEY = 'excel-meet-scheduler.emailBrand';
 const WORKSPACE_KEY_STORAGE = 'leadpilot.workspaceKey';
@@ -69,6 +86,11 @@ const EMAIL_BRANDS: Array<{ key: EmailBrandKey; label: string; description: stri
   { key: 'tallykonnect', label: emailBrandLabel('tallykonnect'), description: 'Use TallyKonnect logo, website, and footer.' },
   { key: 'anywheretally', label: emailBrandLabel('anywheretally'), description: 'Use AnyWhereTally logo, website, and footer.' }
 ];
+
+const loadStoredActiveAccountKey = (): ActiveAccountKey => {
+  if (typeof window === 'undefined') return 'tallykonnect';
+  return parseActiveAccountKey(window.localStorage.getItem(ACTIVE_ACCOUNT_STORAGE_KEY));
+};
 
 type ProcessPreview = {
   emailBrand: EmailBrandKey;
@@ -235,9 +257,16 @@ const senderStatusKey = (status: AuthStatus | null | undefined): SenderAccountKe
 };
 
 export default function App() {
-  const initialWorkspaceKey = loadStoredWorkspaceKey();
-  const initialSenderAccountKey = loadStoredSenderAccountKey();
-  const initialEmailBrand = loadStoredEmailBrand();
+  const initialActiveAccountKey = loadStoredActiveAccountKey();
+  const initialActiveAccount = ACTIVE_ACCOUNTS[initialActiveAccountKey];
+  const initialWorkspaceKey = initialActiveAccount.workspaceKey || loadStoredWorkspaceKey();
+  const initialSenderAccountKey = initialActiveAccount.senderAccountKey || loadStoredSenderAccountKey();
+  const initialEmailBrand = initialActiveAccount.emailBrand || loadStoredEmailBrand();
+  const [operator, setOperator] = useState<OperatorSessionOperator | null>(null);
+  const [isOperatorChecking, setIsOperatorChecking] = useState(true);
+  const [isOperatorLoggingIn, setIsOperatorLoggingIn] = useState(false);
+  const [activeAccountKey, setActiveAccountKey] = useState<ActiveAccountKey>(initialActiveAccountKey);
+  const [googleSenderStatuses, setGoogleSenderStatuses] = useState<Partial<Record<SenderAccountKey, AuthStatus>>>({});
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [isAuthStatusLoading, setIsAuthStatusLoading] = useState(true);
   const [workspaceKey, setWorkspaceKey] = useState<WorkspaceKey>(initialWorkspaceKey);
@@ -333,6 +362,62 @@ export default function App() {
     dashboardRequestGenerationRef.current += 1;
   };
 
+  const handleSessionExpired = () => {
+    clearCsrfToken();
+    setOperator(null);
+    setAuthStatus(null);
+    setGoogleSenderStatuses({});
+    abortWorkspaceRequests();
+    abortDashboardRequests();
+    resetTransientWorkspaceUi();
+  };
+
+  const loadOperatorSession = async () => {
+    setIsOperatorChecking(true);
+    try {
+      const response = await apiFetch('/api/operator/session');
+      if (!response.ok) {
+        handleSessionExpired();
+        return;
+      }
+      const data = await response.json() as OperatorSessionResponse;
+      setCsrfToken(data.csrfToken);
+      setOperator(data.operator || null);
+    } catch {
+      handleSessionExpired();
+    } finally {
+      setIsOperatorChecking(false);
+    }
+  };
+
+  const handleOperatorLogin = async (email: string, password: string) => {
+    setIsOperatorLoggingIn(true);
+    try {
+      const response = await fetch('/api/operator/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await readJsonOrThrow<OperatorSessionResponse>(response, 'Invalid email or password.');
+      setCsrfToken(data.csrfToken);
+      setOperator(data.operator || null);
+      toast.success('Signed in');
+    } finally {
+      setIsOperatorLoggingIn(false);
+    }
+  };
+
+  const handleOperatorLogout = async () => {
+    try {
+      await apiFetch('/api/operator/logout', { method: 'POST' });
+    } catch {
+      // Local cleanup still happens below.
+    }
+    handleSessionExpired();
+    setIsOperatorChecking(false);
+  };
+
   const resetTransientWorkspaceUi = () => {
     isSyncingRef.current = false;
     setUploadedFileName(null);
@@ -365,6 +450,19 @@ export default function App() {
     didReconcileStoredRows.current = false;
     resetTransientWorkspaceUi();
     setActiveView(storedRows.length > 0 ? 'dashboard' : 'leads');
+  };
+
+  const selectActiveAccount = (nextAccountKey: ActiveAccountKey) => {
+    const account = ACTIVE_ACCOUNTS[nextAccountKey];
+    window.localStorage.setItem(ACTIVE_ACCOUNT_STORAGE_KEY, nextAccountKey);
+    window.localStorage.setItem(WORKSPACE_KEY_STORAGE, account.workspaceKey);
+    window.localStorage.setItem(EMAIL_BRAND_STORAGE_KEY, account.emailBrand);
+    window.localStorage.setItem(SENDER_ACCOUNT_STORAGE, account.senderAccountKey);
+    setActiveAccountKey(nextAccountKey);
+    setSelectedEmailBrand(account.emailBrand);
+    setSelectedSenderAccountKey(account.senderAccountKey);
+    loadWorkspace(account.workspaceKey);
+    toast.info(`Active account: ${account.label}`);
   };
 
   const stats = useMemo(() => computeStats(rows), [rows]);
@@ -510,7 +608,7 @@ export default function App() {
     if (rowsToReconcile.length === 0) return rowsToReconcile;
     const signal = createWorkspaceRequestSignal('reconcile');
     try {
-      const res = await fetch('/api/reconcile', {
+      const res = await apiFetch('/api/reconcile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal,
@@ -528,9 +626,10 @@ export default function App() {
     setIsAuthStatusLoading(true);
     setAuthStatus(null);
     try {
-      const res = await fetch(`/api/google-senders/${encodeURIComponent(senderAccountKey)}/status`);
+      const res = await apiFetch(`/api/google-senders/${encodeURIComponent(senderAccountKey)}/status`);
       if (!res.ok) throw new Error('Status server unreachable');
       const data = await res.json();
+      setGoogleSenderStatuses((current) => ({ ...current, [senderAccountKey]: data }));
       if (selectedSenderAccountKeyRef.current === senderAccountKey) {
         setAuthStatus(data);
       }
@@ -548,7 +647,7 @@ export default function App() {
 
   const fetchProcessQueueConfig = async () => {
     try {
-      const res = await fetch('/api/process-leads/queue-config');
+      const res = await apiFetch('/api/process-leads/queue-config');
       if (!res.ok) return;
       const data = await res.json();
       setProcessQueueEnabled(!!data.enabled);
@@ -559,7 +658,7 @@ export default function App() {
 
   const fetchDashboardTrend = async (scope: DashboardRequestScope, signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/dashboard/trend?emailBrand=${encodeURIComponent(scope.emailBrand)}&days=7`, { signal });
+      const res = await apiFetch(`/api/dashboard/trend?emailBrand=${encodeURIComponent(scope.emailBrand)}&days=7`, { signal });
       if (!res.ok) throw new Error('Trend server unreachable');
       const data = await res.json();
       if (isCurrentDashboardScope(scope) && data.emailBrand === scope.emailBrand) {
@@ -574,7 +673,7 @@ export default function App() {
 
   const fetchDashboardActivity = async (scope: DashboardRequestScope, signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/dashboard/activity?emailBrand=${encodeURIComponent(scope.emailBrand)}&limit=25`, { signal });
+      const res = await apiFetch(`/api/dashboard/activity?emailBrand=${encodeURIComponent(scope.emailBrand)}&limit=25`, { signal });
       if (!res.ok) throw new Error('Activity server unreachable');
       const data = await res.json();
       if (isCurrentDashboardScope(scope) && data.emailBrand === scope.emailBrand) {
@@ -589,7 +688,7 @@ export default function App() {
 
   const fetchDashboardHealth = async (scope: DashboardRequestScope, signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/dashboard/health?emailBrand=${encodeURIComponent(scope.emailBrand)}`, { signal });
+      const res = await apiFetch(`/api/dashboard/health?emailBrand=${encodeURIComponent(scope.emailBrand)}`, { signal });
       if (!res.ok) throw new Error('Health server unreachable');
       const data = await res.json();
       if (isCurrentDashboardScope(scope) && data.emailBrand === scope.emailBrand) {
@@ -608,6 +707,12 @@ export default function App() {
   }, [isDark]);
 
   useEffect(() => {
+    setUnauthorizedHandler(handleSessionExpired);
+    void loadOperatorSession();
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
+  useEffect(() => {
     selectedEmailBrandRef.current = selectedEmailBrand;
   }, [selectedEmailBrand]);
 
@@ -624,7 +729,11 @@ export default function App() {
   }, [workspaceKey]);
 
   useEffect(() => {
+    if (!operator) return;
     fetchAuthStatus(selectedSenderAccountKey);
+    SENDER_ACCOUNT_KEYS.forEach((senderKey) => {
+      if (senderKey !== selectedSenderAccountKey) void fetchAuthStatus(senderKey);
+    });
     fetchProcessQueueConfig();
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
@@ -643,9 +752,10 @@ export default function App() {
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [selectedSenderAccountKey]);
+  }, [operator, selectedSenderAccountKey]);
 
   useEffect(() => {
+    if (!operator) return;
     const controller = new AbortController();
     dashboardRequestControllerRef.current?.abort();
     dashboardRequestControllerRef.current = controller;
@@ -794,7 +904,7 @@ export default function App() {
     setIsProcessing(true);
     setProcessingProgress(null);
     try {
-      const res = await fetch('/api/sheets/sync', {
+      const res = await apiFetch('/api/sheets/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal,
@@ -859,7 +969,7 @@ export default function App() {
     setIsPreflightLoading(true);
 
     try {
-      const res = await fetch('/api/process-leads/preview', {
+      const res = await apiFetch('/api/process-leads/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal,
@@ -949,7 +1059,7 @@ export default function App() {
     while (true) {
       await abortableDelay(2000, signal);
       if (!isCurrentWorkspace(generation)) return;
-      const res = await fetch(`/api/process-leads/jobs/${encodeURIComponent(jobId)}`, { signal });
+      const res = await apiFetch(`/api/process-leads/jobs/${encodeURIComponent(jobId)}`, { signal });
       const data: ProcessLeadJobResponse = await res.json();
       if (!res.ok) throw new Error(data.error || 'Process job lookup failed.');
       if (!isCurrentWorkspace(generation)) return;
@@ -990,7 +1100,7 @@ export default function App() {
     const queueSignal = createWorkspaceRequestSignal('lead-processing');
     let data: ProcessLeadJobResponse;
     try {
-      const res = await fetch('/api/process-leads/jobs', {
+      const res = await apiFetch('/api/process-leads/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: queueSignal,
@@ -1085,7 +1195,7 @@ export default function App() {
 
     const signal = createWorkspaceRequestSignal('lead-processing');
     try {
-      const res = await fetch('/api/process-leads', {
+      const res = await apiFetch('/api/process-leads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal,
@@ -1123,7 +1233,7 @@ export default function App() {
     previousStatus: LeadStatusLabel | 'Failed' | ''
   ) => {
     try {
-      const res = await fetch('/api/lead-status/update', {
+      const res = await apiFetch('/api/lead-status/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1145,7 +1255,7 @@ export default function App() {
   const handleForceCloseActiveDemo = async (row: ExcelRow, remarks: string) => {
     setIsProcessing(true);
     try {
-      const res = await fetch('/api/active-demo/force-close', {
+      const res = await apiFetch('/api/active-demo/force-close', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1205,7 +1315,7 @@ export default function App() {
   const handleExportDetails = async () => {
     if (rows.length === 0) return;
     try {
-      const res = await fetch('/api/export', {
+      const res = await apiFetch('/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rows })
@@ -1237,7 +1347,7 @@ export default function App() {
   const handleClearAuth = async () => {
     setConfirmClearAuthOpen(false);
     try {
-      const res = await fetch(`/api/google-senders/${encodeURIComponent(selectedSenderAccountKey)}/disconnect`, {
+      const res = await apiFetch(`/api/google-senders/${encodeURIComponent(selectedSenderAccountKey)}/disconnect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -1323,10 +1433,40 @@ export default function App() {
   const showImport = activeView === 'leads' || activeView === 'import';
   const viewCopy = getViewCopy(activeView);
 
+  if (isOperatorChecking) {
+    return (
+      <div className="tk-grid-background grid min-h-screen place-items-center p-4 text-sm text-muted-foreground">
+        Checking operator session...
+      </div>
+    );
+  }
+
+  if (!operator) {
+    return <OperatorLogin onSubmit={handleOperatorLogin} isLoading={isOperatorLoggingIn} />;
+  }
+
   return (
     <TooltipProvider>
         <AppShell
           authStatus={authStatus}
+          googleSenderStatuses={googleSenderStatuses}
+          operator={operator}
+          activeAccountKey={activeAccountKey}
+          activeAccounts={ACTIVE_ACCOUNT_LIST}
+          onSelectActiveAccount={selectActiveAccount}
+          onConnectGoogle={(senderAccountKey) => {
+            const width = 600;
+            const height = 700;
+            const left = window.screen.width / 2 - width / 2;
+            const top = window.screen.height / 2 - height / 2;
+            const authWindow = window.open(
+              `/api/google-senders/${encodeURIComponent(senderAccountKey)}/connect`,
+              'google_oauth_popup',
+              `width=${width},height=${height},top=${top},left=${left},resizable=yes,scrollbars=yes`
+            );
+            if (!authWindow) toast.error('Pop-up blocked. Please allow pop-ups to connect Google.');
+          }}
+          onLogout={handleOperatorLogout}
           pageTitle={viewCopy.title}
           pageDescription={viewCopy.description}
         onRefreshAuth={() => fetchAuthStatus(selectedSenderAccountKey)}

@@ -15,6 +15,14 @@ function safeCompare(a: string, b: string) {
 
 export function requireMultiSourceAdmin(req: Request, res: Response, next: NextFunction) {
   try {
+    if (req.operator?.role === 'ADMIN') {
+      return next();
+    }
+
+    if (process.env.ALLOW_LEGACY_ADMIN_TOKENS !== 'true') {
+      throw new SourceUnauthorizedError();
+    }
+
     const configuredToken = process.env.MULTI_SOURCE_V2_ADMIN_TOKEN;
     if (!configuredToken) {
       throw new SourceConfigurationError('Multi-source admin token is not configured.');

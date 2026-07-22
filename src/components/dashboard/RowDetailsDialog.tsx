@@ -28,6 +28,7 @@ import { getLeadStatus, hasMeetLink } from '@/src/lib/rowUtils';
 import type { EmailBrandKey } from '@/src/lib/emailBrand';
 import type { WorkspaceKey } from '@/src/lib/senderAccount';
 import { ExcelRow } from '@/src/types';
+import { apiFetch } from '@/src/lib/authClient';
 
 interface RowDetailsDialogProps {
   row: ExcelRow | null;
@@ -55,7 +56,7 @@ export default function RowDetailsDialog({ row, workspaceKey, selectedEmailBrand
     setHistoryError('');
 
     try {
-      const res = await fetch('/api/leads/email-history', {
+      const res = await apiFetch('/api/leads/email-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ row, emailBrand: effectiveEmailBrand })
@@ -77,7 +78,7 @@ export default function RowDetailsDialog({ row, workspaceKey, selectedEmailBrand
     setSheetJobError('');
 
     try {
-      const res = await fetch('/api/sheet-sync/jobs-for-row', {
+      const res = await apiFetch('/api/sheet-sync/jobs-for-row', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ row, workspaceKey: effectiveWorkspaceKey, emailBrand: effectiveEmailBrand })
@@ -119,7 +120,7 @@ export default function RowDetailsDialog({ row, workspaceKey, selectedEmailBrand
 
     setReviewActionId(`${log.id}:${action}`);
     try {
-      const res = await fetch(`/api/email-deliveries/${encodeURIComponent(log.id)}/${action}`, {
+      const res = await apiFetch(`/api/email-deliveries/${encodeURIComponent(log.id)}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -141,7 +142,7 @@ export default function RowDetailsDialog({ row, workspaceKey, selectedEmailBrand
 
     setSheetRetryId(job.id);
     try {
-      const res = await fetch(`/api/sheet-sync/jobs/${encodeURIComponent(job.id)}/retry`, {
+      const res = await apiFetch(`/api/sheet-sync/jobs/${encodeURIComponent(job.id)}/retry`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})

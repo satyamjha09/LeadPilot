@@ -4,6 +4,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ExcelRow } from '@/src/types';
+import { apiFetch } from '@/src/lib/authClient';
 
 interface ExcelUploadProps {
   onDataParsed: (rows: ExcelRow[]) => void | Promise<void>;
@@ -60,7 +61,7 @@ export default function ExcelUpload({
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch('/api/preview', {
+      const response = await apiFetch('/api/preview', {
         method: 'POST',
         signal,
         body: formData

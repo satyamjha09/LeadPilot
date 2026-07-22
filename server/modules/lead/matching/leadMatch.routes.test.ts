@@ -1,6 +1,6 @@
 import express from 'express';
 import request from 'supertest';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mergeWorkspaceLeads } from '../merge/leadMerge.service';
 import { registerLeadMatchRoutes } from './leadMatch.routes';
@@ -46,9 +46,15 @@ function createApp() {
 
 describe('lead match routes', () => {
   const originalToken = process.env.MULTI_SOURCE_V2_ADMIN_TOKEN;
+  const originalLegacy = process.env.ALLOW_LEGACY_ADMIN_TOKENS;
+
+  beforeEach(() => {
+    process.env.ALLOW_LEGACY_ADMIN_TOKENS = 'true';
+  });
 
   afterEach(() => {
     process.env.MULTI_SOURCE_V2_ADMIN_TOKEN = originalToken;
+    process.env.ALLOW_LEGACY_ADMIN_TOKENS = originalLegacy;
     vi.clearAllMocks();
   });
 

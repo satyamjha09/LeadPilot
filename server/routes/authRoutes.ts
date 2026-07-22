@@ -1,13 +1,14 @@
 import type { Express, Response } from 'express';
 import {
   clearSenderCredentials,
-  createSenderAuthUrl,
+  createSenderAuthUrlForOperator,
   exchangeCodeAndSaveFromState,
   getSenderAuthStatus,
   listGoogleSenderAccounts
 } from '../googleAuth';
 import { sendRouteError } from '../routeErrors';
 import { parseSenderAccountKey } from '../../src/lib/senderAccount';
+import { resolveOperatorSession } from '../operatorAuth/session';
 
 function escapeHtml(value: unknown) {
   return String(value ?? '')
@@ -62,7 +63,10 @@ function oauthCallbackErrorMessage(error: any) {
 export function registerAuthRoutes(app: Express) {
   app.get('/api/google-senders', async (_req, res) => {
     try {
-      const accounts = await listGoogleSenderAccounts();
+      const context = _req.operator && _req.operatorSession
+        ? { operatorId: _req.operator.id, operatorSessionId: _req.operatorSession.id }
+        : undefined;
+      const accounts = await listGoogleSenderAccounts(context);
       return res.json({ accounts });
     } catch (err: any) {
       return sendRouteError(res, err, 'Google sender list failed');
@@ -71,7 +75,10 @@ export function registerAuthRoutes(app: Express) {
 
   app.get('/api/google-senders/:senderAccountKey/status', async (req, res) => {
     try {
-      const status = await getSenderAuthStatus(parseSenderAccountKey(req.params.senderAccountKey));
+      const context = req.operator && req.operatorSession
+        ? { operatorId: req.operator.id, operatorSessionId: req.operatorSession.id }
+        : undefined;
+      const status = await getSenderAuthStatus(parseSenderAccountKey(req.params.senderAccountKey), context);
       return res.json(status);
     } catch (err: any) {
       return sendRouteError(res, err, 'Google sender status failed');
@@ -81,7 +88,13 @@ export function registerAuthRoutes(app: Express) {
   app.get('/api/google-senders/:senderAccountKey/connect', async (req, res) => {
     try {
       const senderAccountKey = parseSenderAccountKey(req.params.senderAccountKey);
-      const authUrl = await createSenderAuthUrl(senderAccountKey);
+      if (!req.operator || !req.operatorSession) {
+        return res.status(401).json({ error: 'Operator login required.' });
+      }
+      const authUrl = await createSenderAuthUrlForOperator(senderAccountKey, {
+        operatorId: req.operator.id,
+        operatorSessionId: req.operatorSession.id
+      });
       if (!authUrl) return res.status(503).json({ error: 'Google sender account is not configured.' });
       if (req.query.redirect === 'false') return res.json({ authUrl, senderAccountKey });
       return res.redirect(authUrl);
@@ -103,7 +116,10 @@ export function registerAuthRoutes(app: Express) {
 
   app.get('/api/auth/status', async (req, res) => {
     try {
-      const status = await getSenderAuthStatus(parseSenderAccountKey(req.query.senderAccountKey || req.query.brand));
+      const context = req.operator && req.operatorSession
+        ? { operatorId: req.operator.id, operatorSessionId: req.operatorSession.id }
+        : undefined;
+      const status = await getSenderAuthStatus(parseSenderAccountKey(req.query.senderAccountKey || req.query.brand), context);
       return res.json(status);
     } catch (err: any) {
       return sendRouteError(res, err, 'Google auth status failed');
@@ -141,7 +157,19 @@ export function registerAuthRoutes(app: Express) {
         });
       }
 
-      const senderAccountKey = await exchangeCodeAndSaveFromState(String(code), String(state));
+      const context = await resolveOperatorSession(req);
+      if (!context) {
+        return sendOAuthCallbackHtml(res, {
+          errorTitle: 'Operator Session Required',
+          message: 'Your LeadPilot login session expired. Sign in again, then reconnect Google.',
+          statusCode: 401
+        });
+      }
+
+      const senderAccountKey = await exchangeCodeAndSaveFromState(String(code), String(state), {
+        operatorId: context.operator.id,
+        operatorSessionId: context.sessionId
+      });
 
       return sendOAuthCallbackHtml(res, { senderAccountKey });
     } catch (err: any) {

@@ -238,6 +238,14 @@ function adminTokensMatch(configuredToken: string, providedToken: string) {
 }
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (req.operator?.role === 'ADMIN') {
+    return next();
+  }
+
+  if (process.env.ALLOW_LEGACY_ADMIN_TOKENS !== 'true') {
+    return res.status(401).json({ error: 'Operator admin login required.' });
+  }
+
   const configuredToken = String(process.env.ADMIN_RESET_TOKEN || '').trim();
   if (!configuredToken) {
     console.error('ADMIN_RESET_TOKEN is required before reset workflow can be used.');

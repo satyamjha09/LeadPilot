@@ -599,24 +599,42 @@ async function cleanupOldGoogleOAuthStates() {
   }
 }
 
-export async function createGoogleOAuthState(senderAccountKey: SenderAccountKey) {
+export async function createGoogleOAuthState(
+  senderAccountKey: SenderAccountKey,
+  context?: { operatorId?: string; operatorSessionId?: string }
+) {
   await cleanupOldGoogleOAuthStates();
   const state = randomBytes(32).toString('base64url');
   await prisma.googleOAuthState.create({
     data: {
       stateHash: hashOAuthState(state),
       senderAccountKey,
+      operatorId: context?.operatorId,
+      operatorSessionId: context?.operatorSessionId,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000)
     }
   });
   return state;
 }
 
-export async function consumeGoogleOAuthState(state: string) {
+export async function consumeGoogleOAuthState(
+  state: string,
+  context?: { operatorId?: string; operatorSessionId?: string }
+) {
   const stateHash = hashOAuthState(state);
   const record = await prisma.googleOAuthState.findUnique({ where: { stateHash } });
   if (!record || record.consumedAt || record.expiresAt.getTime() < Date.now()) {
     const error = new Error('OAuth state expired or invalid.');
+    (error as any).statusCode = 400;
+    (error as any).code = 'INVALID_OAUTH_STATE';
+    throw error;
+  }
+
+  if (
+    (record.operatorId && context?.operatorId && record.operatorId !== context.operatorId) ||
+    (record.operatorSessionId && context?.operatorSessionId && record.operatorSessionId !== context.operatorSessionId)
+  ) {
+    const error = new Error('OAuth state does not match the initiating operator session.');
     (error as any).statusCode = 400;
     (error as any).code = 'INVALID_OAUTH_STATE';
     throw error;
@@ -1088,7 +1106,10 @@ export async function sendGmailReminder(
 }
 
 // Check tokens save status to determine authorization validity
-export async function getSenderAuthStatus(senderAccountKey: unknown) {
+export async function getSenderAuthStatus(
+  senderAccountKey: unknown,
+  context?: { operatorId: string; operatorSessionId: string }
+) {
   const normalizedSender = parseSenderAccountKey(senderAccountKey);
   const { clientId, clientSecret, redirectUri, envRefreshToken, authEmail } = getCredentials(normalizedSender);
   const configured = !!(clientId && clientSecret);
@@ -1130,7 +1151,11 @@ export async function getSenderAuthStatus(senderAccountKey: unknown) {
     }
   }
 
-  const authUrl = configured ? await createSenderAuthUrl(normalizedSender) : '';
+  const authUrl = configured
+    ? context
+      ? await createSenderAuthUrlForOperator(normalizedSender, context)
+      : await createSenderAuthUrl(normalizedSender)
+    : '';
 
   return {
     key: normalizedSender,
@@ -1183,8 +1208,29 @@ export async function exchangeCodeAndSave(code: string, senderAccountKey: unknow
   return updated;
 }
 
-export async function exchangeCodeAndSaveFromState(code: string, state: string) {
-  const senderAccountKey = await consumeGoogleOAuthState(state);
+export async function createSenderAuthUrlForOperator(
+  senderAccountKey: SenderAccountKey,
+  context: { operatorId: string; operatorSessionId: string }
+) {
+  const { clientId, clientSecret, redirectUri, authEmail } = getCredentials(senderAccountKey);
+  if (!clientId || !clientSecret) return '';
+  const state = await createGoogleOAuthState(senderAccountKey, context);
+  const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+  return oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: GOOGLE_OAUTH_SCOPES,
+    state,
+    prompt: 'consent',
+    login_hint: authEmail
+  });
+}
+
+export async function exchangeCodeAndSaveFromState(
+  code: string,
+  state: string,
+  context?: { operatorId?: string; operatorSessionId?: string }
+) {
+  const senderAccountKey = await consumeGoogleOAuthState(state, context);
   await exchangeCodeAndSave(code, senderAccountKey);
   return senderAccountKey;
 }
@@ -1205,10 +1251,10 @@ export async function clearSenderCredentials(senderAccountKey: unknown) {
 
 export const clearCredentials = clearSenderCredentials;
 
-export async function listGoogleSenderAccounts() {
+export async function listGoogleSenderAccounts(context?: { operatorId: string; operatorSessionId: string }) {
   const accounts = await Promise.all(
     SENDER_ACCOUNT_KEYS.map(async (key) => {
-      const status = await getSenderAuthStatus(key);
+      const status = await getSenderAuthStatus(key, context);
       return {
         key,
         displayName: GOOGLE_SENDER_ACCOUNTS[key].displayName,

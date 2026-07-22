@@ -3,10 +3,20 @@ import Header from '@/src/components/layout/Header';
 import Sidebar from '@/src/components/layout/Sidebar';
 import { DashboardView } from '@/src/lib/rowUtils';
 import { AuthStatus, NotificationCounts, SheetSource } from '@/src/types';
+import type { OperatorSessionOperator } from '@/src/lib/authClient';
+import type { ActiveAccountDefinition, ActiveAccountKey } from '@/src/lib/activeAccount';
+import type { SenderAccountKey } from '@/src/lib/senderAccount';
 
 interface AppShellProps {
   children: ReactNode;
   authStatus: AuthStatus | null;
+  googleSenderStatuses: Partial<Record<SenderAccountKey, AuthStatus>>;
+  operator: OperatorSessionOperator;
+  activeAccountKey: ActiveAccountKey;
+  activeAccounts: ActiveAccountDefinition[];
+  onSelectActiveAccount: (key: ActiveAccountKey) => void;
+  onConnectGoogle: (senderAccountKey: SenderAccountKey) => void;
+  onLogout: () => void | Promise<void>;
   pageTitle: string;
   pageDescription: string;
   onRefreshAuth: () => void;
@@ -24,6 +34,13 @@ interface AppShellProps {
 export default function AppShell({
   children,
   authStatus,
+  googleSenderStatuses,
+  operator,
+  activeAccountKey,
+  activeAccounts,
+  onSelectActiveAccount,
+  onConnectGoogle,
+  onLogout,
   pageTitle,
   pageDescription,
   onRefreshAuth,
@@ -58,6 +75,13 @@ export default function AppShell({
       <div className="flex min-w-0 flex-1 flex-col">
         <Header
           authStatus={authStatus}
+          googleSenderStatuses={googleSenderStatuses}
+          operator={operator}
+          activeAccountKey={activeAccountKey}
+          activeAccounts={activeAccounts}
+          onSelectActiveAccount={onSelectActiveAccount}
+          onConnectGoogle={onConnectGoogle}
+          onLogout={onLogout}
           pageTitle={pageTitle}
           pageDescription={pageDescription}
           onRefreshAuth={onRefreshAuth}

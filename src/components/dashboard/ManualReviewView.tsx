@@ -21,6 +21,7 @@ import { getLeadStatus } from '@/src/lib/rowUtils';
 import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
 import type { WorkspaceKey } from '@/src/lib/senderAccount';
 import { ExcelRow } from '@/src/types';
+import { apiFetch } from '@/src/lib/authClient';
 
 export default function ManualReviewView({
   rows,
@@ -105,12 +106,12 @@ function ManualReviewRow({
     setIsLoading(true);
     try {
       const [emailRes, sheetRes] = await Promise.all([
-        fetch('/api/leads/email-history', {
+        apiFetch('/api/leads/email-history', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ row, emailBrand: businessEmailBrand })
         }),
-        fetch('/api/sheet-sync/jobs-for-row', {
+        apiFetch('/api/sheet-sync/jobs-for-row', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ row, workspaceKey: sourceWorkspaceKey, emailBrand: businessEmailBrand })
@@ -166,7 +167,7 @@ function ManualReviewRow({
 
     setActionId(`${log.id}:${action}`);
     try {
-      const res = await fetch(`/api/email-deliveries/${encodeURIComponent(log.id)}/${action}`, {
+      const res = await apiFetch(`/api/email-deliveries/${encodeURIComponent(log.id)}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -188,7 +189,7 @@ function ManualReviewRow({
 
     setActionId(`sheet:${job.id}`);
     try {
-      const res = await fetch(`/api/sheet-sync/jobs/${encodeURIComponent(job.id)}/retry`, {
+      const res = await apiFetch(`/api/sheet-sync/jobs/${encodeURIComponent(job.id)}/retry`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})

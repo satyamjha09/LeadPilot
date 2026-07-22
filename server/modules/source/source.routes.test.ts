@@ -54,14 +54,17 @@ function createApp(registerRoutes: boolean) {
 describe('source routes and feature flag', () => {
   const originalEnabled = process.env.MULTI_SOURCE_V2_ENABLED;
   const originalToken = process.env.MULTI_SOURCE_V2_ADMIN_TOKEN;
+  const originalLegacy = process.env.ALLOW_LEGACY_ADMIN_TOKENS;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.ALLOW_LEGACY_ADMIN_TOKENS = 'true';
   });
 
   afterEach(() => {
     process.env.MULTI_SOURCE_V2_ENABLED = originalEnabled;
     process.env.MULTI_SOURCE_V2_ADMIN_TOKEN = originalToken;
+    process.env.ALLOW_LEGACY_ADMIN_TOKENS = originalLegacy;
   });
 
   it('keeps routes hidden when the feature flag is false', async () => {

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, FileSpreadsheet, Link2, Loader2, PlayCircle, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, FileSpreadsheet, Link2, Loader2, PlayCircle, RefreshCw } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ExcelRow, RegisteredSource, RegisteredSourceTab, SheetSource, SourceSelectionScope } from '@/src/types';
 import type { WorkspaceKey } from '@/src/lib/senderAccount';
+import { apiFetch } from '@/src/lib/authClient';
 
 type RequestKey = 'excel-preview' | 'google-sheet-import';
 
@@ -69,7 +70,6 @@ export default function ImportPanel({
   createWorkspaceRequestSignal,
   clearWorkspaceRequestSignal
 }: ImportPanelProps) {
-  const [adminToken, setAdminToken] = useState('');
   const [sources, setSources] = useState<RegisteredSource[]>([]);
   const [selectedSourceId, setSelectedSourceId] = useState('');
   const [selectedTabId, setSelectedTabId] = useState('');
@@ -86,7 +86,6 @@ export default function ImportPanel({
     [selectedSource, selectedTabId]
   );
   const enabledTabs = selectedSource?.tabs.filter((tab) => tab.isEnabled) || [];
-  const requestHeaders = adminToken.trim() ? { 'x-multi-source-admin-token': adminToken.trim() } : undefined;
 
   const applySources = (nextSources: RegisteredSource[]) => {
     setSources(nextSources);
@@ -105,16 +104,11 @@ export default function ImportPanel({
 
   const loadSources = async () => {
     const generation = getWorkspaceGeneration();
-    if (!requestHeaders) {
-      setError('Enter the multi-source operator token for this browser session.');
-      return;
-    }
     setIsLoading(true);
     setError(null);
     const signal = createWorkspaceRequestSignal('google-sheet-import');
     try {
-      const response = await fetch(`/api/v2/workspaces/${encodeURIComponent(workspaceKey)}/sources`, {
-        headers: requestHeaders,
+      const response = await apiFetch(`/api/v2/workspaces/${encodeURIComponent(workspaceKey)}/sources`, {
         signal
       });
       if (!response.ok) throw new Error(await parseJsonError(response, 'Source list failed.'));
@@ -139,10 +133,6 @@ export default function ImportPanel({
 
   const registerExcel = async (file: File) => {
     const generation = getWorkspaceGeneration();
-    if (!requestHeaders) {
-      setError('Enter the multi-source operator token before registering an Excel source.');
-      return;
-    }
     setIsLoading(true);
     setError(null);
     setUploadedFileName(file.name);
@@ -151,9 +141,8 @@ export default function ImportPanel({
       const formData = new FormData();
       formData.append('file', file);
       formData.append('displayName', file.name);
-      const response = await fetch(`/api/v2/workspaces/${encodeURIComponent(workspaceKey)}/sources/excel`, {
+      const response = await apiFetch(`/api/v2/workspaces/${encodeURIComponent(workspaceKey)}/sources/excel`, {
         method: 'POST',
-        headers: requestHeaders,
         body: formData,
         signal
       });
@@ -180,10 +169,6 @@ export default function ImportPanel({
 
   const registerGoogleSheet = async () => {
     const generation = getWorkspaceGeneration();
-    if (!requestHeaders) {
-      setError('Enter the multi-source operator token before registering a Google Sheet source.');
-      return;
-    }
     if (!sheetUrl.trim()) {
       setError('Paste a Google Sheets URL first.');
       return;
@@ -192,9 +177,9 @@ export default function ImportPanel({
     setError(null);
     const signal = createWorkspaceRequestSignal('google-sheet-import');
     try {
-      const response = await fetch(`/api/v2/workspaces/${encodeURIComponent(workspaceKey)}/sources/google-sheets`, {
+      const response = await apiFetch(`/api/v2/workspaces/${encodeURIComponent(workspaceKey)}/sources/google-sheets`, {
         method: 'POST',
-        headers: { ...requestHeaders, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sheetUrl: sheetUrl.trim() }),
         signal
       });
@@ -218,18 +203,17 @@ export default function ImportPanel({
 
   const prepareSelectedTab = async () => {
     const generation = getWorkspaceGeneration();
-    if (!requestHeaders || !selectedSource || !selectedTab || !selectedTab.isEnabled) return;
+    if (!selectedSource || !selectedTab || !selectedTab.isEnabled) return;
     setIsLoading(true);
     setError(null);
     const signal = createWorkspaceRequestSignal('google-sheet-import');
     const capturedSourceId = selectedSource.id;
     const capturedTabId = selectedTab.id;
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/v2/workspaces/${encodeURIComponent(workspaceKey)}/sources/${encodeURIComponent(capturedSourceId)}/tabs/${encodeURIComponent(capturedTabId)}/prepare-processing`,
         {
           method: 'POST',
-          headers: requestHeaders,
           signal
         }
       );
@@ -264,7 +248,7 @@ export default function ImportPanel({
     }
   };
 
-  const canProcess = Boolean(requestHeaders && selectedSource && selectedTab?.isEnabled && !isLoading);
+  const canProcess = Boolean(selectedSource && selectedTab?.isEnabled && !isLoading);
 
   return (
     <Card id="import-panel" className="tk-hover-card">
@@ -273,22 +257,8 @@ export default function ImportPanel({
         <CardDescription>Select one source tab, then process only that selected sheet.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
-        <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_auto]">
-          <div className="space-y-2">
-            <Label htmlFor="multi-source-token">Operator token</Label>
-            <div className="relative">
-              <ShieldCheck className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="multi-source-token"
-                type="password"
-                value={adminToken}
-                onChange={(event) => setAdminToken(event.target.value)}
-                placeholder="Required for source registration"
-                className="pl-9"
-              />
-            </div>
-          </div>
-          <Button type="button" variant="outline" onClick={loadSources} disabled={isLoading || !adminToken.trim()}>
+        <div className="flex justify-end">
+          <Button type="button" variant="outline" onClick={loadSources} disabled={isLoading}>
             <RefreshCw className="h-4 w-4" />
             Sources
           </Button>
