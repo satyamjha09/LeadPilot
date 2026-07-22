@@ -1,6 +1,6 @@
 import { google } from 'googleapis';
 
-import { getOAuthClient } from '../../../googleAuth';
+import { getVerifiedOAuthClient } from '../../../googleAuth';
 import { extractSheetInfo } from '../../../googleSheets';
 import { parseEmailBrand } from '../../../../src/lib/emailBrand';
 import { defaultSenderAccountForBrand } from '../../../../src/lib/senderAccount';
@@ -23,7 +23,7 @@ function quoteSheetName(sheetName: string) {
 }
 
 async function defaultSheetsFactory(brand: ReturnType<typeof parseEmailBrand>) {
-  const oauth2Client = await getOAuthClient(defaultSenderAccountForBrand(brand));
+  const oauth2Client = await getVerifiedOAuthClient(defaultSenderAccountForBrand(brand));
   return google.sheets({ version: 'v4', auth: oauth2Client });
 }
 

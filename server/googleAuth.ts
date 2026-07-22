@@ -64,6 +64,29 @@ type StoredGoogleTokens = {
   expiry_date?: number | null;
 };
 
+const GOOGLE_CLIENT_VERIFICATION_TTL_MS = Number(process.env.GOOGLE_CLIENT_VERIFICATION_TTL_MS || 5 * 60 * 1000);
+const verifiedClientCache = new Map<SenderAccountKey, { connectedEmail: string; verifiedAt: number }>();
+
+function clearVerifiedClientCache(senderAccountKey?: SenderAccountKey) {
+  if (senderAccountKey) {
+    verifiedClientCache.delete(senderAccountKey);
+    return;
+  }
+  verifiedClientCache.clear();
+}
+
+function isSenderRecentlyVerified(senderAccountKey: SenderAccountKey) {
+  const cached = verifiedClientCache.get(senderAccountKey);
+  return !!cached && Date.now() - cached.verifiedAt < GOOGLE_CLIENT_VERIFICATION_TTL_MS;
+}
+
+function cacheVerifiedSender(senderAccountKey: SenderAccountKey, connectedEmail: string) {
+  verifiedClientCache.set(senderAccountKey, {
+    connectedEmail,
+    verifiedAt: Date.now()
+  });
+}
+
 function authStatePathForSender(senderAccountKey: SenderAccountKey) {
   return senderAccountKey === 'tallykonnect-google'
     ? AUTH_STATE_PATH
@@ -103,71 +126,64 @@ function readLegacySavedTokens(senderAccountKey?: SenderAccountKey): StoredGoogl
 }
 
 async function findGoogleAuthRecord(senderAccountKey: SenderAccountKey) {
-  const email = getGoogleSenderEmail(senderAccountKey);
   const googleAuth = prisma.googleAuth as any;
 
-  if (typeof googleAuth.findFirst === 'function') {
-    return googleAuth.findFirst({
-      where: {
-        OR: [{ senderAccountKey }, { email }]
-      }
-    });
+  if (typeof googleAuth.findUnique === 'function') {
+    return googleAuth.findUnique({ where: { senderAccountKey } }).catch(() => null);
   }
 
-  if (typeof googleAuth.findUnique === 'function') {
-    const bySender = await googleAuth.findUnique({ where: { senderAccountKey } }).catch(() => null);
-    if (bySender) return bySender;
-    return googleAuth.findUnique({ where: { email } });
+  if (typeof googleAuth.findFirst === 'function') {
+    return googleAuth.findFirst({ where: { senderAccountKey } });
   }
 
   return null;
 }
 
-async function saveTokens(tokens: StoredGoogleTokens, senderAccountKey?: SenderAccountKey) {
-  const normalizedSender = coerceStoredSenderAccountKey(senderAccountKey);
+async function saveTokens(tokens: StoredGoogleTokens, senderAccountKey: SenderAccountKey, connectedEmail?: string) {
+  const normalizedSender = parseSenderAccountKey(senderAccountKey);
   const email = getGoogleSenderEmail(normalizedSender);
   const existing = await findGoogleAuthRecord(normalizedSender);
   const refreshToken = tokens.refresh_token || existing?.refreshToken || null;
+  const normalizedConnectedEmail = connectedEmail ? normalizeGoogleEmail(connectedEmail) : existing?.connectedEmail || null;
 
   const data = {
     senderAccountKey: normalizedSender,
     email,
     accessToken: tokens.access_token || existing?.accessToken || null,
     refreshToken,
-    expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : existing?.expiryDate || null
+    expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : existing?.expiryDate || null,
+    connectedEmail: normalizedConnectedEmail,
+    verifiedAt: normalizedConnectedEmail ? new Date() : existing?.verifiedAt || null
   };
 
   if (existing) {
     await prisma.googleAuth.update({
-      where: { id: existing.id },
+      where: { senderAccountKey: normalizedSender },
       data
     });
+    clearVerifiedClientCache(normalizedSender);
     return;
   }
 
   const googleAuth = prisma.googleAuth as any;
   if (typeof googleAuth.upsert === 'function') {
     await googleAuth.upsert({
-      where: { email },
+      where: { senderAccountKey: normalizedSender },
       update: data,
       create: data
     });
+    clearVerifiedClientCache(normalizedSender);
     return;
   }
 
   await googleAuth.create({ data });
+  clearVerifiedClientCache(normalizedSender);
 }
 
 async function readSavedTokens(senderAccountKey?: SenderAccountKey): Promise<StoredGoogleTokens | null> {
-  const normalizedSender = coerceStoredSenderAccountKey(senderAccountKey);
+  const normalizedSender = parseSenderAccountKey(senderAccountKey);
   const record = await findGoogleAuthRecord(normalizedSender);
   if (record) {
-    if (!record.senderAccountKey && typeof (prisma.googleAuth as any).update === 'function') {
-      await prisma.googleAuth.update({
-        where: { id: record.id },
-        data: { senderAccountKey: normalizedSender }
-      }).catch(() => undefined);
-    }
     return {
       access_token: record.accessToken,
       refresh_token: record.refreshToken,
@@ -177,7 +193,6 @@ async function readSavedTokens(senderAccountKey?: SenderAccountKey): Promise<Sto
 
   const legacyTokens = readLegacySavedTokens(normalizedSender);
   if (legacyTokens?.refresh_token || legacyTokens?.access_token) {
-    await saveTokens(legacyTokens, normalizedSender);
     return legacyTokens;
   }
 
@@ -288,8 +303,29 @@ async function revokeReceivedCredentials(oauth2Client: any, tokens: StoredGoogle
   }
 }
 
+async function persistVerifiedClientTokens(
+  senderAccountKey: SenderAccountKey,
+  oauth2Client: any,
+  connectedEmail: string,
+  fallbackRefreshToken?: string | null
+) {
+  const existing = await readSavedTokens(senderAccountKey);
+  const credentials = oauth2Client.credentials || {};
+  const updated: StoredGoogleTokens = {
+    ...existing,
+    access_token: credentials.access_token || existing?.access_token || null,
+    refresh_token: credentials.refresh_token || existing?.refresh_token || fallbackRefreshToken || null,
+    expiry_date: credentials.expiry_date || existing?.expiry_date || null
+  };
+
+  if (updated.refresh_token || updated.access_token) {
+    await saveTokens(updated, senderAccountKey, connectedEmail);
+  }
+}
+
 export async function getOAuthClient(senderAccountKey?: SenderAccountKey) {
-  const { clientId, clientSecret, redirectUri, envRefreshToken } = getCredentials(senderAccountKey);
+  const normalizedSender = parseSenderAccountKey(senderAccountKey);
+  const { clientId, clientSecret, redirectUri, envRefreshToken } = getCredentials(normalizedSender);
   
   const oauth2Client = new google.auth.OAuth2(
     clientId,
@@ -297,7 +333,7 @@ export async function getOAuthClient(senderAccountKey?: SenderAccountKey) {
     redirectUri
   );
 
-  const savedTokens = await readSavedTokens(senderAccountKey);
+  const savedTokens = await readSavedTokens(normalizedSender);
 
   if (savedTokens && savedTokens.refresh_token) {
     oauth2Client.setCredentials({
@@ -305,7 +341,7 @@ export async function getOAuthClient(senderAccountKey?: SenderAccountKey) {
       access_token: savedTokens.access_token || undefined,
       expiry_date: savedTokens.expiry_date || undefined
     });
-  } else if (envRefreshToken && !isEnvTokenSuppressed(senderAccountKey)) {
+  } else if (envRefreshToken && !isEnvTokenSuppressed(normalizedSender)) {
     oauth2Client.setCredentials({
       refresh_token: envRefreshToken
     });
@@ -314,14 +350,20 @@ export async function getOAuthClient(senderAccountKey?: SenderAccountKey) {
   // Handle token refreshing events to automatically persist them
   oauth2Client.on('tokens', async (tokens) => {
     try {
-      const existing = await readSavedTokens(senderAccountKey);
+      if (!isSenderRecentlyVerified(normalizedSender)) {
+        return;
+      }
+      const existing = await readSavedTokens(normalizedSender);
       const updated = {
         ...existing,
         ...tokens,
         // Make sure refresh_token is kept if the refresh event doesn't supply a new one
         refresh_token: tokens.refresh_token || existing?.refresh_token || envRefreshToken
       };
-      await saveTokens(updated, senderAccountKey);
+      const connectedEmail = verifiedClientCache.get(normalizedSender)?.connectedEmail;
+      if (connectedEmail) {
+        await saveTokens(updated, normalizedSender, connectedEmail);
+      }
       console.log('Successfully refreshed and saved Google Auth tokens to database.');
     } catch (err) {
       console.error('Failed to persist refreshed Google Auth tokens:', err);
@@ -329,6 +371,38 @@ export async function getOAuthClient(senderAccountKey?: SenderAccountKey) {
   });
 
   return oauth2Client;
+}
+
+export async function getVerifiedOAuthClient(senderAccountKey: unknown) {
+  const normalizedSender = parseSenderAccountKey(senderAccountKey);
+  const expectedEmail = getGoogleSenderEmail(normalizedSender);
+  const { envRefreshToken } = getCredentials(normalizedSender);
+  const oauth2Client = await getOAuthClient(normalizedSender);
+  const savedTokens = await readSavedTokens(normalizedSender);
+  const usingEnvToken = !savedTokens?.refresh_token && !!(envRefreshToken && !isEnvTokenSuppressed(normalizedSender));
+
+  try {
+    await oauth2Client.getAccessToken();
+    const connectedEmail = await getAuthenticatedGoogleEmail(oauth2Client);
+
+    if (connectedEmail !== expectedEmail) {
+      await revokeReceivedCredentials(oauth2Client, oauth2Client.credentials || {});
+      if (usingEnvToken) setEnvTokenSuppressed(true, normalizedSender);
+      await clearSenderCredentials(normalizedSender);
+      throw new GoogleAccountMismatchError(normalizedSender, expectedEmail, connectedEmail);
+    }
+
+    await persistVerifiedClientTokens(normalizedSender, oauth2Client, connectedEmail, usingEnvToken ? envRefreshToken : undefined);
+    cacheVerifiedSender(normalizedSender, connectedEmail);
+    return oauth2Client;
+  } catch (error) {
+    clearVerifiedClientCache(normalizedSender);
+    if (isInvalidGrantError(error) || isInsufficientScopeError(error)) {
+      if (usingEnvToken) setEnvTokenSuppressed(true, normalizedSender);
+      await clearSenderCredentials(normalizedSender).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 // Robust excel date-time parsing helper
@@ -509,7 +583,24 @@ function hashOAuthState(state: string) {
   return createHash('sha256').update(state).digest('hex');
 }
 
+async function cleanupOldGoogleOAuthStates() {
+  const consumedBefore = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  try {
+    await prisma.googleOAuthState.deleteMany({
+      where: {
+        OR: [
+          { expiresAt: { lt: new Date() } },
+          { consumedAt: { lt: consumedBefore } }
+        ]
+      }
+    });
+  } catch (error) {
+    console.warn('Failed to clean old Google OAuth state records:', error);
+  }
+}
+
 export async function createGoogleOAuthState(senderAccountKey: SenderAccountKey) {
+  await cleanupOldGoogleOAuthStates();
   const state = randomBytes(32).toString('base64url');
   await prisma.googleOAuthState.create({
     data: {
@@ -599,7 +690,7 @@ async function withCalendarRetry<T>(action: () => Promise<T>, maxAttempts = 4): 
 }
 
 async function sendRawGmailMessage(raw: string, senderAccountKey: SenderAccountKey) {
-  const oauth2Client = await getOAuthClient(senderAccountKey);
+  const oauth2Client = await getVerifiedOAuthClient(senderAccountKey);
   const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
   const response = await gmail.users.messages.send({
@@ -657,7 +748,7 @@ export async function scheduleMeeting(row: ExcelRow, senderAccountKey?: unknown,
   const senderKey = coerceStoredSenderAccountKey(senderAccountKey);
   const templateBrand = emailBrandKey || defaultEmailBrandForSenderAccount(senderKey);
   try {
-    const oauth2Client = await getOAuthClient(senderKey);
+    const oauth2Client = await getVerifiedOAuthClient(senderKey);
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     
     const dateVal = row['Date of Demo'];
@@ -730,7 +821,7 @@ export async function updateCalendarMeeting(
   }
 
   try {
-    const oauth2Client = await getOAuthClient(senderKey);
+    const oauth2Client = await getVerifiedOAuthClient(senderKey);
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
     const startTime = parseExcelDateTime(row['Date of Demo'], row['Time of Demo']);
@@ -780,7 +871,7 @@ export async function cancelCalendarMeeting(
   }
 
   try {
-    const oauth2Client = await getOAuthClient(senderKey);
+    const oauth2Client = await getVerifiedOAuthClient(senderKey);
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
     await withCalendarRetry(() =>
@@ -1015,31 +1106,20 @@ export async function getSenderAuthStatus(senderAccountKey: unknown) {
 
   if (configured && (hasSavedToken || hasEnvToken)) {
     try {
-      const oauth2Client = await getOAuthClient(normalizedSender);
-      await oauth2Client.getAccessToken();
-      connectedEmail = await getAuthenticatedGoogleEmail(oauth2Client);
-      if (connectedEmail !== authEmail) {
-        await clearSenderCredentials(normalizedSender);
-        envTokenSuppressed = true;
-        requiresReconnect = true;
-        authError = `${GOOGLE_SENDER_ACCOUNTS[normalizedSender].displayName} must be connected using ${authEmail}.`;
-      } else {
-        authenticated = true;
-        isUsingEnvToken = !hasSavedToken && hasEnvToken;
-      }
+      await getVerifiedOAuthClient(normalizedSender);
+      connectedEmail = verifiedClientCache.get(normalizedSender)?.connectedEmail || authEmail;
+      authenticated = true;
+      isUsingEnvToken = !hasSavedToken && hasEnvToken;
     } catch (error: any) {
       if (isInvalidGrantError(error)) {
-        await clearSenderCredentials(normalizedSender);
         envTokenSuppressed = true;
         requiresReconnect = true;
         authError = GOOGLE_RECONNECT_MESSAGE;
       } else if (isInsufficientScopeError(error)) {
-        await clearSenderCredentials(normalizedSender);
         envTokenSuppressed = true;
         requiresReconnect = true;
         authError = 'Google account identity permission missing. Reconnect this Google account.';
       } else if (error?.code === 'GOOGLE_ACCOUNT_MISMATCH') {
-        await clearSenderCredentials(normalizedSender);
         envTokenSuppressed = true;
         requiresReconnect = true;
         connectedEmail = error.connectedEmail;
@@ -1092,11 +1172,13 @@ export async function exchangeCodeAndSave(code: string, senderAccountKey: unknow
   const existing = await readSavedTokens(normalizedSender);
   const updated: StoredGoogleTokens = {
     ...existing,
-    ...tokens
+    ...tokens,
+    refresh_token: tokens.refresh_token || existing?.refresh_token || null
   };
 
-  await saveTokens(updated, normalizedSender);
+  await saveTokens(updated, normalizedSender, connectedEmail);
   setEnvTokenSuppressed(false, normalizedSender);
+  cacheVerifiedSender(normalizedSender, connectedEmail);
   console.log(`Saved Google Auth tokens for ${getGoogleSenderEmail(normalizedSender)} directly from exchangeCodeAndSave.`);
   return updated;
 }
@@ -1110,13 +1192,9 @@ export async function exchangeCodeAndSaveFromState(code: string, state: string) 
 export async function clearSenderCredentials(senderAccountKey: unknown) {
   const normalizedSender = parseSenderAccountKey(senderAccountKey);
   await prisma.googleAuth.deleteMany({
-    where: {
-      OR: [
-        { senderAccountKey: normalizedSender },
-        { email: getGoogleSenderEmail(normalizedSender) }
-      ]
-    }
+    where: { senderAccountKey: normalizedSender }
   });
+  clearVerifiedClientCache(normalizedSender);
   if (normalizedSender === 'tallykonnect-google' && fs.existsSync(TOKENS_PATH)) {
     fs.unlinkSync(TOKENS_PATH);
   }

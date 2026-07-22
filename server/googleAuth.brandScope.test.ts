@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sendMock = vi.hoisted(() => vi.fn());
+const userinfoGetMock = vi.hoisted(() => vi.fn());
 const oauth2Mock = vi.hoisted(() =>
   vi.fn(function OAuth2Mock(this: any) {
     this.setCredentials = vi.fn();
     this.on = vi.fn();
     this.generateAuthUrl = vi.fn(() => 'https://accounts.google.com/mock');
+    this.getAccessToken = vi.fn().mockResolvedValue({ token: 'verified-access' });
   })
 );
 
@@ -20,6 +22,11 @@ vi.mock('googleapis', () => ({
           send: sendMock
         }
       }
+    })),
+    oauth2: vi.fn(() => ({
+      userinfo: {
+        get: userinfoGetMock
+      }
     }))
   }
 }));
@@ -27,6 +34,7 @@ vi.mock('googleapis', () => ({
 const prismaMock = vi.hoisted(() => ({
   googleAuth: {
     findUnique: vi.fn(),
+    update: vi.fn(),
     upsert: vi.fn(),
     deleteMany: vi.fn()
   }
@@ -46,10 +54,23 @@ describe('brand-scoped generic Gmail sender', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.GOOGLE_AUTH_EMAIL = 'demo.tallykonnect@gmail.com';
+    process.env.GOOGLE_CLIENT_ID = 'tally-client';
+    process.env.GOOGLE_CLIENT_SECRET = 'tally-secret';
     process.env.GMAIL_FROM_EMAIL = 'demo.tallykonnect@gmail.com';
     process.env.GOOGLE_ANYWHERETALLY_AUTH_EMAIL = 'info.anywheretally@gmail.com';
+    process.env.GOOGLE_ANYWHERETALLY_CLIENT_ID = 'awt-client';
+    process.env.GOOGLE_ANYWHERETALLY_CLIENT_SECRET = 'awt-secret';
     process.env.GMAIL_ANYWHERETALLY_FROM_EMAIL = 'info.anywheretally@gmail.com';
     prismaMock.googleAuth.findUnique.mockResolvedValue(null);
+    prismaMock.googleAuth.update.mockResolvedValue({});
+    prismaMock.googleAuth.upsert.mockResolvedValue({});
+    userinfoGetMock.mockImplementation(async () => ({
+      data: {
+        email: (oauth2Mock.mock.calls as unknown as any[][]).at(-1)?.[0] === 'awt-client'
+          ? 'info.anywheretally@gmail.com'
+          : 'demo.tallykonnect@gmail.com'
+      }
+    }));
     sendMock.mockResolvedValue({
       data: {
         id: 'gmail-message-1',

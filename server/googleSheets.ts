@@ -1,6 +1,6 @@
 import { google } from 'googleapis';
 import { ExcelRow } from '../src/types';
-import { getOAuthClient, GOOGLE_RECONNECT_MESSAGE, isInvalidGrantError } from './googleAuth';
+import { getVerifiedOAuthClient, GOOGLE_RECONNECT_MESSAGE, isInvalidGrantError } from './googleAuth';
 import { getLeadStatusParse, isValidLeadStatus, normalizeHeader } from './leadStatus';
 import { createNewAutomationId } from './emailIdentity';
 import { normalizeDisplayDate } from '../src/lib/dateFormat';
@@ -71,7 +71,7 @@ export function extractSheetInfo(sheetUrl: string) {
 
 export async function getSheetsClient(access: GoogleSheetAccessContext) {
   const { googleAccountKey } = normalizeGoogleSheetAccess(access);
-  const oauth2Client = await getOAuthClient(googleAccountKey);
+  const oauth2Client = await getVerifiedOAuthClient(googleAccountKey);
   return google.sheets({ version: 'v4', auth: oauth2Client });
 }
 

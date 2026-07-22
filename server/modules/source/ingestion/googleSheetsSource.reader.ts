@@ -1,7 +1,7 @@
 import { google } from 'googleapis';
 import type { DataSource, DataSourceTab } from '@prisma/client';
 
-import { getOAuthClient } from '../../../googleAuth';
+import { getVerifiedOAuthClient } from '../../../googleAuth';
 import { parseEmailBrand } from '../../../../src/lib/emailBrand';
 import { defaultSenderAccountForBrand } from '../../../../src/lib/senderAccount';
 import { createHeaderHash, normalizeSourceHeaders } from '../sourceHeaders';
@@ -19,7 +19,7 @@ function quoteSheetName(sheetName: string) {
 }
 
 async function defaultSheetsFactory(brand: ReturnType<typeof parseEmailBrand>) {
-  const oauth2Client = await getOAuthClient(defaultSenderAccountForBrand(brand));
+  const oauth2Client = await getVerifiedOAuthClient(defaultSenderAccountForBrand(brand));
   return google.sheets({ version: 'v4', auth: oauth2Client });
 }
 

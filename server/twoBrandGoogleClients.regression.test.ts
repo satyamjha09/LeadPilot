@@ -6,7 +6,9 @@ const googleMock = vi.hoisted(() => {
     this.setCredentials = vi.fn();
     this.on = vi.fn();
     this.generateAuthUrl = vi.fn(() => 'https://accounts.google.com/mock');
+    this.getAccessToken = vi.fn().mockResolvedValue({ token: 'verified-access' });
   });
+  const userinfoGet = vi.fn();
   const gmailSend = vi.fn();
   const calendarInsert = vi.fn();
   const calendarPatch = vi.fn();
@@ -14,6 +16,7 @@ const googleMock = vi.hoisted(() => {
 
   return {
     oauth2Ctor,
+    userinfoGet,
     gmailSend,
     calendarInsert,
     calendarPatch,
@@ -26,6 +29,11 @@ vi.mock('googleapis', () => ({
     auth: {
       OAuth2: googleMock.oauth2Ctor
     },
+    oauth2: vi.fn(() => ({
+      userinfo: {
+        get: googleMock.userinfoGet
+      }
+    })),
     gmail: vi.fn(() => ({
       users: {
         messages: {
@@ -52,6 +60,7 @@ vi.mock('googleapis', () => ({
 const prismaMock = vi.hoisted(() => ({
   googleAuth: {
     findUnique: vi.fn(),
+    update: vi.fn(),
     upsert: vi.fn(),
     deleteMany: vi.fn()
   }
@@ -125,6 +134,16 @@ describe('two-brand Google client routing regression', () => {
     process.env.GOOGLE_ANYWHERETALLY_AUTH_EMAIL = 'info.anywheretally@gmail.com';
     process.env.GMAIL_ANYWHERETALLY_FROM_EMAIL = 'info.anywheretally@gmail.com';
     prismaMock.googleAuth.findUnique.mockResolvedValue(null);
+    prismaMock.googleAuth.update.mockResolvedValue({});
+    prismaMock.googleAuth.upsert.mockResolvedValue({});
+    prismaMock.googleAuth.deleteMany.mockResolvedValue({ count: 1 });
+    googleMock.userinfoGet.mockImplementation(async () => ({
+      data: {
+        email: lastOAuthClientId() === 'awt-client'
+          ? 'info.anywheretally@gmail.com'
+          : 'demo.tallykonnect@gmail.com'
+      }
+    }));
     googleMock.gmailSend.mockResolvedValue({
       data: {
         id: 'gmail-message-1',

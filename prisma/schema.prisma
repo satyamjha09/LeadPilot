@@ -734,11 +734,13 @@ model SheetSyncJob {
 
 model GoogleAuth {
   id               String    @id @default(cuid())
-  senderAccountKey String?   @unique
-  email            String    @unique
+  senderAccountKey String    @unique
+  email            String
   accessToken      String?
   refreshToken     String?
   expiryDate       DateTime?
+  connectedEmail   String?
+  verifiedAt       DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 }

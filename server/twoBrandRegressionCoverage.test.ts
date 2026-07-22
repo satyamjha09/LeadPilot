@@ -70,13 +70,20 @@ describe('two-brand workflow regression coverage', () => {
   it('keeps OAuth account verification and invalid token cleanup brand-specific', () => {
     const googleAuth = readRepoFile('server', 'googleAuth.ts');
     const authRoutes = readRepoFile('server', 'routes', 'authRoutes.ts');
+    const app = readRepoFile('src', 'App.tsx');
+    const schema = readRepoFile('prisma', 'schema.prisma');
 
+    expect(schema).toMatch(/senderAccountKey\s+String\s+@unique/);
     expect(googleAuth).toContain('https://www.googleapis.com/auth/userinfo.email');
     expect(googleAuth).toContain('getAuthenticatedGoogleEmail(oauth2Client)');
-    expect(googleAuth).toContain('new GoogleAccountMismatchError(normalizedSender, authEmail, connectedEmail)');
+    expect(googleAuth).toContain('new GoogleAccountMismatchError(normalizedSender, expectedEmail, connectedEmail)');
+    expect(googleAuth).toContain('where: { senderAccountKey: normalizedSender }');
     expect(googleAuth).toContain('clearSenderCredentials(normalizedSender)');
     expect(googleAuth).toContain('createGoogleOAuthState(senderAccountKey)');
     expect(authRoutes).toContain("'/api/google-senders/:senderAccountKey/status'");
     expect(authRoutes).toContain('exchangeCodeAndSaveFromState');
+    expect(authRoutes).toContain('window.location.origin');
+    expect(app).toContain('event.origin !== window.location.origin');
+    expect(app).toContain('parseSenderAccountKey(event.data?.senderAccountKey)');
   });
 });
