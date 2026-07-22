@@ -80,6 +80,7 @@ describe('brand-scoped background email delivery', () => {
         sessionId: 'session-awt',
         userId: 'lead_123',
         emailBrand: 'anywheretally',
+        senderAccountKey: 'anywheretally-google',
         fullName: 'Moh Agarwal',
         email: 'moh@example.com',
         displayDate: '15-06-2026',
@@ -112,6 +113,7 @@ describe('brand-scoped background email delivery', () => {
       '15-06-2026',
       '15:30',
       'https://meet.google.com/awt-demo',
+      'anywheretally-google',
       'anywheretally'
     );
   });
@@ -123,6 +125,7 @@ describe('brand-scoped background email delivery', () => {
         sessionId: 'session-tk',
         userId: 'lead_456',
         emailBrand: 'tallykonnect',
+        senderAccountKey: 'tallykonnect-google',
         fullName: 'Sai Kumar',
         email: 'sai@example.com',
         displayDate: '16-06-2026',
@@ -149,17 +152,19 @@ describe('brand-scoped background email delivery', () => {
       '16-06-2026',
       '11:00',
       'https://meet.google.com/tk-demo',
+      'tallykonnect-google',
       'tallykonnect'
     );
   });
 
-  it('sends automatic retries with EmailDelivery.emailBrand', async () => {
+  it('sends automatic retries with EmailDelivery.senderAccountKey', async () => {
     emailDeliveryMock.listDueEmailRetries.mockResolvedValue([
       {
         id: 'retry-awt',
         eventKey: 'event-1',
         automationId: 'lead_123',
         emailBrand: 'anywheretally',
+        senderAccountKey: 'anywheretally-google',
         emailType: 'DEMO_DONE',
         recipient: 'moh@example.com',
         payloadHash: 'payload',
@@ -182,14 +187,14 @@ describe('brand-scoped background email delivery', () => {
         text: 'Retry text',
         html: '<p>Retry</p>'
       },
-      'anywheretally'
+      'anywheretally-google'
     );
   });
 
-  it('manual retry route uses persisted delivery brand', () => {
+  it('manual retry route uses persisted delivery sender account', () => {
     const routeSource = fs.readFileSync(path.join(process.cwd(), 'server', 'routes', 'leadRoutes.ts'), 'utf-8');
 
     expect(routeSource).toContain('sendGmailTemplate(delivery.recipient');
-    expect(routeSource).toContain('}, delivery.emailBrand)');
+    expect(routeSource).toContain('}, delivery.senderAccountKey)');
   });
 });

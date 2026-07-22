@@ -18,7 +18,6 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { DashboardView } from '@/src/lib/rowUtils';
 import type { AuthStatus, NotificationCounts, SheetSource } from '@/src/types';
-import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
 
 const navItems: { id: DashboardView; label: string; icon: ComponentType<{ className?: string }> }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -31,7 +30,6 @@ const navItems: { id: DashboardView; label: string; icon: ComponentType<{ classN
 
 interface SidebarProps {
   authStatus?: AuthStatus | null;
-  emailBrand: EmailBrandKey;
   activeView: DashboardView;
   onNavigate: (view: DashboardView) => void;
   source: SheetSource;
@@ -53,10 +51,9 @@ function getProfileInitials(email?: string) {
   return localPart.slice(0, 2).toUpperCase();
 }
 
-export default function Sidebar({ authStatus, emailBrand, activeView, onNavigate, source, onSyncNow, isSyncing, notificationCounts, onCollapse, className }: SidebarProps) {
+export default function Sidebar({ authStatus, activeView, onNavigate, source, onSyncNow, isSyncing, notificationCounts, onCollapse, className }: SidebarProps) {
   const isGoogleSheet = source.type === 'google-sheet';
-  const brandLabel = emailBrandLabel(emailBrand);
-  const sourceName = isGoogleSheet ? source.sheetName || `${brandLabel} Leads` : 'Excel import';
+  const sourceName = isGoogleSheet ? source.sheetName || 'Leads' : 'Excel import';
   const profileEmail = authStatus?.connectedEmail || authStatus?.email || '';
   const profileLabel = getProfileLabel(profileEmail);
   const profileInitials = getProfileInitials(profileEmail);
@@ -72,7 +69,7 @@ export default function Sidebar({ authStatus, emailBrand, activeView, onNavigate
             <Rocket className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-base font-bold leading-tight">{brandLabel}</p>
+            <p className="text-base font-bold leading-tight">LeadPilot</p>
             <p className="text-xs text-slate-400">Automation Workspace</p>
           </div>
           {onCollapse && (

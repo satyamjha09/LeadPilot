@@ -5,11 +5,9 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import Sidebar from '@/src/components/layout/Sidebar';
 import { DashboardView } from '@/src/lib/rowUtils';
 import { AuthStatus, NotificationCounts, SheetSource } from '@/src/types';
-import type { EmailBrandKey } from '@/src/lib/emailBrand';
 
 interface HeaderProps {
   authStatus: AuthStatus | null;
-  emailBrand: EmailBrandKey;
   pageTitle: string;
   pageDescription: string;
   onRefreshAuth: () => void;
@@ -26,6 +24,7 @@ interface HeaderProps {
   onToggleSidebar: () => void;
 }
 
+
 function getEmailInitials(email?: string) {
   const localPart = String(email || '').split('@')[0].trim();
   if (!localPart) return 'PR';
@@ -38,7 +37,6 @@ function getEmailInitials(email?: string) {
 
 export default function Header({
   authStatus,
-  emailBrand,
   pageTitle,
   pageDescription,
   onRefreshAuth,
@@ -103,7 +101,6 @@ export default function Header({
               <SheetContent side="left" className="w-72 p-0">
                 <Sidebar
                   authStatus={authStatus}
-                  emailBrand={emailBrand}
                   activeView={activeView}
                   onNavigate={onNavigate}
                   source={source}

@@ -44,7 +44,7 @@ async function processLeadJob(jobId: string, queuedGeneration?: number) {
     if (!headers.length) {
       throw new Error('Google Sheet headers are required.');
     }
-    const ensured = await ensureRequiredColumns(input.spreadsheetId, input.sheetName, headers, input.emailBrand);
+    const ensured = await ensureRequiredColumns(input.spreadsheetId, input.sheetName, headers, input.workspaceKey);
     headers = ensured.headers;
   }
 
@@ -63,9 +63,12 @@ async function processLeadJob(jobId: string, queuedGeneration?: number) {
   const result = await withWorkflowActivity('lead-processing', input.emailBrand, async () =>
     processLeadsByStatus(dbRows, {
       sourceType: input.sourceType,
+      workspaceKey: input.workspaceKey,
       spreadsheetId: input.spreadsheetId,
       sheetName: input.sheetName,
       headers,
+      senderAccountKey: input.senderAccountKey,
+      emailBrandKey: input.emailBrandKey,
       emailBrand: input.emailBrand,
       assertStillCurrent: assertCurrentGeneration,
       onRowProcessed: async (row, rowSummary) => {

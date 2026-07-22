@@ -17,17 +17,20 @@ describe('lead workflow lifecycle ownership guards', () => {
     const body = functionSource(source, 'rescheduleDemoForRow', 'updateLeadStatusOnly');
 
     expect(body.indexOf('assertDemoBrandOwnership(row, context.emailBrand)')).toBeLessThan(
-      body.indexOf('updateCalendarMeeting(row, active.state.calendarEventId, ownerBrand)')
+      body.indexOf('updateCalendarMeeting(')
     );
     expect(body).toContain('sendGmailRescheduleInvite(updatedRow, meetLink');
-    expect(body).toContain('}, ownerBrand)');
+    expect(body).toContain('senderAccountKeyForContext(ownerContext)');
+    expect(body).toContain('emailBrandKeyForContext(ownerContext)');
   });
 
   it('sends Demo Done using the resolved owner brand', () => {
     const body = functionSource(source, 'sendThankYouForRow', 'sendNoResponseForRow');
 
     expect(body).toContain('const ownerBrand = active.emailBrand');
-    expect(body).toContain('sendThankYouEmail(ownerRow, ownerBrand)');
+    expect(body).toContain('sendThankYouEmail({');
+    expect(body).toContain('senderAccountKey: senderAccountKeyForContext(ownerContext)');
+    expect(body).toContain('emailBrandKey: emailBrandKeyForContext(ownerContext)');
     expect(body).toContain('closeActiveDemoForRow(ownerRow, LEAD_STATUS.DEMO_DONE, ownerBrand');
   });
 
@@ -35,7 +38,9 @@ describe('lead workflow lifecycle ownership guards', () => {
     const body = functionSource(source, 'sendNoResponseForRow', 'rescheduleDemoForRow');
 
     expect(body).toContain('const ownerBrand = active.emailBrand');
-    expect(body).toContain('sendNoResponseEmail(ownerRow, ownerBrand)');
+    expect(body).toContain('sendNoResponseEmail({');
+    expect(body).toContain('senderAccountKey: senderAccountKeyForContext(ownerContext)');
+    expect(body).toContain('emailBrandKey: emailBrandKeyForContext(ownerContext)');
     expect(body).toContain('closeActiveDemoForRow(ownerRow, LEAD_STATUS.NO_RESPONSE, ownerBrand');
   });
 });

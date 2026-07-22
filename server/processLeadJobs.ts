@@ -1,6 +1,11 @@
 import { ExcelRow } from '../src/types';
 import { prisma } from './db';
 import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
+import {
+  coerceStoredSenderAccountKey,
+  defaultSenderAccountForBrand,
+  type SenderAccountKey
+} from '../src/lib/senderAccount';
 import { getWorkflowGenerationForNewJob } from './workflowControl';
 
 export type ProcessLeadJobStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
@@ -17,7 +22,10 @@ export type ProcessLeadJobProgress = {
 
 export type ProcessLeadJobInput = {
   sourceType: 'excel' | 'google-sheet';
-  emailBrand: EmailBrandKey;
+  workspaceKey: EmailBrandKey;
+  senderAccountKey: SenderAccountKey;
+  emailBrandKey: EmailBrandKey;
+  emailBrand?: EmailBrandKey;
   spreadsheetId?: string;
   sheetName?: string;
   headers?: string[];
@@ -42,7 +50,12 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
 }
 
 export async function createProcessLeadJob(input: ProcessLeadJobInput) {
-  const emailBrand = coerceStoredEmailBrand(input.emailBrand);
+  const emailBrand = coerceStoredEmailBrand(input.emailBrand || input.emailBrandKey || input.workspaceKey);
+  const emailBrandKey = coerceStoredEmailBrand(input.emailBrandKey || emailBrand);
+  const workspaceKey = coerceStoredEmailBrand(input.workspaceKey || emailBrand);
+  const senderAccountKey = coerceStoredSenderAccountKey(
+    input.senderAccountKey || defaultSenderAccountForBrand(emailBrandKey)
+  );
   const generation = await getWorkflowGenerationForNewJob(emailBrand);
 
   return prisma.processLeadJob.create({
@@ -51,6 +64,9 @@ export async function createProcessLeadJob(input: ProcessLeadJobInput) {
       generation,
       sourceType: input.sourceType,
       emailBrand,
+      workspaceKey,
+      emailBrandKey,
+      senderAccountKey,
       spreadsheetId: input.spreadsheetId || null,
       sheetName: input.sheetName || null,
       headersJson: input.headers ? JSON.stringify(input.headers) : null,
@@ -137,6 +153,11 @@ export function serializeProcessLeadJob(job: Awaited<ReturnType<typeof getProces
     generation: job.generation,
     sourceType: job.sourceType,
     emailBrand: coerceStoredEmailBrand(job.emailBrand),
+    workspaceKey: coerceStoredEmailBrand(job.workspaceKey || job.emailBrand),
+    senderAccountKey: coerceStoredSenderAccountKey(
+      job.senderAccountKey || defaultSenderAccountForBrand(coerceStoredEmailBrand(job.emailBrand))
+    ),
+    emailBrandKey: coerceStoredEmailBrand(job.emailBrandKey || job.emailBrand),
     spreadsheetId: job.spreadsheetId || undefined,
     sheetName: job.sheetName || undefined,
     progress: parseJson<ProcessLeadJobProgress>(job.progressJson, initialProgress(inputRows.length)),
@@ -154,6 +175,11 @@ export function parseProcessLeadJobInput(job: Awaited<ReturnType<typeof getProce
   if (!job) throw new Error('Process job not found.');
   return {
     sourceType: job.sourceType === 'google-sheet' ? 'google-sheet' : 'excel',
+    workspaceKey: coerceStoredEmailBrand(job.workspaceKey || job.emailBrand),
+    senderAccountKey: coerceStoredSenderAccountKey(
+      job.senderAccountKey || defaultSenderAccountForBrand(coerceStoredEmailBrand(job.emailBrand))
+    ),
+    emailBrandKey: coerceStoredEmailBrand(job.emailBrandKey || job.emailBrand),
     emailBrand: coerceStoredEmailBrand(job.emailBrand),
     spreadsheetId: job.spreadsheetId || undefined,
     sheetName: job.sheetName || undefined,

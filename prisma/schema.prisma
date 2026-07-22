@@ -520,23 +520,24 @@ model LeadMergeHistory {
 }
 
 model LeadSchedule {
-  id              String   @id @default(cuid())
-  emailBrand      String   @default("tallykonnect")
-  automationId    String?
-  fullName        String?
-  email           String
-  dateOfDemo      String
-  timeOfDemo      String
-  meetingLink     String?
-  calendarEventId String?
-  gmailMessageId  String?
-  status          String   @default("Pending")
-  remarks         String?
-  sourceType      String?
-  sourceId        String?
-  sheetRowNumber  Int?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id               String   @id @default(cuid())
+  emailBrand       String   @default("tallykonnect")
+  senderAccountKey String?
+  automationId     String?
+  fullName         String?
+  email            String
+  dateOfDemo       String
+  timeOfDemo       String
+  meetingLink      String?
+  calendarEventId  String?
+  gmailMessageId   String?
+  status           String   @default("Pending")
+  remarks          String?
+  sourceType       String?
+  sourceId         String?
+  sheetRowNumber   Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@unique([emailBrand, automationId, dateOfDemo, timeOfDemo])
   @@index([emailBrand])
@@ -549,6 +550,7 @@ model LeadSchedule {
 model CustomerDemoState {
   id                  String   @id @default(cuid())
   emailBrand          String   @default("tallykonnect")
+  senderAccountKey    String?
   userId              String
   fullName            String?
   email               String
@@ -578,6 +580,7 @@ model CustomerDemoState {
 model DemoHistory {
   id                      String   @id @default(cuid())
   emailBrand              String   @default("tallykonnect")
+  senderAccountKey        String?
   sessionId               String   @unique
   userId                  String
   fullName                String?
@@ -656,6 +659,7 @@ model SheetLeadState {
 model EmailDelivery {
   id                 String    @id @default(cuid())
   emailBrand         String    @default("tallykonnect")
+  senderAccountKey   String
   eventKey           String
   automationId       String
   emailType          String
@@ -683,6 +687,7 @@ model EmailDelivery {
 
   @@unique([emailBrand, eventKey])
   @@index([emailBrand])
+  @@index([senderAccountKey])
   @@index([emailBrand, automationId])
   @@index([emailBrand, status])
   @@index([automationId])
@@ -721,13 +726,26 @@ model SheetSyncJob {
 }
 
 model GoogleAuth {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  accessToken  String?
-  refreshToken String?
-  expiryDate   DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id               String    @id @default(cuid())
+  senderAccountKey String?   @unique
+  email            String    @unique
+  accessToken      String?
+  refreshToken     String?
+  expiryDate       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model GoogleOAuthState {
+  id               String    @id @default(cuid())
+  stateHash        String    @unique
+  senderAccountKey String
+  expiresAt        DateTime
+  consumedAt       DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([senderAccountKey])
+  @@index([expiresAt])
 }
 
 model WorkflowControl {
@@ -738,21 +756,24 @@ model WorkflowControl {
 }
 
 model ProcessLeadJob {
-  id             String   @id @default(cuid())
-  status         String   @default("QUEUED")
-  generation     Int      @default(1)
-  sourceType     String
-  emailBrand     String   @default("tallykonnect")
-  spreadsheetId  String?
-  sheetName      String?
-  headersJson    String?
-  inputRowsJson  String
-  resultRowsJson String?
-  summaryJson    String?
-  progressJson   String?
-  error          String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id               String   @id @default(cuid())
+  status           String   @default("QUEUED")
+  generation       Int      @default(1)
+  sourceType       String
+  emailBrand       String   @default("tallykonnect")
+  workspaceKey     String?
+  emailBrandKey    String?
+  senderAccountKey String?
+  spreadsheetId    String?
+  sheetName        String?
+  headersJson      String?
+  inputRowsJson    String
+  resultRowsJson   String?
+  summaryJson      String?
+  progressJson     String?
+  error            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@index([status])
   @@index([emailBrand])

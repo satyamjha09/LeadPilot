@@ -7,31 +7,35 @@ function readRepoFile(...segments: string[]) {
 }
 
 describe('two-brand workflow regression coverage', () => {
-  it('keeps primary workflow Google calls tied to selected or persisted owner brand', () => {
+  it('keeps primary workflow Google calls tied to selected or persisted sender account', () => {
     const leadWorkflow = readRepoFile('server', 'leadWorkflow.ts');
 
-    expect(leadWorkflow).toContain('scheduleMeeting(row, sheetContext.emailBrand)');
-    expect(leadWorkflow).toContain('sendGmailInvite(row, meetLink, sheetContext.emailBrand)');
-    expect(leadWorkflow).toContain('updateCalendarMeeting(row, active.state.calendarEventId, ownerBrand)');
+    expect(leadWorkflow).toContain('scheduleMeeting(');
+    expect(leadWorkflow).toContain('senderAccountKeyForContext(sheetContext)');
+    expect(leadWorkflow).toContain('emailBrandKeyForContext(sheetContext)');
+    expect(leadWorkflow).toContain('updateCalendarMeeting(');
+    expect(leadWorkflow).toContain('contextForOwnerBrand(');
+    expect(leadWorkflow).toContain('active.state.senderAccountKey || active.history?.senderAccountKey');
     expect(leadWorkflow).toContain('sendGmailRescheduleInvite(updatedRow, meetLink');
-    expect(leadWorkflow).toContain('}, ownerBrand)');
-    expect(leadWorkflow).toContain('sendThankYouEmail(ownerRow, ownerBrand)');
-    expect(leadWorkflow).toContain('sendNoResponseEmail(ownerRow, ownerBrand)');
+    expect(leadWorkflow).toContain('senderAccountKeyForContext(ownerContext)');
+    expect(leadWorkflow).toContain('sendThankYouEmail({');
+    expect(leadWorkflow).toContain('sendNoResponseEmail({');
     expect(leadWorkflow).toContain('updateGoogleSheetRowsResilient(');
-    expect(leadWorkflow).toContain('context.emailBrand');
+    expect(leadWorkflow).toContain('context.workspaceKey || context.emailBrand');
     expect(leadWorkflow).toContain('enqueueSheetSyncJob({');
-    expect(leadWorkflow).toContain('emailBrand: context.emailBrand');
+    expect(leadWorkflow).toContain('emailBrand: context.workspaceKey || context.emailBrand');
   });
 
-  it('keeps reminders and retry workers tied to persisted brand owners', () => {
+  it('keeps reminders and retry workers tied to persisted sender owners', () => {
     const reminders = readRepoFile('server', 'reminders.ts');
     const emailRetryWorker = readRepoFile('server', 'emailRetryWorker.ts');
     const sheetSyncWorker = readRepoFile('server', 'sheetSyncWorker.ts');
 
     expect(reminders).toContain('const emailBrand = coerceStoredEmailBrand(history.emailBrand)');
+    expect(reminders).toContain('history.senderAccountKey');
     expect(reminders).toContain('sendGmailReminder(');
     expect(reminders).toContain('history.emailBrand');
-    expect(emailRetryWorker).toContain('delivery.emailBrand');
+    expect(emailRetryWorker).toContain('delivery.senderAccountKey');
     expect(emailRetryWorker).toContain('sendGmailTemplate(');
     expect(sheetSyncWorker).toContain('job.emailBrand');
     expect(sheetSyncWorker).toContain('updateGoogleSheetRowsResilient(');
@@ -65,9 +69,10 @@ describe('two-brand workflow regression coverage', () => {
 
     expect(googleAuth).toContain('https://www.googleapis.com/auth/userinfo.email');
     expect(googleAuth).toContain('getAuthenticatedGoogleEmail(oauth2Client)');
-    expect(googleAuth).toContain('new GoogleAccountMismatchError(normalizedBrand, authEmail, connectedEmail)');
-    expect(googleAuth).toContain('clearCredentials(normalizedBrand)');
-    expect(authRoutes).toContain('parseEmailBrand(req.query.brand)');
-    expect(authRoutes).toContain('parseEmailBrand(req.query.brand || req.query.state)');
+    expect(googleAuth).toContain('new GoogleAccountMismatchError(normalizedSender, authEmail, connectedEmail)');
+    expect(googleAuth).toContain('clearSenderCredentials(normalizedSender)');
+    expect(googleAuth).toContain('createGoogleOAuthState(senderAccountKey)');
+    expect(authRoutes).toContain("'/api/google-senders/:senderAccountKey/status'");
+    expect(authRoutes).toContain('exchangeCodeAndSaveFromState');
   });
 });

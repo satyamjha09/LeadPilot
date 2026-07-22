@@ -51,3 +51,5 @@ export async function assertProcessBatchBrandOwnership(
     lockedBrands: brands
   };
 }
+
+export const assertProcessBatchSenderOwnership = assertProcessBatchBrandOwnership;

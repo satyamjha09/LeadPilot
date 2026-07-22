@@ -4,6 +4,7 @@ import type { EmailType } from './emailIdentity';
 import type { ExcelRow } from '../src/types';
 import { getAutomationId, type EmailIdentityContext } from './emailIdentity';
 import type { EmailBrandKey } from '../src/lib/emailBrand';
+import { defaultSenderAccountForBrand, type SenderAccountKey } from '../src/lib/senderAccount';
 
 export const EMAIL_DELIVERY_STATUS = {
   PROCESSING: 'PROCESSING',
@@ -22,6 +23,7 @@ export type EmailClaimInput = {
   recipient: string;
   payloadHash: string;
   emailBrand: EmailBrandKey;
+  senderAccountKey?: SenderAccountKey;
   subject?: string;
   text?: string;
   html?: string;
@@ -75,6 +77,7 @@ export async function findEmailDeliveryById(deliveryId: string) {
       eventKey: string;
       automationId: string;
       emailBrand: EmailBrandKey;
+      senderAccountKey: SenderAccountKey;
       emailType: string;
       recipient: string;
       payloadHash: string;
@@ -100,6 +103,7 @@ export async function findEmailDeliveryById(deliveryId: string) {
       "eventKey",
       "automationId",
       "emailBrand",
+      "senderAccountKey",
       "emailType",
       "recipient",
       "payloadHash",
@@ -141,12 +145,14 @@ export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailC
   const deliveryId = randomUUID();
   const now = new Date();
   const emailBrand = input.emailBrand;
+  const senderAccountKey = input.senderAccountKey || defaultSenderAccountForBrand(emailBrand);
   const inserted = await prisma.$executeRaw`
     INSERT INTO "EmailDelivery" (
       "id",
       "eventKey",
       "automationId",
       "emailBrand",
+      "senderAccountKey",
       "emailType",
       "recipient",
       "payloadHash",
@@ -167,6 +173,7 @@ export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailC
       ${input.eventKey},
       ${input.automationId},
       ${emailBrand},
+      ${senderAccountKey},
       ${input.emailType},
       ${input.recipient.toLowerCase().trim()},
       ${input.payloadHash},
@@ -458,6 +465,7 @@ export async function listDueEmailRetries(limit = 10) {
       eventKey: string;
       automationId: string;
       emailBrand: EmailBrandKey;
+      senderAccountKey: SenderAccountKey;
       emailType: string;
       recipient: string;
       payloadHash: string;
@@ -475,6 +483,7 @@ export async function listDueEmailRetries(limit = 10) {
       "eventKey",
       "automationId",
       "emailBrand",
+      "senderAccountKey",
       "emailType",
       "recipient",
       "payloadHash",

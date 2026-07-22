@@ -16,6 +16,7 @@ import {
 import { prisma } from './db';
 import { LEAD_STATUS } from './leadStatus';
 import { coerceStoredEmailBrand } from '../src/lib/emailBrand';
+import { coerceStoredSenderAccountKey, defaultSenderAccountForBrand } from '../src/lib/senderAccount';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const CONFIG_PATH = path.join(DATA_DIR, 'reminder_config.json');
@@ -112,6 +113,9 @@ export async function checkAndSendReminders() {
 
   for (const history of histories) {
     const emailBrand = coerceStoredEmailBrand(history.emailBrand);
+    const senderAccountKey = coerceStoredSenderAccountKey(
+      history.senderAccountKey || defaultSenderAccountForBrand(emailBrand)
+    );
     const activeState = await prisma.customerDemoState.findUnique({
       where: {
         emailBrand_userId: {
@@ -165,6 +169,7 @@ export async function checkAndSendReminders() {
         emailType: EMAIL_TYPES.REMINDER,
         recipient: history.email,
         emailBrand,
+        senderAccountKey: coerceStoredSenderAccountKey(activeState?.senderAccountKey || senderAccountKey),
         payloadHash,
         subject: template.subject,
         text: template.text,
@@ -188,6 +193,7 @@ export async function checkAndSendReminders() {
         history.displayDate,
         history.displayTime,
         history.meetingLink,
+        coerceStoredSenderAccountKey(activeState?.senderAccountKey || senderAccountKey),
         emailBrand
       );
 

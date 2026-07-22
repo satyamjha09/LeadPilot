@@ -62,6 +62,11 @@ const prismaMock = vi.hoisted(() => ({
     findUnique: vi.fn(),
     upsert: vi.fn(),
     deleteMany: vi.fn()
+  },
+  googleOAuthState: {
+    create: vi.fn(),
+    updateMany: vi.fn(),
+    findUnique: vi.fn()
   }
 }));
 
@@ -99,6 +104,9 @@ describe('Google OAuth account verification', () => {
     prismaMock.googleAuth.findUnique.mockResolvedValue(null);
     prismaMock.googleAuth.upsert.mockResolvedValue({});
     prismaMock.googleAuth.deleteMany.mockResolvedValue({ count: 1 });
+    prismaMock.googleOAuthState.create.mockResolvedValue({});
+    prismaMock.googleOAuthState.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.googleOAuthState.findUnique.mockResolvedValue(null);
     googleMock.getToken.mockResolvedValue({
       tokens: {
         access_token: 'new-access',
@@ -204,7 +212,12 @@ describe('Google OAuth account verification', () => {
     });
     expect(prismaMock.googleAuth.deleteMany).toHaveBeenCalledTimes(1);
     expect(prismaMock.googleAuth.deleteMany).toHaveBeenCalledWith({
-      where: { email: 'info.anywheretally@gmail.com' }
+      where: {
+        OR: [
+          { senderAccountKey: 'anywheretally-google' },
+          { email: 'info.anywheretally@gmail.com' }
+        ]
+      }
     });
   });
 
@@ -217,7 +230,8 @@ describe('Google OAuth account verification', () => {
           'openid',
           'https://www.googleapis.com/auth/userinfo.email'
         ]),
-        state: 'tallykonnect'
+        state: expect.any(String),
+        login_hint: 'demo.tallykonnect@gmail.com'
       })
     );
   });

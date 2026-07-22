@@ -4,7 +4,8 @@ import { getOAuthClient, GOOGLE_RECONNECT_MESSAGE, isInvalidGrantError } from '.
 import { getLeadStatusParse, isValidLeadStatus, normalizeHeader } from './leadStatus';
 import { createNewAutomationId } from './emailIdentity';
 import { normalizeDisplayDate } from '../src/lib/dateFormat';
-import type { EmailBrandKey } from '../src/lib/emailBrand';
+import { parseEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
+import { defaultSenderAccountForBrand } from '../src/lib/senderAccount';
 
 const REQUIRED_UPDATE_COLUMNS = ['Meeting Details', 'lead_status', 'Remarks', 'automation_id'];
 const SHEET_BATCH_SIZE = 20;
@@ -49,7 +50,8 @@ export function extractSheetInfo(sheetUrl: string) {
 }
 
 export async function getSheetsClient(brand?: EmailBrandKey) {
-  const oauth2Client = await getOAuthClient(brand);
+  const workspaceBrand = parseEmailBrand(brand);
+  const oauth2Client = await getOAuthClient(defaultSenderAccountForBrand(workspaceBrand));
   return google.sheets({ version: 'v4', auth: oauth2Client });
 }
 

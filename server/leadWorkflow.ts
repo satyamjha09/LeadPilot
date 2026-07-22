@@ -35,7 +35,12 @@ import {
   buildRescheduleEmail,
   buildThankYouEmail
 } from './emailTemplates';
-import type { EmailBrandKey } from '../src/lib/emailBrand';
+import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
+import {
+  coerceStoredSenderAccountKey,
+  defaultSenderAccountForBrand,
+  type SenderAccountKey
+} from '../src/lib/senderAccount';
 import {
   claimEmailDelivery,
   findEmailDeliveryByEventKey,
@@ -78,6 +83,10 @@ export type SheetContext = {
   spreadsheetId?: string;
   sheetName?: string;
   headers?: string[];
+  workspaceKey?: EmailBrandKey;
+  senderAccountKey?: SenderAccountKey;
+  emailBrandKey?: EmailBrandKey;
+  /** Business/workflow owner used for database scoping and duplicate prevention. */
   emailBrand: EmailBrandKey;
   assertStillCurrent?: () => void | Promise<void>;
   onRowProcessed?: (row: ExcelRow, summary: ProcessLeadsResult['summary']) => void | Promise<void>;
@@ -86,6 +95,31 @@ export type SheetContext = {
 type WorkflowOptions = {
   skipSheetSync?: boolean;
 };
+
+function senderAccountKeyForContext(context: SheetContext): SenderAccountKey {
+  return coerceStoredSenderAccountKey(
+    context.senderAccountKey || defaultSenderAccountForBrand(emailBrandKeyForContext(context))
+  );
+}
+
+function emailBrandKeyForContext(context: SheetContext): EmailBrandKey {
+  return coerceStoredEmailBrand(context.emailBrandKey || context.emailBrand);
+}
+
+function contextForOwnerBrand(
+  context: SheetContext,
+  emailBrand: EmailBrandKey,
+  senderAccountKey?: string | null
+): SheetContext {
+  return {
+    ...context,
+    senderAccountKey: coerceStoredSenderAccountKey(
+      senderAccountKey || context.senderAccountKey || defaultSenderAccountForBrand(emailBrand)
+    ),
+    emailBrand,
+    emailBrandKey: emailBrand
+  };
+}
 
 type PlannedRow = {
   row: ExcelRow;
@@ -433,6 +467,7 @@ async function sendIdempotentEmail(input: IdempotentEmailInput) {
   await assertWorkflowStillValid(input.context);
   const claim = await claimEmailDelivery({
     emailBrand: input.context.emailBrand,
+    senderAccountKey: senderAccountKeyForContext(input.context),
     eventKey,
     automationId,
     emailType: input.emailType,
@@ -961,7 +996,7 @@ export async function processLeadsByStatus(
         context.headers,
         sheetUpdates,
         {},
-        context.emailBrand
+        context.workspaceKey || context.emailBrand
       );
 
       const failedResults = sheetResults.filter((result) => !result.success);
@@ -982,7 +1017,7 @@ export async function processLeadsByStatus(
           headers: context.headers,
           values: result.values,
           emailDeliveryId: result.emailDeliveryId,
-          emailBrand: context.emailBrand,
+          emailBrand: context.workspaceKey || context.emailBrand,
           error: result.error
         });
         if (result.emailDeliveryId) {
@@ -1053,7 +1088,7 @@ export async function syncSheetRow(
     sheetRowNumber,
     context.headers,
     payload,
-    context.emailBrand
+    context.workspaceKey || context.emailBrand
   );
 }
 
@@ -1067,14 +1102,18 @@ export async function sendThankYouForRow(
   if (!isValidEmail(email)) throw new Error('Email is invalid.');
   const active = await assertManualCloseAllowed(row, context.emailBrand);
   const ownerBrand = active.emailBrand;
-  const ownerContext: SheetContext = { ...context, emailBrand: ownerBrand };
+  const ownerContext = contextForOwnerBrand(
+    context,
+    ownerBrand,
+    active.state.senderAccountKey || active.history?.senderAccountKey
+  );
   const ownerRow: ExcelRow = {
     ...row,
     __emailBrand: ownerBrand,
     'Meeting Details': active.state.meetingLink || row['Meeting Details'] || ''
   };
 
-  const template = buildThankYouEmail({ fullName: ownerRow.full_name, brand: ownerBrand });
+  const template = buildThankYouEmail({ fullName: ownerRow.full_name, brand: emailBrandKeyForContext(ownerContext) });
   const emailResult = await sendIdempotentEmail({
     row: ownerRow,
     context: ownerContext,
@@ -1084,7 +1123,12 @@ export async function sendThankYouForRow(
     subject: template.subject,
     text: template.text,
     html: template.html,
-    send: () => sendThankYouEmail(ownerRow, ownerBrand)
+    send: () =>
+      sendThankYouEmail({
+        row: ownerRow,
+        senderAccountKey: senderAccountKeyForContext(ownerContext),
+        emailBrandKey: emailBrandKeyForContext(ownerContext)
+      })
   });
 
   if (emailResult.skipped) {
@@ -1126,7 +1170,12 @@ export async function sendThankYouForRow(
         remarks: 'Thank-you email sent',
         status: LEAD_STATUS.DEMO_DONE
       },
-      { sourceType: ownerContext.sourceType, sourceId: ownerContext.spreadsheetId, emailBrand: ownerBrand }
+      {
+        sourceType: ownerContext.sourceType,
+        sourceId: ownerContext.spreadsheetId,
+        emailBrand: ownerBrand,
+        senderAccountKey: senderAccountKeyForContext(ownerContext)
+      }
     );
   }
 
@@ -1163,14 +1212,18 @@ export async function sendNoResponseForRow(
   if (!isValidEmail(email)) throw new Error('Email is invalid.');
   const active = await assertManualCloseAllowed(row, context.emailBrand);
   const ownerBrand = active.emailBrand;
-  const ownerContext: SheetContext = { ...context, emailBrand: ownerBrand };
+  const ownerContext = contextForOwnerBrand(
+    context,
+    ownerBrand,
+    active.state.senderAccountKey || active.history?.senderAccountKey
+  );
   const ownerRow: ExcelRow = {
     ...row,
     __emailBrand: ownerBrand,
     'Meeting Details': active.state.meetingLink || row['Meeting Details'] || ''
   };
 
-  const template = buildNoResponseEmail({ fullName: ownerRow.full_name, brand: ownerBrand });
+  const template = buildNoResponseEmail({ fullName: ownerRow.full_name, brand: emailBrandKeyForContext(ownerContext) });
   const emailResult = await sendIdempotentEmail({
     row: ownerRow,
     context: ownerContext,
@@ -1180,7 +1233,12 @@ export async function sendNoResponseForRow(
     subject: template.subject,
     text: template.text,
     html: template.html,
-    send: () => sendNoResponseEmail(ownerRow, ownerBrand)
+    send: () =>
+      sendNoResponseEmail({
+        row: ownerRow,
+        senderAccountKey: senderAccountKeyForContext(ownerContext),
+        emailBrandKey: emailBrandKeyForContext(ownerContext)
+      })
   });
 
   if (emailResult.skipped) {
@@ -1217,7 +1275,12 @@ export async function sendNoResponseForRow(
         status: LEAD_STATUS.NO_RESPONSE,
         remarks: message
       },
-      { sourceType: ownerContext.sourceType, sourceId: ownerContext.spreadsheetId, emailBrand: ownerBrand }
+      {
+        sourceType: ownerContext.sourceType,
+        sourceId: ownerContext.spreadsheetId,
+        emailBrand: ownerBrand,
+        senderAccountKey: senderAccountKeyForContext(ownerContext)
+      }
     );
     return { row: updatedRow, skipped: true, message };
   }
@@ -1251,7 +1314,12 @@ export async function sendNoResponseForRow(
       status: LEAD_STATUS.NO_RESPONSE,
       remarks: 'Not Attended email sent'
     },
-    { sourceType: ownerContext.sourceType, sourceId: ownerContext.spreadsheetId, emailBrand: ownerBrand }
+    {
+      sourceType: ownerContext.sourceType,
+      sourceId: ownerContext.spreadsheetId,
+      emailBrand: ownerBrand,
+      senderAccountKey: senderAccountKeyForContext(ownerContext)
+    }
   );
 
   return { row: updatedRow, skipped: false, message: 'Not Attended email sent' };
@@ -1268,7 +1336,11 @@ export async function rescheduleDemoForRow(
 
   const active = await assertDemoBrandOwnership(row, context.emailBrand);
   const ownerBrand = active.emailBrand;
-  const ownerContext: SheetContext = { ...context, emailBrand: ownerBrand };
+  const ownerContext = contextForOwnerBrand(
+    context,
+    ownerBrand,
+    active.state.senderAccountKey || active.history?.senderAccountKey
+  );
   if (!active.history) throw new Error('Active demo history record was not found.');
   if (!active.state.meetingLink || !active.state.calendarEventId) {
     throw new Error('An active meeting is required to reschedule.');
@@ -1280,7 +1352,12 @@ export async function rescheduleDemoForRow(
   const oldDate = active.state.demoDate || active.history.displayDate || undefined;
   const oldTime = active.state.demoTime || active.history.displayTime || undefined;
   await assertWorkflowStillValid(ownerContext);
-  const calendarResult = await updateCalendarMeeting(row, active.state.calendarEventId, ownerBrand);
+  const calendarResult = await updateCalendarMeeting(
+    row,
+    active.state.calendarEventId,
+    senderAccountKeyForContext(ownerContext),
+    emailBrandKeyForContext(ownerContext)
+  );
   const meetLink = calendarResult.meetLink || active.state.meetingLink;
   const calendarEventId = calendarResult.eventId || active.state.calendarEventId;
 
@@ -1296,7 +1373,7 @@ export async function rescheduleDemoForRow(
   await rescheduleActiveDemoForRow(updatedRow, {
     meetingLink: meetLink,
     calendarEventId
-  }, ownerBrand);
+  }, ownerBrand, senderAccountKeyForContext(ownerContext));
 
   await assertWorkflowStillValid(ownerContext);
   await saveLeadScheduleSuccess(
@@ -1310,7 +1387,8 @@ export async function rescheduleDemoForRow(
     {
       sourceType: ownerContext.sourceType || row.__sourceType,
       sourceId: ownerContext.spreadsheetId || row.__spreadsheetId,
-      emailBrand: ownerBrand
+      emailBrand: ownerBrand,
+      senderAccountKey: senderAccountKeyForContext(ownerContext)
     }
   );
 
@@ -1325,7 +1403,7 @@ export async function rescheduleDemoForRow(
     meetLink,
     oldDate,
     oldTime,
-    brand: ownerBrand
+    brand: emailBrandKeyForContext(ownerContext)
   });
   let emailResult: Awaited<ReturnType<typeof sendIdempotentEmail>> | null = null;
   let emailError = '';
@@ -1343,7 +1421,9 @@ export async function rescheduleDemoForRow(
         sendGmailRescheduleInvite(updatedRow, meetLink, {
           date: oldDate,
           time: oldTime
-        }, ownerBrand)
+        },
+        senderAccountKeyForContext(ownerContext),
+        emailBrandKeyForContext(ownerContext))
     });
   } catch (error) {
     if (isStaleWorkflowGenerationError(error)) throw error;
@@ -1382,7 +1462,8 @@ export async function rescheduleDemoForRow(
     {
       sourceType: ownerContext.sourceType || row.__sourceType,
       sourceId: ownerContext.spreadsheetId || row.__spreadsheetId,
-      emailBrand: ownerBrand
+      emailBrand: ownerBrand,
+      senderAccountKey: senderAccountKeyForContext(ownerContext)
     }
   );
 
@@ -1435,7 +1516,8 @@ export async function updateLeadStatusOnly(
     {
       sourceType: context.sourceType,
       sourceId: context.spreadsheetId,
-      emailBrand: context.emailBrand
+      emailBrand: context.emailBrand,
+      senderAccountKey: senderAccountKeyForContext(context)
     }
   );
 
@@ -1499,7 +1581,8 @@ export async function processScheduleRows(
       await saveLeadScheduleFailure(updatedRow, TIME_CONFLICT_REMARK, {
         sourceType: options?.sheetContext?.sourceType || row.__sourceType,
         sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-        emailBrand: requiredEmailBrand
+        emailBrand: requiredEmailBrand,
+        senderAccountKey: senderAccountKeyForContext(options?.sheetContext || { sourceType: 'excel', emailBrand: requiredEmailBrand })
       });
       results.push(updatedRow);
       summary.failed++;
@@ -1533,7 +1616,8 @@ export async function processScheduleRows(
       await saveLeadScheduleFailure(updatedRow, updatedRow.Remarks || 'Email is invalid', {
         sourceType: options?.sheetContext?.sourceType || row.__sourceType,
         sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-        emailBrand: requiredEmailBrand
+        emailBrand: requiredEmailBrand,
+        senderAccountKey: senderAccountKeyForContext(options?.sheetContext || { sourceType: 'excel', emailBrand: requiredEmailBrand })
       });
       results.push(updatedRow);
       summary.failed++;
@@ -1552,7 +1636,8 @@ export async function processScheduleRows(
       await saveLeadScheduleFailure(updatedRow, message, {
         sourceType: options?.sheetContext?.sourceType || row.__sourceType,
         sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-        emailBrand: requiredEmailBrand
+        emailBrand: requiredEmailBrand,
+        senderAccountKey: senderAccountKeyForContext(options?.sheetContext || { sourceType: 'excel', emailBrand: requiredEmailBrand })
       });
       results.push(updatedRow);
       summary.failed++;
@@ -1567,6 +1652,8 @@ export async function processScheduleRows(
       spreadsheetId: row.__spreadsheetId,
       sheetName: row.__sheetName,
       headers: row.__originalColumns,
+      senderAccountKey: defaultSenderAccountForBrand(requiredEmailBrand),
+      emailBrandKey: requiredEmailBrand,
       emailBrand: requiredEmailBrand
     };
     await assertStillCurrent();
@@ -1668,7 +1755,11 @@ export async function processScheduleRows(
           }
 
           await assertStillCurrent();
-          const scheduleResult = await scheduleMeeting(row, sheetContext.emailBrand);
+          const scheduleResult = await scheduleMeeting(
+            row,
+            senderAccountKeyForContext(sheetContext),
+            emailBrandKeyForContext(sheetContext)
+          );
           meetLink = scheduleResult.meetLink;
           calendarEventId = scheduleResult.eventId;
           startTime = scheduleResult.startTime;
@@ -1685,7 +1776,8 @@ export async function processScheduleRows(
             {
               sourceType: options?.sheetContext?.sourceType || row.__sourceType,
               sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-              emailBrand: sheetContext.emailBrand
+              emailBrand: sheetContext.emailBrand,
+              senderAccountKey: senderAccountKeyForContext(sheetContext)
             }
           );
 
@@ -1699,7 +1791,8 @@ export async function processScheduleRows(
             {
               sourceType: options?.sheetContext?.sourceType || row.__sourceType,
               sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-              emailBrand: sheetContext.emailBrand
+              emailBrand: sheetContext.emailBrand,
+              senderAccountKey: senderAccountKeyForContext(sheetContext)
             }
           );
         }
@@ -1718,14 +1811,14 @@ export async function processScheduleRows(
             meetLink,
             oldDate: options?.previousMeetingDate || undefined,
             oldTime: options?.previousMeetingTime || undefined,
-            brand: sheetContext.emailBrand
+            brand: emailBrandKeyForContext(sheetContext)
           })
         : buildMeetingInviteEmail({
             fullName: row.full_name,
             date: String(row['Date of Demo'] || ''),
             time: String(row['Time of Demo'] || ''),
             meetLink,
-            brand: sheetContext.emailBrand
+            brand: emailBrandKeyForContext(sheetContext)
           });
       const emailResult = await sendIdempotentEmail({
         row,
@@ -1738,11 +1831,22 @@ export async function processScheduleRows(
         html: template.html,
         send: () =>
           isRescheduleEmail
-            ? sendGmailRescheduleInvite(row, meetLink, {
-                date: options?.previousMeetingDate || undefined,
-                time: options?.previousMeetingTime || undefined
-              }, sheetContext.emailBrand)
-            : sendGmailInvite(row, meetLink, sheetContext.emailBrand)
+            ? sendGmailRescheduleInvite(
+                row,
+                meetLink,
+                {
+                  date: options?.previousMeetingDate || undefined,
+                  time: options?.previousMeetingTime || undefined
+                },
+                senderAccountKeyForContext(sheetContext),
+                emailBrandKeyForContext(sheetContext)
+              )
+            : sendGmailInvite({
+                row,
+                meetLink,
+                senderAccountKey: senderAccountKeyForContext(sheetContext),
+                emailBrandKey: emailBrandKeyForContext(sheetContext)
+              })
       });
       const gmailMessageId = emailResult.messageId || '';
       const remarks = emailResult.sent
@@ -1777,7 +1881,8 @@ export async function processScheduleRows(
         {
           sourceType: options?.sheetContext?.sourceType || row.__sourceType,
           sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-          emailBrand: sheetContext.emailBrand
+          emailBrand: sheetContext.emailBrand,
+          senderAccountKey: senderAccountKeyForContext(sheetContext)
         }
       );
 
@@ -1792,7 +1897,8 @@ export async function processScheduleRows(
         {
           sourceType: options?.sheetContext?.sourceType || row.__sourceType,
           sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-          emailBrand: sheetContext.emailBrand
+          emailBrand: sheetContext.emailBrand,
+          senderAccountKey: senderAccountKeyForContext(sheetContext)
         }
       );
       if (emailResult.sent) {
@@ -1826,6 +1932,7 @@ export async function processScheduleRows(
         sourceType: options?.sheetContext?.sourceType || row.__sourceType,
         sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
         emailBrand: requiredEmailBrand,
+        senderAccountKey: senderAccountKeyForContext(options?.sheetContext || { sourceType: 'excel', emailBrand: requiredEmailBrand }),
         status: scheduleFailureStatus(failureMessage),
         meetingLink: preservedMeetLink
       });

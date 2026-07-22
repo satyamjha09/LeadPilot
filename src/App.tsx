@@ -42,12 +42,23 @@ import {
   SheetSource
 } from '@/src/types';
 import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
+import {
+  SENDER_ACCOUNT_KEYS,
+  parseSenderAccountKey,
+  senderAccountEmail,
+  senderAccountLabel,
+  type SenderAccountKey,
+  type WorkspaceKey
+} from '@/src/lib/senderAccount';
 import { cn } from '@/lib/utils';
 
 const LEGACY_ROWS_STORAGE_KEY = 'excel-meet-scheduler.rows';
 const LEGACY_SELECTED_STORAGE_KEY = 'excel-meet-scheduler.selectedRowIds';
 const LEGACY_SOURCE_STORAGE_KEY = 'excel-meet-scheduler.source';
-const EMAIL_BRAND_STORAGE_KEY = 'excel-meet-scheduler.emailBrand';
+const LEGACY_EMAIL_BRAND_STORAGE_KEY = 'excel-meet-scheduler.emailBrand';
+const WORKSPACE_KEY_STORAGE = 'leadpilot.workspaceKey';
+const SENDER_ACCOUNT_STORAGE = 'leadpilot.senderAccountKey';
+const EMAIL_BRAND_STORAGE_KEY = 'leadpilot.emailBrandKey';
 const WORKSPACE_STORAGE_PREFIX = 'excel-meet-scheduler';
 const EMAIL_BRANDS: Array<{ key: EmailBrandKey; label: string; description: string }> = [
   { key: 'tallykonnect', label: emailBrandLabel('tallykonnect'), description: 'Use TallyKonnect logo, website, and footer.' },
@@ -56,6 +67,11 @@ const EMAIL_BRANDS: Array<{ key: EmailBrandKey; label: string; description: stri
 
 type ProcessPreview = {
   emailBrand: EmailBrandKey;
+  workspaceKey?: WorkspaceKey;
+  senderAccountKey?: SenderAccountKey;
+  emailBrandKey?: EmailBrandKey;
+  lockedSenderAccountKey?: SenderAccountKey;
+  lockedSenderAccountKeys?: SenderAccountKey[];
   lockedEmailBrand?: EmailBrandKey;
   lockedBrands?: EmailBrandKey[];
   summary: {
@@ -191,9 +207,25 @@ const removeStoredWorkspace = (brand: EmailBrandKey) => {
 
 const loadStoredEmailBrand = (): EmailBrandKey => {
   if (typeof window === 'undefined') return 'tallykonnect';
-  return window.localStorage.getItem(EMAIL_BRAND_STORAGE_KEY) === 'anywheretally'
+  return (window.localStorage.getItem(EMAIL_BRAND_STORAGE_KEY) || window.localStorage.getItem(LEGACY_EMAIL_BRAND_STORAGE_KEY)) === 'anywheretally'
     ? 'anywheretally'
     : 'tallykonnect';
+};
+
+const loadStoredWorkspaceKey = (): WorkspaceKey => {
+  if (typeof window === 'undefined') return 'tallykonnect';
+  return window.localStorage.getItem(WORKSPACE_KEY_STORAGE) === 'anywheretally'
+    ? 'anywheretally'
+    : loadStoredEmailBrand();
+};
+
+const loadStoredSenderAccountKey = (): SenderAccountKey => {
+  if (typeof window === 'undefined') return 'tallykonnect-google';
+  try {
+    return parseSenderAccountKey(window.localStorage.getItem(SENDER_ACCOUNT_STORAGE) || loadStoredEmailBrand());
+  } catch {
+    return 'tallykonnect-google';
+  }
 };
 
 const isAbortError = (err: unknown) =>
@@ -231,15 +263,42 @@ const getLockedBrandsForRows = (rows: ExcelRow[]) =>
     )
   );
 
+const getLockedSenderAccountsForRows = (rows: ExcelRow[]) =>
+  Array.from(
+    new Set(
+      rows
+        .map((row) => row.__senderAccountKey)
+        .filter((sender): sender is SenderAccountKey =>
+          sender === 'tallykonnect-google' || sender === 'anywheretally-google'
+        )
+    )
+  );
+
+const senderStatusKey = (status: AuthStatus | null | undefined): SenderAccountKey | undefined => {
+  const key = status?.senderAccountKey || status?.key || status?.brand;
+  try {
+    return parseSenderAccountKey(key);
+  } catch {
+    return undefined;
+  }
+};
+
 export default function App() {
+  const initialWorkspaceKey = loadStoredWorkspaceKey();
+  const initialSenderAccountKey = loadStoredSenderAccountKey();
   const initialEmailBrand = loadStoredEmailBrand();
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [isAuthStatusLoading, setIsAuthStatusLoading] = useState(true);
-  const [selectedEmailBrand, setSelectedEmailBrand] = useState<EmailBrandKey>(initialEmailBrand);
-  const [workspaceBrand, setWorkspaceBrand] = useState<EmailBrandKey>(initialEmailBrand);
-  const [rows, setRows] = useState<ExcelRow[]>(() => loadStoredRows(initialEmailBrand));
-  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => loadStoredSelectedIds(initialEmailBrand));
-  const [source, setSource] = useState<SheetSource>(() => loadStoredSource(initialEmailBrand));
+  const [workspaceKey, setWorkspaceKey] = useState<WorkspaceKey>(initialWorkspaceKey);
+  const [selectedSenderAccountKey, setSelectedSenderAccountKey] = useState<SenderAccountKey>(initialSenderAccountKey);
+  const [selectedEmailBrandKey, setSelectedEmailBrandKey] = useState<EmailBrandKey>(initialEmailBrand);
+  const selectedEmailBrand = selectedEmailBrandKey;
+  const setSelectedEmailBrand = setSelectedEmailBrandKey;
+  const workspaceBrand = workspaceKey;
+  const setWorkspaceBrand = setWorkspaceKey;
+  const [rows, setRows] = useState<ExcelRow[]>(() => loadStoredRows(initialWorkspaceKey));
+  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => loadStoredSelectedIds(initialWorkspaceKey));
+  const [source, setSource] = useState<SheetSource>(() => loadStoredSource(initialWorkspaceKey));
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<DashboardView>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
@@ -269,6 +328,8 @@ export default function App() {
   const didReconcileStoredRows = useRef(false);
   const importRef = useRef<HTMLDivElement>(null);
   const selectedEmailBrandRef = useRef(selectedEmailBrand);
+  const selectedSenderAccountKeyRef = useRef(selectedSenderAccountKey);
+  const workspaceKeyRef = useRef(workspaceKey);
   const workspaceGenerationRef = useRef(0);
   const workspaceRequestControllersRef = useRef<Record<WorkspaceRequestKey, AbortController | null>>({
     'excel-preview': null,
@@ -355,29 +416,43 @@ export default function App() {
   const previewSummary = processPreview?.summary;
   const previewActionable = previewSummary?.actionable ?? 0;
   const processLockedBrands = useMemo(() => getLockedBrandsForRows(processTargetRows), [processTargetRows]);
-  const processLockedBrand = processPreview?.lockedEmailBrand || (processLockedBrands.length === 1 ? processLockedBrands[0] : undefined);
+  const processLockedSenderAccounts = useMemo(
+    () => getLockedSenderAccountsForRows(processTargetRows),
+    [processTargetRows]
+  );
+  const processLockedSenderAccountKey =
+    processPreview?.lockedSenderAccountKey ||
+    (processPreview?.lockedSenderAccountKeys?.length === 1 ? processPreview.lockedSenderAccountKeys[0] : undefined) ||
+    (processLockedSenderAccounts.length === 1 ? processLockedSenderAccounts[0] : undefined);
+  const hasMixedProcessSenders =
+    processLockedSenderAccounts.length > 1 || (processPreview?.lockedSenderAccountKeys?.length || 0) > 1;
   const hasMixedProcessBrands = processLockedBrands.length > 1 || (processPreview?.lockedBrands?.length || 0) > 1;
-  const previewBrandMatchesSelection = !!processPreview && processPreview.emailBrand === selectedEmailBrand;
+  const previewSelectionMatches =
+    !!processPreview &&
+    (processPreview.senderAccountKey || processPreview.emailBrand) === selectedSenderAccountKey &&
+    (processPreview.emailBrandKey || processPreview.emailBrand) === selectedEmailBrand;
   const authMatchesSelection =
     !isAuthStatusLoading &&
     !!authStatus?.authenticated &&
-    authStatus.brand === selectedEmailBrand;
+    senderStatusKey(authStatus) === selectedSenderAccountKey;
   const canConfirmProcess =
     !isProcessing &&
     !isPreflightLoading &&
     !!processPreview &&
     previewActionable > 0 &&
+    !hasMixedProcessSenders &&
     !hasMixedProcessBrands &&
-    previewBrandMatchesSelection &&
+    previewSelectionMatches &&
     authMatchesSelection;
   const processButtonLabel = (() => {
     if (!processPreview) return 'Preparing...';
     if (hasMixedProcessBrands) return 'Process each brand separately';
-    if (!previewBrandMatchesSelection) return 'Refresh preview for selected brand';
+    if (hasMixedProcessSenders) return 'Process each Google sender separately';
+    if (!previewSelectionMatches) return 'Refresh preview for selected options';
     if (!authMatchesSelection) {
       return isAuthStatusLoading
         ? 'Checking Google connection...'
-        : `Connect ${emailBrandLabel(selectedEmailBrand)} Google`;
+        : `Connect ${senderAccountEmail(selectedSenderAccountKey)} Google`;
     }
     if (previewActionable === 0) return 'Nothing new to process';
     if (previewSummary?.demoScheduled) {
@@ -396,9 +471,15 @@ export default function App() {
         }
       : { sourceType: 'excel' as const };
 
-  const processRequestMeta = (brand: EmailBrandKey = selectedEmailBrand) => ({
+  const processRequestMeta = (
+    senderAccountKey: SenderAccountKey = selectedSenderAccountKey,
+    emailBrandKey: EmailBrandKey = selectedEmailBrand
+  ) => ({
     ...sheetRequestMeta(),
-    emailBrand: brand
+    workspaceKey,
+    senderAccountKey,
+    emailBrandKey,
+    emailBrand: emailBrandKey
   });
 
   const updateRowInState = (updatedRow: ExcelRow) => {
@@ -427,7 +508,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal,
-        body: JSON.stringify({ rows: rowsToReconcile, emailBrand: selectedEmailBrand })
+        body: JSON.stringify({ rows: rowsToReconcile, workspaceKey })
       });
       if (!res.ok || !isCurrentWorkspace(generation)) return rowsToReconcile;
       const data = await res.json();
@@ -437,23 +518,23 @@ export default function App() {
     }
   };
 
-  const fetchAuthStatus = async (brand: EmailBrandKey = selectedEmailBrand) => {
+  const fetchAuthStatus = async (senderAccountKey: SenderAccountKey = selectedSenderAccountKey) => {
     setIsAuthStatusLoading(true);
     setAuthStatus(null);
     try {
-      const res = await fetch(`/api/auth/status?brand=${encodeURIComponent(brand)}`);
+      const res = await fetch(`/api/google-senders/${encodeURIComponent(senderAccountKey)}/status`);
       if (!res.ok) throw new Error('Status server unreachable');
       const data = await res.json();
-      if (selectedEmailBrandRef.current === brand) {
+      if (selectedSenderAccountKeyRef.current === senderAccountKey) {
         setAuthStatus(data);
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Auth status failed';
-      if (selectedEmailBrandRef.current === brand) {
+      if (selectedSenderAccountKeyRef.current === senderAccountKey) {
         toast.error(`Failed to load Google auth: ${message}`);
       }
     } finally {
-      if (selectedEmailBrandRef.current === brand) {
+      if (selectedSenderAccountKeyRef.current === senderAccountKey) {
         setIsAuthStatusLoading(false);
       }
     }
@@ -470,12 +551,12 @@ export default function App() {
     }
   };
 
-  const fetchDashboardTrend = async (brand: EmailBrandKey = selectedEmailBrand, signal?: AbortSignal) => {
+  const fetchDashboardTrend = async (brand: WorkspaceKey = workspaceKey, signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/dashboard/trend?brand=${encodeURIComponent(brand)}&days=7`, { signal });
+      const res = await fetch(`/api/dashboard/trend?workspaceKey=${encodeURIComponent(brand)}&days=7`, { signal });
       if (!res.ok) throw new Error('Trend server unreachable');
       const data = await res.json();
-      if (selectedEmailBrandRef.current === brand) {
+      if (workspaceKeyRef.current === brand) {
         setDashboardTrendData(Array.isArray(data.data) ? data.data : []);
       }
     } catch (err: unknown) {
@@ -485,12 +566,12 @@ export default function App() {
     }
   };
 
-  const fetchDashboardActivity = async (brand: EmailBrandKey = selectedEmailBrand, signal?: AbortSignal) => {
+  const fetchDashboardActivity = async (brand: WorkspaceKey = workspaceKey, signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/dashboard/activity?brand=${encodeURIComponent(brand)}&limit=25`, { signal });
+      const res = await fetch(`/api/dashboard/activity?workspaceKey=${encodeURIComponent(brand)}&limit=25`, { signal });
       if (!res.ok) throw new Error('Activity server unreachable');
       const data = await res.json();
-      if (selectedEmailBrandRef.current === brand) {
+      if (workspaceKeyRef.current === brand) {
         setDashboardActivityEvents(Array.isArray(data.data) ? data.data : []);
       }
     } catch (err: unknown) {
@@ -500,12 +581,12 @@ export default function App() {
     }
   };
 
-  const fetchDashboardHealth = async (brand: EmailBrandKey = selectedEmailBrand, signal?: AbortSignal) => {
+  const fetchDashboardHealth = async (brand: WorkspaceKey = workspaceKey, signal?: AbortSignal) => {
     try {
-      const res = await fetch(`/api/dashboard/health?brand=${encodeURIComponent(brand)}`, { signal });
+      const res = await fetch(`/api/dashboard/health?workspaceKey=${encodeURIComponent(brand)}`, { signal });
       if (!res.ok) throw new Error('Health server unreachable');
       const data = await res.json();
-      if (selectedEmailBrandRef.current === brand) {
+      if (workspaceKeyRef.current === brand) {
         setDashboardHealthSummary(data.data || null);
       }
     } catch (err: unknown) {
@@ -522,41 +603,49 @@ export default function App() {
 
   useEffect(() => {
     selectedEmailBrandRef.current = selectedEmailBrand;
-    if (
-      selectedEmailBrand !== workspaceBrand &&
-      processTargetRows.length === 0 &&
-      !confirmProcessOpen &&
-      !isPreflightLoading &&
-      !isProcessing
-    ) {
-      loadWorkspaceForBrand(selectedEmailBrand);
-    }
-  }, [selectedEmailBrand, workspaceBrand, processTargetRows.length, confirmProcessOpen, isPreflightLoading, isProcessing]);
+  }, [selectedEmailBrand]);
 
   useEffect(() => {
-    fetchAuthStatus(selectedEmailBrand);
+    selectedSenderAccountKeyRef.current = selectedSenderAccountKey;
+  }, [selectedSenderAccountKey]);
+
+  useEffect(() => {
+    workspaceKeyRef.current = workspaceKey;
+  }, [workspaceKey]);
+
+  useEffect(() => {
+    fetchAuthStatus(selectedSenderAccountKey);
     fetchProcessQueueConfig();
     const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
       if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        fetchAuthStatus(selectedEmailBrand);
-        toast.success('Google account linked successfully.');
+        let senderAccountKey = selectedSenderAccountKeyRef.current;
+        try {
+          senderAccountKey = parseSenderAccountKey(event.data?.senderAccountKey);
+        } catch {
+          // Older callback payloads did not include a canonical sender key.
+        }
+        fetchAuthStatus(senderAccountKey);
+        if (senderAccountKey === selectedSenderAccountKeyRef.current) {
+          toast.success('Google account linked successfully.');
+        }
       }
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [selectedEmailBrand]);
+  }, [selectedSenderAccountKey]);
 
   useEffect(() => {
     const controller = new AbortController();
     setDashboardTrendData([]);
     setDashboardActivityEvents([]);
     setDashboardHealthSummary(null);
-    void fetchDashboardTrend(selectedEmailBrand, controller.signal);
-    void fetchDashboardActivity(selectedEmailBrand, controller.signal);
-    void fetchDashboardHealth(selectedEmailBrand, controller.signal);
+    void fetchDashboardTrend(workspaceKey, controller.signal);
+    void fetchDashboardActivity(workspaceKey, controller.signal);
+    void fetchDashboardHealth(workspaceKey, controller.signal);
     return () => controller.abort();
   }, [
-    selectedEmailBrand,
+    workspaceKey,
     lastSummary?.scheduled,
     lastSummary?.demoScheduled,
     lastSummary?.reschedule,
@@ -592,6 +681,18 @@ export default function App() {
   }, [selectedEmailBrand]);
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem(SENDER_ACCOUNT_STORAGE, selectedSenderAccountKey);
+    } catch {}
+  }, [selectedSenderAccountKey]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(WORKSPACE_KEY_STORAGE, workspaceKey);
+    } catch {}
+  }, [workspaceKey]);
+
+  useEffect(() => {
     if (didReconcileStoredRows.current || rows.length === 0) return;
     didReconcileStoredRows.current = true;
     const generation = getWorkspaceGeneration();
@@ -622,7 +723,7 @@ export default function App() {
     });
     if (!reconciledRows) return;
     if (!isCurrentWorkspace(generation)) return;
-    setWorkspaceBrand(selectedEmailBrand);
+    setWorkspaceBrand(workspaceKey);
     setSource({ type: 'excel' });
     setRows(reconciledRows);
     const initiallySelected = new Set<string>();
@@ -637,7 +738,7 @@ export default function App() {
   const handleGoogleSheetDataParsed = async (parsedRows: ExcelRow[], sheetSource: SheetSource) => {
     const generation = getWorkspaceGeneration();
     if (!isCurrentWorkspace(generation)) return;
-    setWorkspaceBrand(selectedEmailBrand);
+    setWorkspaceBrand(workspaceKey);
     setSource(sheetSource);
     setRows(parsedRows);
     const initiallySelected = new Set<string>();
@@ -680,7 +781,7 @@ export default function App() {
           spreadsheetId: source.spreadsheetId,
           sheetName: source.sheetName,
           headers: source.headers,
-          emailBrand: selectedEmailBrand
+          workspaceKey
         })
       });
       const data = await res.json();
@@ -704,7 +805,10 @@ export default function App() {
     }
   };
 
-  const openProcessPreflight = async (targetRows: ExcelRow[], requestedBrand: EmailBrandKey = selectedEmailBrand) => {
+  const openProcessPreflight = async (
+    targetRows: ExcelRow[],
+    options: { senderAccountKey?: SenderAccountKey; emailBrandKey?: EmailBrandKey } = {}
+  ) => {
     if (targetRows.length === 0) {
       toast.error('No processable rows selected.');
       return;
@@ -715,9 +819,16 @@ export default function App() {
       toast.error('This selection contains rows from both brands. Process each brand separately.');
       return;
     }
-    const previewBrand = lockedBrands[0] || requestedBrand;
-    if (previewBrand !== selectedEmailBrand) {
-      setSelectedEmailBrand(previewBrand);
+    const lockedSenderAccounts = getLockedSenderAccountsForRows(targetRows);
+    if (lockedSenderAccounts.length > 1) {
+      toast.error('This selection contains rows from multiple Google sender accounts. Process each sender separately.');
+      return;
+    }
+    const previewSenderAccountKey = lockedSenderAccounts[0] || options.senderAccountKey || selectedSenderAccountKey;
+    const previewEmailBrandKey = lockedBrands[0] || options.emailBrandKey || selectedEmailBrand;
+    if (previewSenderAccountKey !== selectedSenderAccountKey) {
+      setSelectedSenderAccountKey(previewSenderAccountKey);
+      void fetchAuthStatus(previewSenderAccountKey);
     }
 
     const generation = getWorkspaceGeneration();
@@ -731,7 +842,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal,
-        body: JSON.stringify({ rows: targetRows, ...processRequestMeta(previewBrand) })
+        body: JSON.stringify({ rows: targetRows, ...processRequestMeta(previewSenderAccountKey, previewEmailBrandKey) })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -766,7 +877,7 @@ export default function App() {
   ) => {
     const summary = applyProcessSummary(rawSummary, processTargetRows.length);
     const updatedById = new Map(updatedRows.map((row) => [row.id, row]));
-    setWorkspaceBrand(selectedEmailBrand);
+    setWorkspaceBrand(workspaceKey);
     setRows((current) => current.map((row) => updatedById.get(row.id) || row));
     if (source.type === 'google-sheet' && Array.isArray(headers)) {
       setSource({ ...source, headers });
@@ -867,7 +978,7 @@ export default function App() {
     }
 
     if (!canConfirmProcess) {
-      toast.error('Check the selected brand and Google connection before processing.');
+      toast.error('Check the selected sender account and Google connection before processing.');
       return;
     }
 
@@ -1068,10 +1179,9 @@ export default function App() {
   const handleClearAuth = async () => {
     setConfirmClearAuthOpen(false);
     try {
-      const res = await fetch('/api/auth/clear', {
+      const res = await fetch(`/api/google-senders/${encodeURIComponent(selectedSenderAccountKey)}/disconnect`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brand: selectedEmailBrand })
+        headers: { 'Content-Type': 'application/json' }
       });
       if (!res.ok) throw new Error('Server failure rejecting disconnect command.');
       const data = await res.json();
@@ -1079,7 +1189,7 @@ export default function App() {
         setAuthStatus(data.status);
         setIsAuthStatusLoading(false);
       } else {
-        await fetchAuthStatus(selectedEmailBrand);
+        await fetchAuthStatus(selectedSenderAccountKey);
       }
       toast.success('Google session cleared. Connect again to continue.');
     } catch (err: unknown) {
@@ -1157,10 +1267,9 @@ export default function App() {
     <TooltipProvider>
         <AppShell
           authStatus={authStatus}
-          emailBrand={selectedEmailBrand}
           pageTitle={viewCopy.title}
           pageDescription={viewCopy.description}
-        onRefreshAuth={() => fetchAuthStatus(selectedEmailBrand)}
+        onRefreshAuth={() => fetchAuthStatus(selectedSenderAccountKey)}
         onClearAuth={() => setConfirmClearAuthOpen(true)}
         source={source}
         onSyncNow={source.type === 'google-sheet' ? () => syncGoogleSheet(true) : undefined}
@@ -1178,14 +1287,14 @@ export default function App() {
 
         {activeView === 'settings' ? (
           <SettingsPanel
-            emailBrand={selectedEmailBrand}
+            emailBrand={workspaceKey}
             onResetStart={cancelWorkspaceRequestsForReset}
             onResetComplete={() => {
-              clearWorkspaceState(selectedEmailBrand);
-              void fetchDashboardTrend(selectedEmailBrand);
-              void fetchDashboardActivity(selectedEmailBrand);
-              void fetchDashboardHealth(selectedEmailBrand);
-              toast.success(`${emailBrandLabel(selectedEmailBrand)} workflow and browser workspace reset. Import a fresh sheet to continue.`);
+              clearWorkspaceState(workspaceKey);
+              void fetchDashboardTrend(workspaceKey);
+              void fetchDashboardActivity(workspaceKey);
+              void fetchDashboardHealth(workspaceKey);
+              toast.success(`${emailBrandLabel(workspaceKey)} workflow and browser workspace reset. Import a fresh sheet to continue.`);
             }}
           />
         ) : (
@@ -1199,7 +1308,7 @@ export default function App() {
                 healthSummary={dashboardHealthSummary}
                 authStatus={authStatus}
                 isAuthStatusLoading={isAuthStatusLoading}
-                emailBrand={selectedEmailBrand}
+                emailBrand={workspaceKey}
                 selectedCount={selectedRowIds.size}
                 onRunAutomation={() => openProcessPreflight(processTargetFromSelection)}
                 onViewAllActivity={() => setActiveView('activity')}
@@ -1208,10 +1317,10 @@ export default function App() {
 
             {activeView === 'activity' && <ActivityView events={dashboardActivityEvents} />}
             {activeView === 'manual-review' && (
-              <ManualReviewView rows={manualReviewRows} emailBrand={selectedEmailBrand} />
+              <ManualReviewView rows={manualReviewRows} emailBrand={workspaceKey} />
             )}
             {activeView === 'email-logs' && (
-              <EmailLogsView rows={emailLogRows} emailBrand={selectedEmailBrand} />
+              <EmailLogsView rows={emailLogRows} emailBrand={workspaceKey} />
             )}
 
             {showImport && (
@@ -1224,7 +1333,7 @@ export default function App() {
                   uploadedFileName={uploadedFileName}
                   setUploadedFileName={setUploadedFileName}
                   defaultTab={source.type === 'google-sheet' ? 'google-sheet' : 'excel'}
-                  emailBrand={selectedEmailBrand}
+                  emailBrand={workspaceKey}
                   getWorkspaceGeneration={getWorkspaceGeneration}
                   isCurrentWorkspace={isCurrentWorkspace}
                   createWorkspaceRequestSignal={createWorkspaceRequestSignal}
@@ -1270,7 +1379,7 @@ export default function App() {
                   onForceCloseActiveDemo={handleForceCloseActiveDemo}
                   onProcessRow={handleProcessRow}
                   isProcessing={isProcessing}
-                  emailBrand={selectedEmailBrand}
+                  emailBrand={workspaceKey}
                 />
               </>
             )}
@@ -1290,7 +1399,7 @@ export default function App() {
                 onForceCloseActiveDemo={handleForceCloseActiveDemo}
                 onProcessRow={handleProcessRow}
                 isProcessing={isProcessing}
-                emailBrand={selectedEmailBrand}
+                emailBrand={workspaceKey}
               />
             )}
           </>
@@ -1368,20 +1477,20 @@ export default function App() {
                 <div className="rounded-lg border bg-card p-4">
                   <div className="flex flex-col gap-3">
                     <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Send emails as</p>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Google sending account</p>
                       <p className="mt-1 text-sm text-muted-foreground">
-                        {processLockedBrand
-                          ? `Existing lifecycle rows are owned by ${emailBrandLabel(processLockedBrand)}.`
-                          : 'Choose the company branding for all new emails in this batch.'}
+                        {processLockedSenderAccountKey
+                          ? `Existing lifecycle rows must continue from ${senderAccountEmail(processLockedSenderAccountKey)}.`
+                          : 'Choose which Google account creates Calendar events and sends Gmail messages.'}
                       </p>
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
-                      {EMAIL_BRANDS.map((brand) => {
-                        const selected = selectedEmailBrand === brand.key;
-                        const disabled = !!processLockedBrand && processLockedBrand !== brand.key;
+                      {SENDER_ACCOUNT_KEYS.map((senderKey) => {
+                        const selected = selectedSenderAccountKey === senderKey;
+                        const disabled = !!processLockedSenderAccountKey && processLockedSenderAccountKey !== senderKey;
                         return (
                           <button
-                            key={brand.key}
+                            key={senderKey}
                             type="button"
                             disabled={disabled}
                             className={cn(
@@ -1391,20 +1500,21 @@ export default function App() {
                                 : 'border-border bg-background hover:bg-muted/60'
                             )}
                             onClick={() => {
-                              if (disabled || brand.key === selectedEmailBrand) return;
-                              setSelectedEmailBrand(brand.key);
-                              void openProcessPreflight(processTargetRows, brand.key);
+                              if (disabled || senderKey === selectedSenderAccountKey) return;
+                              setSelectedSenderAccountKey(senderKey);
+                              void fetchAuthStatus(senderKey);
+                              void openProcessPreflight(processTargetRows, { senderAccountKey: senderKey });
                             }}
                           >
                             <span className="flex items-center justify-between gap-2 text-sm font-semibold">
-                              <span>{brand.label}</span>
-                              {processLockedBrand === brand.key && (
+                              <span>{senderAccountLabel(senderKey)}</span>
+                              {processLockedSenderAccountKey === senderKey && (
                                 <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary">
                                   Owner
                                 </span>
                               )}
                             </span>
-                            <span className="mt-1 block text-xs text-muted-foreground">{brand.description}</span>
+                            <span className="mt-1 block text-xs text-muted-foreground">{senderAccountEmail(senderKey)}</span>
                           </button>
                         );
                       })}
@@ -1414,8 +1524,44 @@ export default function App() {
                       {isAuthStatusLoading
                         ? 'checking connection...'
                         : authMatchesSelection
-                          ? `connected as ${authStatus?.email || emailBrandLabel(selectedEmailBrand)}`
-                          : `connect ${emailBrandLabel(selectedEmailBrand)} before processing`}
+                          ? `connected as ${authStatus?.email || senderAccountEmail(selectedSenderAccountKey)}`
+                          : `connect ${senderAccountEmail(selectedSenderAccountKey)} before processing`}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border bg-card p-4">
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Email appearance</p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Choose the logo, website, footer, and template copy. This does not change the lead source.
+                      </p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {EMAIL_BRANDS.map((brand) => {
+                        const selected = selectedEmailBrand === brand.key;
+                        return (
+                          <button
+                            key={brand.key}
+                            type="button"
+                            className={cn(
+                              'rounded-lg border p-3 text-left transition-colors',
+                              selected
+                                ? 'border-primary bg-primary/10 text-foreground'
+                                : 'border-border bg-background hover:bg-muted/60'
+                            )}
+                            onClick={() => {
+                              if (brand.key === selectedEmailBrand) return;
+                              setSelectedEmailBrand(brand.key);
+                              void openProcessPreflight(processTargetRows, { emailBrandKey: brand.key });
+                            }}
+                          >
+                            <span className="text-sm font-semibold">{brand.label}</span>
+                            <span className="mt-1 block text-xs text-muted-foreground">{brand.description}</span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>

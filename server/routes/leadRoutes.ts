@@ -49,6 +49,12 @@ import { enqueueProcessLeadJob, isProcessQueueEnabled, prepareProcessQueueForRes
 import { buildExportRow, normalizeRows, reconcileScheduledRows } from '../services/rowTransforms';
 import { sendRouteError } from '../routeErrors';
 import { coerceStoredEmailBrand, parseEmailBrand, type EmailBrandKey } from '../../src/lib/emailBrand';
+import {
+  defaultEmailBrandForSenderAccount,
+  defaultSenderAccountForBrand,
+  parseSenderAccountKey,
+  type SenderAccountKey
+} from '../../src/lib/senderAccount';
 import { beginResetGuard, withWorkflowActivity } from '../workflowActivity';
 import { prisma } from '../db';
 import {
@@ -63,6 +69,38 @@ type SheetSyncRunner = (
   incomingHeaders: string[] | undefined,
   emailBrand: EmailBrandKey
 ) => Promise<any>;
+
+function parseWorkspaceKey(value: unknown, fallback?: unknown): EmailBrandKey {
+  return parseEmailBrand(value ?? fallback);
+}
+
+function parseProcessingKeys(input: {
+  workspaceKey?: unknown;
+  senderAccountKey?: unknown;
+  emailBrandKey?: unknown;
+  emailBrand?: unknown;
+}): {
+  workspaceKey: EmailBrandKey;
+  senderAccountKey: SenderAccountKey;
+  emailBrandKey: EmailBrandKey;
+} {
+  const explicitSenderAccountKey = input.senderAccountKey
+    ? parseSenderAccountKey(input.senderAccountKey)
+    : undefined;
+  const fallbackBrand = explicitSenderAccountKey
+    ? defaultEmailBrandForSenderAccount(explicitSenderAccountKey)
+    : undefined;
+  const emailBrandKey = parseEmailBrand(
+    input.emailBrandKey ?? input.emailBrand ?? input.workspaceKey ?? fallbackBrand
+  );
+  const senderAccountKey = explicitSenderAccountKey || defaultSenderAccountForBrand(emailBrandKey);
+  const workspaceKey = parseWorkspaceKey(input.workspaceKey, emailBrandKey);
+  return {
+    workspaceKey,
+    senderAccountKey,
+    emailBrandKey
+  };
+}
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -387,7 +425,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.get('/api/dashboard/trend', async (req, res) => {
     try {
-      const brand = parseEmailBrand(req.query.brand);
+      const brand = parseWorkspaceKey(req.query.workspaceKey, req.query.brand);
       const days = clampTrendDays(req.query.days);
       const data = await getScheduledLeadTrend(brand, days);
       return res.json({ emailBrand: brand, days, data });
@@ -398,7 +436,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.get('/api/dashboard/activity', async (req, res) => {
     try {
-      const brand = parseEmailBrand(req.query.brand);
+      const brand = parseWorkspaceKey(req.query.workspaceKey, req.query.brand);
       const limit = clampActivityLimit(req.query.limit);
       const data = await getDashboardActivity(brand, limit);
       return res.json({ emailBrand: brand, limit, data });
@@ -409,7 +447,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.get('/api/dashboard/health', async (req, res) => {
     try {
-      const brand = parseEmailBrand(req.query.brand);
+      const brand = parseWorkspaceKey(req.query.workspaceKey, req.query.brand);
       const data = await getDashboardHealth(brand);
       return res.json({ emailBrand: brand, data });
     } catch (err: any) {
@@ -439,8 +477,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheets/import', async (req, res) => {
     try {
-      const { sheetUrl, emailBrand } = req.body as { sheetUrl?: string; emailBrand?: any };
-      const brand = parseEmailBrand(emailBrand);
+      const { sheetUrl, emailBrand, workspaceKey } = req.body as { sheetUrl?: string; emailBrand?: any; workspaceKey?: any };
+      const brand = parseWorkspaceKey(workspaceKey, emailBrand);
       return await withWorkflowActivity('sheet-sync', brand, async () => {
         if (!sheetUrl) {
           return res.status(400).json({ error: 'Google Sheet URL is required.' });
@@ -474,13 +512,14 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheets/sync', async (req, res) => {
     try {
-      const { spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
+      const { spreadsheetId, sheetName, headers: incomingHeaders, emailBrand, workspaceKey } = req.body as {
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
         emailBrand?: any;
+        workspaceKey?: any;
       };
-      const brand = parseEmailBrand(emailBrand);
+      const brand = parseWorkspaceKey(workspaceKey, emailBrand);
       return await withWorkflowActivity('sheet-sync', brand, async () => {
 
         if (!spreadsheetId || !sheetName) {
@@ -502,9 +541,9 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/schedule', async (req, res) => {
     try {
-      const { rows, emailBrand } = req.body as { rows: ExcelRow[]; emailBrand?: any };
-      const brand = parseEmailBrand(emailBrand);
-      return await withWorkflowActivity('lead-processing', brand, async () => {
+      const { rows } = req.body as { rows?: ExcelRow[] };
+      const keys = parseProcessingKeys(req.body as any);
+      return await withWorkflowActivity('lead-processing', keys.emailBrandKey, async () => {
         if (!rows || !Array.isArray(rows)) {
           return res.status(400).json({ error: 'Valid rows list must be supplied.' });
         }
@@ -513,7 +552,10 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         const { rows: results, summary } = await processScheduleRows(rows, {
           sheetContext: {
             sourceType: 'excel',
-            emailBrand: brand
+            workspaceKey: keys.workspaceKey,
+            senderAccountKey: keys.senderAccountKey,
+            emailBrandKey: keys.emailBrandKey,
+            emailBrand: keys.emailBrandKey
           }
         });
         return res.json({ rows: results, summary });
@@ -526,15 +568,14 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheets/schedule', async (req, res) => {
     try {
-      const { spreadsheetId, sheetName, headers: incomingHeaders, rows, emailBrand } = req.body as {
+      const { spreadsheetId, sheetName, headers: incomingHeaders, rows } = req.body as {
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
         rows?: ExcelRow[];
-        emailBrand?: any;
       };
-      const brand = parseEmailBrand(emailBrand);
-      return await withWorkflowActivity('lead-processing', brand, async () => {
+      const keys = parseProcessingKeys(req.body as any);
+      return await withWorkflowActivity('lead-processing', keys.emailBrandKey, async () => {
 
         if (!spreadsheetId || !sheetName) {
           return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
@@ -547,7 +588,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         }
 
         console.log(`Received request to schedule ${rows.length} Google Sheet rows...`);
-        const { headers } = await ensureRequiredColumns(spreadsheetId, sheetName, incomingHeaders, brand);
+        const { headers } = await ensureRequiredColumns(spreadsheetId, sheetName, incomingHeaders, keys.workspaceKey);
         const preparedRows = rows.map((row) => ({
           ...row,
           __sourceType: 'google-sheet' as const,
@@ -555,13 +596,16 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           __sheetName: sheetName,
           __originalColumns: headers
         }));
-        const dbRows = await applyDbTruthToRows(preparedRows, brand);
+        const dbRows = await applyDbTruthToRows(preparedRows, keys.emailBrandKey);
         const result = await processLeadsByStatus(dbRows, {
           sourceType: 'google-sheet',
           spreadsheetId,
           sheetName,
           headers,
-          emailBrand: brand
+          workspaceKey: keys.workspaceKey,
+          senderAccountKey: keys.senderAccountKey,
+          emailBrandKey: keys.emailBrandKey,
+          emailBrand: keys.emailBrandKey
         });
 
         return res.json({ ...result, headers });
@@ -578,19 +622,18 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/send-thank-you', async (req, res) => {
     try {
-      const { row, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
+      const { row, sourceType, spreadsheetId, sheetName, headers } = req.body as {
         row?: ExcelRow;
         sourceType?: 'excel' | 'google-sheet';
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
-        emailBrand?: any;
       };
-      const brand = parseEmailBrand(emailBrand);
-      return await withWorkflowActivity('lead-processing', brand, async () => {
+      const keys = parseProcessingKeys(req.body as any);
+      return await withWorkflowActivity('lead-processing', keys.emailBrandKey, async () => {
         if (!row) return res.status(400).json({ error: 'Row is required.' });
 
-        const [dbRow] = await applyDbTruthToRows([row], brand);
+        const [dbRow] = await applyDbTruthToRows([row], keys.emailBrandKey);
         if (dbRow.__dbFinalState) {
           return res.json({
             success: true,
@@ -605,7 +648,10 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           spreadsheetId,
           sheetName,
           headers,
-          emailBrand: brand
+          workspaceKey: keys.workspaceKey,
+          senderAccountKey: keys.senderAccountKey,
+          emailBrandKey: keys.emailBrandKey,
+          emailBrand: keys.emailBrandKey
         });
 
         return res.json({
@@ -623,16 +669,15 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/send-thank-you/batch', async (req, res) => {
     try {
-      const { rows, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
+      const { rows, sourceType, spreadsheetId, sheetName, headers } = req.body as {
         rows?: ExcelRow[];
         sourceType?: 'excel' | 'google-sheet';
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
-        emailBrand?: any;
       };
-      const brand = parseEmailBrand(emailBrand);
-      return await withWorkflowActivity('lead-processing', brand, async () => {
+      const keys = parseProcessingKeys(req.body as any);
+      return await withWorkflowActivity('lead-processing', keys.emailBrandKey, async () => {
         if (!rows || !Array.isArray(rows)) {
           return res.status(400).json({ error: 'Valid rows list must be supplied.' });
         }
@@ -642,7 +687,10 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           spreadsheetId,
           sheetName,
           headers,
-          emailBrand: brand
+          workspaceKey: keys.workspaceKey,
+          senderAccountKey: keys.senderAccountKey,
+          emailBrandKey: keys.emailBrandKey,
+          emailBrand: keys.emailBrandKey
         };
 
         const results: Array<{
@@ -655,7 +703,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         }> = [];
 
         for (let i = 0; i < rows.length; i++) {
-          const [row] = await applyDbTruthToRows([rows[i]], brand);
+          const [row] = await applyDbTruthToRows([rows[i]], keys.emailBrandKey);
           try {
             if (row.__dbFinalState) {
               results.push({
@@ -698,7 +746,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/lead-status/update', async (req, res) => {
     try {
-      const { row, status, remarks, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
+      const { row, status, remarks, sourceType, spreadsheetId, sheetName, headers } = req.body as {
         row?: ExcelRow;
         status?: string;
         remarks?: string;
@@ -706,10 +754,9 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
-        emailBrand?: any;
       };
-      const brand = parseEmailBrand(emailBrand);
-      return await withWorkflowActivity('lead-processing', brand, async () => {
+      const keys = parseProcessingKeys(req.body as any);
+      return await withWorkflowActivity('lead-processing', keys.emailBrandKey, async () => {
 
         if (!row || !status) {
           return res.status(400).json({ error: 'Row and status are required.' });
@@ -740,7 +787,10 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
             spreadsheetId,
             sheetName,
             headers,
-            emailBrand: brand
+            workspaceKey: keys.workspaceKey,
+            senderAccountKey: keys.senderAccountKey,
+            emailBrandKey: keys.emailBrandKey,
+            emailBrand: keys.emailBrandKey
           },
           remarks
         );
@@ -755,29 +805,28 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/active-demo/force-close', async (req, res) => {
     try {
-      const { row, remarks, sourceType, spreadsheetId, sheetName, headers, emailBrand } = req.body as {
+      const { row, remarks, sourceType, spreadsheetId, sheetName, headers } = req.body as {
         row?: ExcelRow;
         remarks?: string;
         sourceType?: 'excel' | 'google-sheet';
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
-        emailBrand?: any;
       };
-      const brand = parseEmailBrand(emailBrand);
-      return await withWorkflowActivity('lead-processing', brand, async () => {
+      const keys = parseProcessingKeys(req.body as any);
+      return await withWorkflowActivity('lead-processing', keys.emailBrandKey, async () => {
 
         if (!row) {
           return res.status(400).json({ error: 'Row is required.' });
         }
 
-        const updatedRow = await forceCloseActiveDemoForRow(row, remarks, brand);
+        const updatedRow = await forceCloseActiveDemoForRow(row, remarks, keys.emailBrandKey);
         if (sourceType === 'google-sheet' && spreadsheetId && sheetName && headers?.length && row.__sheetRowNumber) {
           await updateGoogleSheetRow(spreadsheetId, sheetName, row.__sheetRowNumber, headers, {
             'Meeting Details': '',
             lead_status: String(updatedRow.lead_status || LEAD_STATUS.DEMO_SCHEDULED),
             Remarks: String(updatedRow.Remarks || '')
-          }, brand);
+          }, keys.workspaceKey);
         }
 
         return res.json({ success: true, row: updatedRow });
@@ -847,7 +896,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
             subject: delivery.subject,
             text: delivery.textBody,
             html: delivery.htmlBody
-          }, delivery.emailBrand);
+          }, delivery.senderAccountKey);
           await markEmailDeliverySent({ deliveryId, providerMessageId: result.messageId });
           const updated = await findEmailDeliveryById(deliveryId);
           return res.json({ success: true, delivery: serializeDelivery(updated) });
@@ -1000,14 +1049,23 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/process-leads/preview', async (req, res) => {
     try {
-      const { rows, emailBrand } = req.body as { rows?: ExcelRow[]; emailBrand?: any };
-      const brand = parseEmailBrand(emailBrand);
+      const { rows } = req.body as { rows?: ExcelRow[] };
+      const keys = parseProcessingKeys(req.body as any);
       if (!rows || !Array.isArray(rows)) {
         return res.status(400).json({ error: 'Valid rows list must be supplied.' });
       }
 
-      const dbRows = await applyDbTruthToRows(rows, brand);
-      const ownership = await assertProcessBatchBrandOwnership(dbRows, brand);
+      const dbRows = await applyDbTruthToRows(rows, keys.emailBrandKey);
+      const ownership = await assertProcessBatchBrandOwnership(dbRows, keys.emailBrandKey);
+      const lockedSenderAccountKeys = Array.from(
+        new Set(
+          dbRows
+            .map((row) => row.__senderAccountKey)
+            .filter((sender): sender is SenderAccountKey =>
+              sender === 'tallykonnect-google' || sender === 'anywheretally-google'
+            )
+        )
+      );
       const plan = await buildProcessLeadPlan(dbRows);
       const flattenPlannedRows = (items: any[]) =>
         items.map((item) => ({
@@ -1016,7 +1074,12 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           Remarks: item.row?.Remarks || item.reason || item.Remarks || ''
         }));
       return res.json({
-        emailBrand: brand,
+        workspaceKey: keys.workspaceKey,
+        senderAccountKey: keys.senderAccountKey,
+        emailBrandKey: keys.emailBrandKey,
+        emailBrand: keys.emailBrandKey,
+        lockedSenderAccountKey: lockedSenderAccountKeys.length === 1 ? lockedSenderAccountKeys[0] : undefined,
+        lockedSenderAccountKeys,
         lockedEmailBrand: ownership.lockedBrand,
         lockedBrands: ownership.lockedBrands,
         summary: plan.summary,
@@ -1052,16 +1115,15 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/process-leads/jobs', async (req, res) => {
     try {
-      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
+      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders } = req.body as {
         rows?: ExcelRow[];
         sourceType?: 'excel' | 'google-sheet';
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
-        emailBrand?: any;
       };
-      const brand = parseEmailBrand(emailBrand);
-      return await withWorkflowActivity('lead-processing', brand, async () => {
+      const keys = parseProcessingKeys(req.body as any);
+      return await withWorkflowActivity('lead-processing', keys.emailBrandKey, async () => {
         if (!isProcessQueueEnabled()) {
           return res.status(409).json({ error: 'Process queue is disabled.' });
         }
@@ -1078,21 +1140,24 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           if (!headers.length) {
             return res.status(400).json({ error: 'Google Sheet headers are required.' });
           }
-          const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, brand);
+          const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, keys.workspaceKey);
           headers = ensured.headers;
         }
 
-        const dbRows = await applyDbTruthToRows(rows, brand);
-        await assertProcessBatchBrandOwnership(dbRows, brand);
+        const dbRows = await applyDbTruthToRows(rows, keys.emailBrandKey);
+        await assertProcessBatchBrandOwnership(dbRows, keys.emailBrandKey);
         const job = await createProcessLeadJob({
           sourceType: sourceType || 'excel',
+          workspaceKey: keys.workspaceKey,
           spreadsheetId,
           sheetName,
           headers,
-          emailBrand: brand,
+          senderAccountKey: keys.senderAccountKey,
+          emailBrandKey: keys.emailBrandKey,
+          emailBrand: keys.emailBrandKey,
           rows: dbRows
         });
-        await enqueueProcessLeadJob(job.id, job.generation, brand);
+        await enqueueProcessLeadJob(job.id, job.generation, keys.emailBrandKey);
 
         return res.status(202).json({
           jobId: job.id,
@@ -1125,16 +1190,15 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/process-leads', async (req, res) => {
     try {
-      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders, emailBrand } = req.body as {
+      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders } = req.body as {
         rows?: ExcelRow[];
         sourceType?: 'excel' | 'google-sheet';
         spreadsheetId?: string;
         sheetName?: string;
         headers?: string[];
-        emailBrand?: any;
       };
-      const brand = parseEmailBrand(emailBrand);
-      return await withWorkflowActivity('lead-processing', brand, async () => {
+      const keys = parseProcessingKeys(req.body as any);
+      return await withWorkflowActivity('lead-processing', keys.emailBrandKey, async () => {
 
         if (!rows || !Array.isArray(rows)) {
           return res.status(400).json({ error: 'Valid rows list must be supplied.' });
@@ -1148,18 +1212,21 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           if (!headers.length) {
             return res.status(400).json({ error: 'Google Sheet headers are required.' });
           }
-          const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, brand);
+          const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, keys.workspaceKey);
           headers = ensured.headers;
         }
 
-        const dbRows = await applyDbTruthToRows(rows, brand);
-        await assertProcessBatchBrandOwnership(dbRows, brand);
+        const dbRows = await applyDbTruthToRows(rows, keys.emailBrandKey);
+        await assertProcessBatchBrandOwnership(dbRows, keys.emailBrandKey);
         const result = await processLeadsByStatus(dbRows, {
           sourceType: sourceType || 'excel',
           spreadsheetId,
           sheetName,
           headers,
-          emailBrand: brand
+          workspaceKey: keys.workspaceKey,
+          senderAccountKey: keys.senderAccountKey,
+          emailBrandKey: keys.emailBrandKey,
+          emailBrand: keys.emailBrandKey
         });
 
         return res.json({ ...result, headers });
@@ -1179,8 +1246,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/reconcile', async (req, res) => {
     try {
-      const { rows, emailBrand } = req.body as { rows: ExcelRow[]; emailBrand?: any };
-      const brand = parseEmailBrand(emailBrand);
+      const { rows, workspaceKey, emailBrand } = req.body as { rows: ExcelRow[]; workspaceKey?: any; emailBrand?: any };
+      const brand = parseWorkspaceKey(workspaceKey, emailBrand);
       if (!rows || !Array.isArray(rows)) {
         return res.status(400).json({ error: 'Valid rows list must be supplied.' });
       }

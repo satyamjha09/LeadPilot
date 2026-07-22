@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import fs from 'fs';
 import path from 'path';
+import { createHash, randomBytes } from 'crypto';
 import { ExcelRow } from '../src/types';
 import { prisma } from './db';
 import {
@@ -12,6 +13,15 @@ import {
   buildThankYouEmail
 } from './emailTemplates';
 import { coerceStoredEmailBrand, emailBrandLabel, type EmailBrandKey } from '../src/lib/emailBrand';
+import {
+  coerceStoredSenderAccountKey,
+  defaultEmailBrandForSenderAccount,
+  parseSenderAccountKey,
+  senderAccountEmail,
+  senderAccountFromName,
+  type SenderAccountKey
+} from '../src/lib/senderAccount';
+import { GOOGLE_SENDER_ACCOUNTS, SENDER_ACCOUNT_KEYS } from './googleSenderAccounts';
 import { parseDateParts } from '../src/lib/dateFormat';
 
 const GOOGLE_AUTH_DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
@@ -34,8 +44,8 @@ export class GoogleAccountMismatchError extends Error {
   expectedEmail: string;
   connectedEmail: string;
 
-  constructor(brand: EmailBrandKey, expectedEmail: string, connectedEmail: string) {
-    super(`${emailBrandLabel(brand)} must be connected using ${expectedEmail}.`);
+  constructor(senderAccountKey: SenderAccountKey, expectedEmail: string, connectedEmail: string) {
+    super(`${GOOGLE_SENDER_ACCOUNTS[senderAccountKey].displayName} must be connected using ${expectedEmail}.`);
     this.name = 'GoogleAccountMismatchError';
     this.expectedEmail = expectedEmail;
     this.connectedEmail = connectedEmail;
@@ -54,19 +64,19 @@ type StoredGoogleTokens = {
   expiry_date?: number | null;
 };
 
-function authStatePathForBrand(brand: EmailBrandKey) {
-  return brand === 'tallykonnect'
+function authStatePathForSender(senderAccountKey: SenderAccountKey) {
+  return senderAccountKey === 'tallykonnect-google'
     ? AUTH_STATE_PATH
-    : path.join(dataDir, `auth_state_${brand}.json`);
+    : path.join(dataDir, `auth_state_${senderAccountKey}.json`);
 }
 
-export function getGoogleAuthEmail(brand?: EmailBrandKey) {
-  const normalized = coerceStoredEmailBrand(brand);
-  if (normalized === 'anywheretally') {
+export function getGoogleSenderEmail(senderAccountKey?: SenderAccountKey) {
+  const normalized = coerceStoredSenderAccountKey(senderAccountKey);
+  if (normalized === 'anywheretally-google') {
     return (
       process.env.GOOGLE_ANYWHERETALLY_AUTH_EMAIL ||
       process.env.GMAIL_ANYWHERETALLY_FROM_EMAIL ||
-      'info.anywheretally@gmail.com'
+      senderAccountEmail('anywheretally-google')
     ).trim().toLowerCase();
   }
 
@@ -75,12 +85,14 @@ export function getGoogleAuthEmail(brand?: EmailBrandKey) {
     process.env.GOOGLE_AUTH_EMAIL ||
     process.env.GMAIL_TALLYKONNECT_FROM_EMAIL ||
     process.env.GMAIL_FROM_EMAIL ||
-    'demo.tallykonnect@gmail.com'
+    senderAccountEmail('tallykonnect-google')
   ).trim().toLowerCase();
 }
 
-function readLegacySavedTokens(brand?: EmailBrandKey): StoredGoogleTokens | null {
-  if (coerceStoredEmailBrand(brand) !== 'tallykonnect') return null;
+export const getGoogleAuthEmail = getGoogleSenderEmail;
+
+function readLegacySavedTokens(senderAccountKey?: SenderAccountKey): StoredGoogleTokens | null {
+  if (coerceStoredSenderAccountKey(senderAccountKey) !== 'tallykonnect-google') return null;
   if (!fs.existsSync(TOKENS_PATH)) return null;
   try {
     return JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf-8'));
@@ -90,31 +102,72 @@ function readLegacySavedTokens(brand?: EmailBrandKey): StoredGoogleTokens | null
   }
 }
 
-async function saveTokens(tokens: StoredGoogleTokens, brand?: EmailBrandKey) {
-  const email = getGoogleAuthEmail(brand);
-  const existing = await prisma.googleAuth.findUnique({ where: { email } });
-  const refreshToken = tokens.refresh_token || existing?.refreshToken || null;
+async function findGoogleAuthRecord(senderAccountKey: SenderAccountKey) {
+  const email = getGoogleSenderEmail(senderAccountKey);
+  const googleAuth = prisma.googleAuth as any;
 
-  await prisma.googleAuth.upsert({
-    where: { email },
-    update: {
-      accessToken: tokens.access_token || existing?.accessToken || null,
-      refreshToken,
-      expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : existing?.expiryDate || null
-    },
-    create: {
-      email,
-      accessToken: tokens.access_token || null,
-      refreshToken,
-      expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : null
-    }
-  });
+  if (typeof googleAuth.findFirst === 'function') {
+    return googleAuth.findFirst({
+      where: {
+        OR: [{ senderAccountKey }, { email }]
+      }
+    });
+  }
+
+  if (typeof googleAuth.findUnique === 'function') {
+    const bySender = await googleAuth.findUnique({ where: { senderAccountKey } }).catch(() => null);
+    if (bySender) return bySender;
+    return googleAuth.findUnique({ where: { email } });
+  }
+
+  return null;
 }
 
-async function readSavedTokens(brand?: EmailBrandKey): Promise<StoredGoogleTokens | null> {
-  const email = getGoogleAuthEmail(brand);
-  const record = await prisma.googleAuth.findUnique({ where: { email } });
+async function saveTokens(tokens: StoredGoogleTokens, senderAccountKey?: SenderAccountKey) {
+  const normalizedSender = coerceStoredSenderAccountKey(senderAccountKey);
+  const email = getGoogleSenderEmail(normalizedSender);
+  const existing = await findGoogleAuthRecord(normalizedSender);
+  const refreshToken = tokens.refresh_token || existing?.refreshToken || null;
+
+  const data = {
+    senderAccountKey: normalizedSender,
+    email,
+    accessToken: tokens.access_token || existing?.accessToken || null,
+    refreshToken,
+    expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : existing?.expiryDate || null
+  };
+
+  if (existing) {
+    await prisma.googleAuth.update({
+      where: { id: existing.id },
+      data
+    });
+    return;
+  }
+
+  const googleAuth = prisma.googleAuth as any;
+  if (typeof googleAuth.upsert === 'function') {
+    await googleAuth.upsert({
+      where: { email },
+      update: data,
+      create: data
+    });
+    return;
+  }
+
+  await googleAuth.create({ data });
+}
+
+async function readSavedTokens(senderAccountKey?: SenderAccountKey): Promise<StoredGoogleTokens | null> {
+  const normalizedSender = coerceStoredSenderAccountKey(senderAccountKey);
+  const record = await findGoogleAuthRecord(normalizedSender);
   if (record) {
+    if (!record.senderAccountKey && typeof (prisma.googleAuth as any).update === 'function') {
+      await prisma.googleAuth.update({
+        where: { id: record.id },
+        data: { senderAccountKey: normalizedSender }
+      }).catch(() => undefined);
+    }
     return {
       access_token: record.accessToken,
       refresh_token: record.refreshToken,
@@ -122,21 +175,21 @@ async function readSavedTokens(brand?: EmailBrandKey): Promise<StoredGoogleToken
     };
   }
 
-  const legacyTokens = readLegacySavedTokens(brand);
+  const legacyTokens = readLegacySavedTokens(normalizedSender);
   if (legacyTokens?.refresh_token || legacyTokens?.access_token) {
-    await saveTokens(legacyTokens, brand);
+    await saveTokens(legacyTokens, normalizedSender);
     return legacyTokens;
   }
 
   return null;
 }
-
 // Get credentials from env or fallback configuration
-export function getCredentials(brand?: EmailBrandKey) {
-  const normalized = coerceStoredEmailBrand(brand);
-  const isAnyWhereTally = normalized === 'anywheretally';
+export function getCredentials(senderAccountKey?: SenderAccountKey) {
+  const normalized = coerceStoredSenderAccountKey(senderAccountKey);
+  const isAnyWhereTally = normalized === 'anywheretally-google';
+  const account = GOOGLE_SENDER_ACCOUNTS[normalized];
   const configuredRedirectUri = (
-    (isAnyWhereTally ? process.env.GOOGLE_ANYWHERETALLY_REDIRECT_URI : process.env.GOOGLE_TALLYKONNECT_REDIRECT_URI) ||
+    process.env[account.redirectUriEnv] ||
     process.env.GOOGLE_REDIRECT_URI ||
     ''
   ).trim();
@@ -154,31 +207,29 @@ export function getCredentials(brand?: EmailBrandKey) {
   }
 
   return {
-    brand: normalized,
-    authEmail: getGoogleAuthEmail(normalized),
+    senderAccountKey: normalized,
+    authEmail: getGoogleSenderEmail(normalized),
     clientId: (
-      (isAnyWhereTally
-        ? process.env.GOOGLE_ANYWHERETALLY_CLIENT_ID
-        : process.env.GOOGLE_TALLYKONNECT_CLIENT_ID || process.env.GOOGLE_CLIENT_ID) ||
+      process.env[account.clientIdEnv] ||
+      (isAnyWhereTally ? '' : process.env.GOOGLE_CLIENT_ID) ||
       ''
     ).trim(),
     clientSecret: (
-      (isAnyWhereTally
-        ? process.env.GOOGLE_ANYWHERETALLY_CLIENT_SECRET
-        : process.env.GOOGLE_TALLYKONNECT_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET) ||
+      process.env[account.clientSecretEnv] ||
+      (isAnyWhereTally ? '' : process.env.GOOGLE_CLIENT_SECRET) ||
       ''
     ).trim().split(/\s+/)[0] || '',
     redirectUri: redirectUri,
     envRefreshToken: (
-      (isAnyWhereTally ? process.env.GOOGLE_ANYWHERETALLY_REFRESH_TOKEN : process.env.GOOGLE_TALLYKONNECT_REFRESH_TOKEN) ||
+      process.env[account.refreshTokenEnv] ||
       (isAnyWhereTally ? '' : process.env.GOOGLE_REFRESH_TOKEN) ||
       ''
     )
   };
 }
 
-function isEnvTokenSuppressed(brand?: EmailBrandKey) {
-  const statePath = authStatePathForBrand(coerceStoredEmailBrand(brand));
+function isEnvTokenSuppressed(senderAccountKey?: SenderAccountKey) {
+  const statePath = authStatePathForSender(coerceStoredSenderAccountKey(senderAccountKey));
   if (!fs.existsSync(statePath)) return false;
   try {
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
@@ -189,8 +240,8 @@ function isEnvTokenSuppressed(brand?: EmailBrandKey) {
   }
 }
 
-function setEnvTokenSuppressed(suppressed: boolean, brand?: EmailBrandKey) {
-  const statePath = authStatePathForBrand(coerceStoredEmailBrand(brand));
+function setEnvTokenSuppressed(suppressed: boolean, senderAccountKey?: SenderAccountKey) {
+  const statePath = authStatePathForSender(coerceStoredSenderAccountKey(senderAccountKey));
   if (suppressed) {
     fs.writeFileSync(
       statePath,
@@ -237,8 +288,8 @@ async function revokeReceivedCredentials(oauth2Client: any, tokens: StoredGoogle
   }
 }
 
-export async function getOAuthClient(brand?: EmailBrandKey) {
-  const { clientId, clientSecret, redirectUri, envRefreshToken } = getCredentials(brand);
+export async function getOAuthClient(senderAccountKey?: SenderAccountKey) {
+  const { clientId, clientSecret, redirectUri, envRefreshToken } = getCredentials(senderAccountKey);
   
   const oauth2Client = new google.auth.OAuth2(
     clientId,
@@ -246,7 +297,7 @@ export async function getOAuthClient(brand?: EmailBrandKey) {
     redirectUri
   );
 
-  const savedTokens = await readSavedTokens(brand);
+  const savedTokens = await readSavedTokens(senderAccountKey);
 
   if (savedTokens && savedTokens.refresh_token) {
     oauth2Client.setCredentials({
@@ -254,7 +305,7 @@ export async function getOAuthClient(brand?: EmailBrandKey) {
       access_token: savedTokens.access_token || undefined,
       expiry_date: savedTokens.expiry_date || undefined
     });
-  } else if (envRefreshToken && !isEnvTokenSuppressed(brand)) {
+  } else if (envRefreshToken && !isEnvTokenSuppressed(senderAccountKey)) {
     oauth2Client.setCredentials({
       refresh_token: envRefreshToken
     });
@@ -263,14 +314,14 @@ export async function getOAuthClient(brand?: EmailBrandKey) {
   // Handle token refreshing events to automatically persist them
   oauth2Client.on('tokens', async (tokens) => {
     try {
-      const existing = await readSavedTokens(brand);
+      const existing = await readSavedTokens(senderAccountKey);
       const updated = {
         ...existing,
         ...tokens,
         // Make sure refresh_token is kept if the refresh event doesn't supply a new one
         refresh_token: tokens.refresh_token || existing?.refresh_token || envRefreshToken
       };
-      await saveTokens(updated, brand);
+      await saveTokens(updated, senderAccountKey);
       console.log('Successfully refreshed and saved Google Auth tokens to database.');
     } catch (err) {
       console.error('Failed to persist refreshed Google Auth tokens:', err);
@@ -454,6 +505,65 @@ function isInsufficientScopeError(error: any) {
   return status === 403 && /insufficient|scope/i.test(details);
 }
 
+function hashOAuthState(state: string) {
+  return createHash('sha256').update(state).digest('hex');
+}
+
+export async function createGoogleOAuthState(senderAccountKey: SenderAccountKey) {
+  const state = randomBytes(32).toString('base64url');
+  await prisma.googleOAuthState.create({
+    data: {
+      stateHash: hashOAuthState(state),
+      senderAccountKey,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+    }
+  });
+  return state;
+}
+
+export async function consumeGoogleOAuthState(state: string) {
+  const stateHash = hashOAuthState(state);
+  const record = await prisma.googleOAuthState.findUnique({ where: { stateHash } });
+  if (!record || record.consumedAt || record.expiresAt.getTime() < Date.now()) {
+    const error = new Error('OAuth state expired or invalid.');
+    (error as any).statusCode = 400;
+    (error as any).code = 'INVALID_OAUTH_STATE';
+    throw error;
+  }
+
+  const consumed = await prisma.googleOAuthState.updateMany({
+    where: {
+      stateHash,
+      consumedAt: null,
+      expiresAt: { gt: new Date() }
+    },
+    data: { consumedAt: new Date() }
+  });
+
+  if (consumed.count !== 1) {
+    const error = new Error('OAuth state has already been used.');
+    (error as any).statusCode = 400;
+    (error as any).code = 'INVALID_OAUTH_STATE';
+    throw error;
+  }
+
+  return parseSenderAccountKey(record.senderAccountKey);
+}
+
+export async function createSenderAuthUrl(senderAccountKey: SenderAccountKey) {
+  const { clientId, clientSecret, redirectUri, authEmail } = getCredentials(senderAccountKey);
+  if (!clientId || !clientSecret) return '';
+  const state = await createGoogleOAuthState(senderAccountKey);
+  const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+  return oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: GOOGLE_OAUTH_SCOPES,
+    state,
+    prompt: 'consent',
+    login_hint: authEmail
+  });
+}
+
 async function withCalendarRetry<T>(action: () => Promise<T>, maxAttempts = 4): Promise<T> {
   let lastError: unknown;
 
@@ -488,8 +598,8 @@ async function withCalendarRetry<T>(action: () => Promise<T>, maxAttempts = 4): 
   throw lastError;
 }
 
-async function sendRawGmailMessage(raw: string, brand: EmailBrandKey) {
-  const oauth2Client = await getOAuthClient(brand);
+async function sendRawGmailMessage(raw: string, senderAccountKey: SenderAccountKey) {
+  const oauth2Client = await getOAuthClient(senderAccountKey);
   const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
   const response = await gmail.users.messages.send({
@@ -511,17 +621,18 @@ async function sendRawGmailMessage(raw: string, brand: EmailBrandKey) {
 export async function sendGmailTemplate(
   to: string,
   template: { subject: string; text: string; html: string },
-  brand: EmailBrandKey
+  senderAccountKey: unknown
 ) {
+  const senderKey = coerceStoredSenderAccountKey(senderAccountKey);
   try {
     const encodedMessage = buildRawEmail({
       to,
-      fromEmail: getGoogleAuthEmail(brand),
-      fromName: emailBrandLabel(brand),
+      fromEmail: getGoogleSenderEmail(senderKey),
+      fromName: senderAccountFromName(senderKey),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage, brand);
+    return await sendRawGmailMessage(encodedMessage, senderKey);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail email retry'));
   }
@@ -542,9 +653,11 @@ function calendarBrandCopy(brand?: EmailBrandKey) {
   };
 }
 
-export async function scheduleMeeting(row: ExcelRow, brand?: EmailBrandKey) {
+export async function scheduleMeeting(row: ExcelRow, senderAccountKey?: unknown, emailBrandKey?: EmailBrandKey) {
+  const senderKey = coerceStoredSenderAccountKey(senderAccountKey);
+  const templateBrand = emailBrandKey || defaultEmailBrandForSenderAccount(senderKey);
   try {
-    const oauth2Client = await getOAuthClient(brand);
+    const oauth2Client = await getOAuthClient(senderKey);
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     
     const dateVal = row['Date of Demo'];
@@ -554,7 +667,7 @@ export async function scheduleMeeting(row: ExcelRow, brand?: EmailBrandKey) {
     const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // 30 mins later
     
     const attendees = [{ email: row.email }];
-    const brandCopy = calendarBrandCopy(brand);
+    const brandCopy = calendarBrandCopy(templateBrand);
 
     const event = {
       summary: brandCopy.summary,
@@ -604,18 +717,25 @@ export async function scheduleMeeting(row: ExcelRow, brand?: EmailBrandKey) {
   }
 }
 
-export async function updateCalendarMeeting(row: ExcelRow, calendarEventId: string, brand?: EmailBrandKey) {
+export async function updateCalendarMeeting(
+  row: ExcelRow,
+  calendarEventId: string,
+  senderAccountKey?: unknown,
+  emailBrandKey?: EmailBrandKey
+) {
+  const senderKey = coerceStoredSenderAccountKey(senderAccountKey);
+  const templateBrand = emailBrandKey || defaultEmailBrandForSenderAccount(senderKey);
   if (!calendarEventId) {
     throw new Error('Calendar event ID is required to reschedule this demo.');
   }
 
   try {
-    const oauth2Client = await getOAuthClient(brand);
+    const oauth2Client = await getOAuthClient(senderKey);
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
     const startTime = parseExcelDateTime(row['Date of Demo'], row['Time of Demo']);
     const endTime = new Date(startTime.getTime() + 30 * 60 * 1000);
-    const brandCopy = calendarBrandCopy(brand);
+    const brandCopy = calendarBrandCopy(templateBrand);
 
     const response = await withCalendarRetry(() =>
       calendar.events.patch({
@@ -650,125 +770,205 @@ export async function updateCalendarMeeting(row: ExcelRow, calendarEventId: stri
   }
 }
 
-export async function sendThankYouEmail(row: ExcelRow, brand: EmailBrandKey) {
+type EmailSendContext = {
+  row: ExcelRow;
+  meetLink?: string;
+  previous?: { date?: string; time?: string };
+  fullName?: string;
+  email?: string;
+  dateStr?: string;
+  timeStr?: string;
+  senderAccountKey: SenderAccountKey;
+  emailBrandKey: EmailBrandKey;
+};
+
+function isEmailSendContext(value: ExcelRow | EmailSendContext | unknown): value is EmailSendContext {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    'row' in value &&
+    'senderAccountKey' in value &&
+    'emailBrandKey' in value
+  );
+}
+
+function emailContextFromLegacy(senderAccountKey: SenderAccountKey, emailBrandKey?: EmailBrandKey) {
+  const normalizedSender = coerceStoredSenderAccountKey(senderAccountKey);
+  return {
+    senderAccountKey: normalizedSender,
+    emailBrandKey: emailBrandKey || defaultEmailBrandForSenderAccount(normalizedSender)
+  };
+}
+
+export async function sendThankYouEmail(rowOrInput: ExcelRow | EmailSendContext, legacyBrand?: EmailBrandKey) {
+  const row = isEmailSendContext(rowOrInput) ? rowOrInput.row : rowOrInput;
+  const { senderAccountKey, emailBrandKey } =
+    isEmailSendContext(rowOrInput)
+      ? rowOrInput
+      : emailContextFromLegacy(coerceStoredSenderAccountKey(legacyBrand), legacyBrand);
   try {
     const template = buildThankYouEmail({
       fullName: row.full_name,
-      brand
+      brand: emailBrandKey
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
-      fromEmail: getGoogleAuthEmail(brand),
+      fromEmail: getGoogleSenderEmail(senderAccountKey),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage, brand);
+    return await sendRawGmailMessage(encodedMessage, senderAccountKey);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail thank-you email'));
   }
 }
 
-export async function sendNoResponseEmail(row: ExcelRow, brand: EmailBrandKey) {
+export async function sendNoResponseEmail(rowOrInput: ExcelRow | EmailSendContext, legacyBrand?: EmailBrandKey) {
+  const row = isEmailSendContext(rowOrInput) ? rowOrInput.row : rowOrInput;
+  const { senderAccountKey, emailBrandKey } =
+    isEmailSendContext(rowOrInput)
+      ? rowOrInput
+      : emailContextFromLegacy(coerceStoredSenderAccountKey(legacyBrand), legacyBrand);
   try {
     const template = buildNoResponseEmail({
       fullName: row.full_name,
-      brand
+      brand: emailBrandKey
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
-      fromEmail: getGoogleAuthEmail(brand),
+      fromEmail: getGoogleSenderEmail(senderAccountKey),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage, brand);
+    return await sendRawGmailMessage(encodedMessage, senderAccountKey);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail Not Attended email'));
   }
 }
 
-export async function sendGmailInvite(row: ExcelRow, meetLink: string, brand: EmailBrandKey) {
+export async function sendGmailInvite(
+  rowOrInput: ExcelRow | EmailSendContext,
+  meetLink?: string,
+  legacySenderAccountKey?: unknown,
+  legacyEmailBrandKey?: EmailBrandKey
+) {
+  const row = isEmailSendContext(rowOrInput) ? rowOrInput.row : rowOrInput;
+  const resolvedMeetLink = isEmailSendContext(rowOrInput) ? rowOrInput.meetLink || '' : meetLink || '';
+  const { senderAccountKey, emailBrandKey } =
+    isEmailSendContext(rowOrInput)
+      ? rowOrInput
+      : emailContextFromLegacy(coerceStoredSenderAccountKey(legacySenderAccountKey), legacyEmailBrandKey);
   try {
     const template = buildMeetingInviteEmail({
       fullName: row.full_name,
       date: String(row['Date of Demo'] || ''),
       time: String(row['Time of Demo'] || ''),
-      meetLink,
-      brand
+      meetLink: resolvedMeetLink,
+      brand: emailBrandKey
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
-      fromEmail: getGoogleAuthEmail(brand),
+      fromEmail: getGoogleSenderEmail(senderAccountKey),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage, brand);
+    return await sendRawGmailMessage(encodedMessage, senderAccountKey);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail invitation'));
   }
 }
 
 export async function sendGmailRescheduleInvite(
-  row: ExcelRow,
-  meetLink: string,
-  previous: { date?: string; time?: string } | undefined,
-  brand: EmailBrandKey
+  rowOrInput: ExcelRow | EmailSendContext,
+  meetLink?: string,
+  previous?: { date?: string; time?: string } | undefined,
+  legacySenderAccountKey?: unknown,
+  legacyEmailBrandKey?: EmailBrandKey
 ) {
+  const row = isEmailSendContext(rowOrInput) ? rowOrInput.row : rowOrInput;
+  const resolvedMeetLink = isEmailSendContext(rowOrInput) ? rowOrInput.meetLink || '' : meetLink || '';
+  const resolvedPrevious = isEmailSendContext(rowOrInput) ? rowOrInput.previous : previous;
+  const { senderAccountKey, emailBrandKey } =
+    isEmailSendContext(rowOrInput)
+      ? rowOrInput
+      : emailContextFromLegacy(coerceStoredSenderAccountKey(legacySenderAccountKey), legacyEmailBrandKey);
   try {
     const template = buildRescheduleEmail({
       fullName: row.full_name,
       date: String(row['Date of Demo'] || ''),
       time: String(row['Time of Demo'] || ''),
-      meetLink,
-      oldDate: previous?.date,
-      oldTime: previous?.time,
-      brand
+      meetLink: resolvedMeetLink,
+      oldDate: resolvedPrevious?.date,
+      oldTime: resolvedPrevious?.time,
+      brand: emailBrandKey
     });
     const encodedMessage = buildRawEmail({
       to: String(row.email || ''),
-      fromEmail: getGoogleAuthEmail(brand),
+      fromEmail: getGoogleSenderEmail(senderAccountKey),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage, brand);
+    return await sendRawGmailMessage(encodedMessage, senderAccountKey);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail reschedule invitation'));
   }
 }
 
 export async function sendGmailReminder(
-  fullName: string,
-  email: string,
-  dateStr: string,
-  timeStr: string,
-  meetLink: string,
-  brand: EmailBrandKey
+  fullNameOrInput: string | EmailSendContext,
+  email?: string,
+  dateStr?: string,
+  timeStr?: string,
+  meetLink?: string,
+  legacySenderAccountKey?: unknown,
+  legacyEmailBrandKey?: EmailBrandKey
 ) {
+  const input: EmailSendContext | {
+    fullName: string;
+    email: string;
+    dateStr: string;
+    timeStr: string;
+    meetLink: string;
+    senderAccountKey: SenderAccountKey;
+    emailBrandKey: EmailBrandKey;
+  } =
+    typeof fullNameOrInput === 'string'
+      ? {
+          fullName: fullNameOrInput,
+          email: String(email || ''),
+          dateStr: String(dateStr || ''),
+          timeStr: String(timeStr || ''),
+          meetLink: String(meetLink || ''),
+          ...emailContextFromLegacy(coerceStoredSenderAccountKey(legacySenderAccountKey), legacyEmailBrandKey)
+      }
+      : fullNameOrInput;
+  const row = isEmailSendContext(input) ? input.row : undefined;
   try {
     const template = buildReminderEmail({
-      fullName,
-      date: dateStr,
-      time: timeStr,
-      meetLink,
-      brand
+      fullName: input.fullName || row?.full_name,
+      date: input.dateStr || '',
+      time: input.timeStr || '',
+      meetLink: input.meetLink || '',
+      brand: input.emailBrandKey
     });
     const encodedMessage = buildRawEmail({
-      to: email,
-      fromEmail: getGoogleAuthEmail(brand),
+      to: input.email || String(row?.email || ''),
+      fromEmail: getGoogleSenderEmail(input.senderAccountKey),
       ...template
     });
 
-    return await sendRawGmailMessage(encodedMessage, brand);
+    return await sendRawGmailMessage(encodedMessage, input.senderAccountKey);
   } catch (err: any) {
     throw new Error(friendlyGoogleError(err, 'Gmail reminder email'));
   }
 }
 
 // Check tokens save status to determine authorization validity
-export async function getAuthStatus(brand: EmailBrandKey) {
-  const normalizedBrand = brand;
-  const { clientId, clientSecret, redirectUri, envRefreshToken, authEmail } = getCredentials(normalizedBrand);
+export async function getSenderAuthStatus(senderAccountKey: unknown) {
+  const normalizedSender = parseSenderAccountKey(senderAccountKey);
+  const { clientId, clientSecret, redirectUri, envRefreshToken, authEmail } = getCredentials(normalizedSender);
   const configured = !!(clientId && clientSecret);
-  let envTokenSuppressed = isEnvTokenSuppressed(normalizedBrand);
+  let envTokenSuppressed = isEnvTokenSuppressed(normalizedSender);
   
   let authenticated = false;
   let isUsingEnvToken = false;
@@ -776,37 +976,37 @@ export async function getAuthStatus(brand: EmailBrandKey) {
   let authError: string | undefined;
   let connectedEmail: string | undefined;
 
-  const savedTokens = await readSavedTokens(normalizedBrand);
+  const savedTokens = await readSavedTokens(normalizedSender);
   const hasSavedToken = !!savedTokens?.refresh_token;
   const hasEnvToken = !!(envRefreshToken && !envTokenSuppressed);
 
   if (configured && (hasSavedToken || hasEnvToken)) {
     try {
-      const oauth2Client = await getOAuthClient(normalizedBrand);
+      const oauth2Client = await getOAuthClient(normalizedSender);
       await oauth2Client.getAccessToken();
       connectedEmail = await getAuthenticatedGoogleEmail(oauth2Client);
       if (connectedEmail !== authEmail) {
-        await clearCredentials(normalizedBrand);
+        await clearSenderCredentials(normalizedSender);
         envTokenSuppressed = true;
         requiresReconnect = true;
-        authError = `${emailBrandLabel(normalizedBrand)} must be connected using ${authEmail}.`;
+        authError = `${GOOGLE_SENDER_ACCOUNTS[normalizedSender].displayName} must be connected using ${authEmail}.`;
       } else {
         authenticated = true;
         isUsingEnvToken = !hasSavedToken && hasEnvToken;
       }
     } catch (error: any) {
       if (isInvalidGrantError(error)) {
-        await clearCredentials(normalizedBrand);
+        await clearSenderCredentials(normalizedSender);
         envTokenSuppressed = true;
         requiresReconnect = true;
         authError = GOOGLE_RECONNECT_MESSAGE;
       } else if (isInsufficientScopeError(error)) {
-        await clearCredentials(normalizedBrand);
+        await clearSenderCredentials(normalizedSender);
         envTokenSuppressed = true;
         requiresReconnect = true;
         authError = 'Google account identity permission missing. Reconnect this Google account.';
       } else if (error?.code === 'GOOGLE_ACCOUNT_MISMATCH') {
-        await clearCredentials(normalizedBrand);
+        await clearSenderCredentials(normalizedSender);
         envTokenSuppressed = true;
         requiresReconnect = true;
         connectedEmail = error.connectedEmail;
@@ -817,20 +1017,15 @@ export async function getAuthStatus(brand: EmailBrandKey) {
     }
   }
 
-  let authUrl = '';
-  if (configured) {
-    const oauth2Client = new google.auth.OAuth2(clientId, 'SECRET_MASKED', redirectUri);
-    authUrl = oauth2Client.generateAuthUrl({
-      access_type: 'offline',
-      scope: GOOGLE_OAUTH_SCOPES,
-      state: normalizedBrand,
-      prompt: 'consent'
-    });
-  }
+  const authUrl = configured ? await createSenderAuthUrl(normalizedSender) : '';
 
   return {
-    brand: normalizedBrand,
+    key: normalizedSender,
+    senderAccountKey: normalizedSender,
+    brand: defaultEmailBrandForSenderAccount(normalizedSender),
+    displayName: GOOGLE_SENDER_ACCOUNTS[normalizedSender].displayName,
     email: authEmail,
+    expectedEmail: authEmail,
     configured,
     authenticated,
     clientId: clientId ? `${clientId.slice(0, 10)}...` : undefined,
@@ -844,10 +1039,12 @@ export async function getAuthStatus(brand: EmailBrandKey) {
   };
 }
 
+export const getAuthStatus = getSenderAuthStatus;
+
 // Exchange callback authorization code for tokens and save
-export async function exchangeCodeAndSave(code: string, brand: EmailBrandKey) {
-  const normalizedBrand = brand;
-  const { clientId, clientSecret, redirectUri, authEmail } = getCredentials(normalizedBrand);
+export async function exchangeCodeAndSave(code: string, senderAccountKey: unknown) {
+  const normalizedSender = parseSenderAccountKey(senderAccountKey);
+  const { clientId, clientSecret, redirectUri, authEmail } = getCredentials(normalizedSender);
   const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
   
   const { tokens } = await oauth2Client.getToken(code);
@@ -856,28 +1053,64 @@ export async function exchangeCodeAndSave(code: string, brand: EmailBrandKey) {
 
   if (connectedEmail !== authEmail) {
     await revokeReceivedCredentials(oauth2Client, tokens);
-    throw new GoogleAccountMismatchError(normalizedBrand, authEmail, connectedEmail);
+    throw new GoogleAccountMismatchError(normalizedSender, authEmail, connectedEmail);
   }
   
-  const existing = await readSavedTokens(normalizedBrand);
+  const existing = await readSavedTokens(normalizedSender);
   const updated: StoredGoogleTokens = {
     ...existing,
     ...tokens
   };
 
-  await saveTokens(updated, normalizedBrand);
-  setEnvTokenSuppressed(false, normalizedBrand);
-  console.log(`Saved Google Auth tokens for ${getGoogleAuthEmail(normalizedBrand)} directly from exchangeCodeAndSave.`);
+  await saveTokens(updated, normalizedSender);
+  setEnvTokenSuppressed(false, normalizedSender);
+  console.log(`Saved Google Auth tokens for ${getGoogleSenderEmail(normalizedSender)} directly from exchangeCodeAndSave.`);
   return updated;
 }
 
-export async function clearCredentials(brand: EmailBrandKey) {
-  const normalizedBrand = brand;
-  await prisma.googleAuth.deleteMany({ where: { email: getGoogleAuthEmail(normalizedBrand) } });
-  if (normalizedBrand === 'tallykonnect' && fs.existsSync(TOKENS_PATH)) {
+export async function exchangeCodeAndSaveFromState(code: string, state: string) {
+  const senderAccountKey = await consumeGoogleOAuthState(state);
+  await exchangeCodeAndSave(code, senderAccountKey);
+  return senderAccountKey;
+}
+
+export async function clearSenderCredentials(senderAccountKey: unknown) {
+  const normalizedSender = parseSenderAccountKey(senderAccountKey);
+  await prisma.googleAuth.deleteMany({
+    where: {
+      OR: [
+        { senderAccountKey: normalizedSender },
+        { email: getGoogleSenderEmail(normalizedSender) }
+      ]
+    }
+  });
+  if (normalizedSender === 'tallykonnect-google' && fs.existsSync(TOKENS_PATH)) {
     fs.unlinkSync(TOKENS_PATH);
   }
   console.log('Google Auth tokens cleared.');
-  setEnvTokenSuppressed(true, normalizedBrand);
+  setEnvTokenSuppressed(true, normalizedSender);
   console.log('Environment refresh token disabled for this local session.');
+}
+
+export const clearCredentials = clearSenderCredentials;
+
+export async function listGoogleSenderAccounts() {
+  const accounts = await Promise.all(
+    SENDER_ACCOUNT_KEYS.map(async (key) => {
+      const status = await getSenderAuthStatus(key);
+      return {
+        key,
+        displayName: GOOGLE_SENDER_ACCOUNTS[key].displayName,
+        expectedEmail: status.expectedEmail,
+        email: status.expectedEmail,
+        configured: status.configured,
+        authenticated: status.authenticated,
+        connected: status.authenticated,
+        connectedEmail: status.connectedEmail,
+        requiresReconnect: status.requiresReconnect,
+        authError: status.authError
+      };
+    })
+  );
+  return accounts;
 }

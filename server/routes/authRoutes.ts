@@ -1,12 +1,59 @@
 import type { Express } from 'express';
-import { clearCredentials, exchangeCodeAndSave, getAuthStatus } from '../googleAuth';
+import {
+  clearSenderCredentials,
+  createSenderAuthUrl,
+  exchangeCodeAndSaveFromState,
+  getSenderAuthStatus,
+  listGoogleSenderAccounts
+} from '../googleAuth';
 import { sendRouteError } from '../routeErrors';
-import { parseEmailBrand } from '../../src/lib/emailBrand';
+import { parseSenderAccountKey } from '../../src/lib/senderAccount';
 
 export function registerAuthRoutes(app: Express) {
+  app.get('/api/google-senders', async (_req, res) => {
+    try {
+      const accounts = await listGoogleSenderAccounts();
+      return res.json({ accounts });
+    } catch (err: any) {
+      return sendRouteError(res, err, 'Google sender list failed');
+    }
+  });
+
+  app.get('/api/google-senders/:senderAccountKey/status', async (req, res) => {
+    try {
+      const status = await getSenderAuthStatus(parseSenderAccountKey(req.params.senderAccountKey));
+      return res.json(status);
+    } catch (err: any) {
+      return sendRouteError(res, err, 'Google sender status failed');
+    }
+  });
+
+  app.get('/api/google-senders/:senderAccountKey/connect', async (req, res) => {
+    try {
+      const senderAccountKey = parseSenderAccountKey(req.params.senderAccountKey);
+      const authUrl = await createSenderAuthUrl(senderAccountKey);
+      if (!authUrl) return res.status(503).json({ error: 'Google sender account is not configured.' });
+      if (req.query.redirect === 'false') return res.json({ authUrl, senderAccountKey });
+      return res.redirect(authUrl);
+    } catch (err: any) {
+      return sendRouteError(res, err, 'Google sender connect failed');
+    }
+  });
+
+  app.post('/api/google-senders/:senderAccountKey/disconnect', async (req, res) => {
+    try {
+      const senderAccountKey = parseSenderAccountKey(req.params.senderAccountKey);
+      await clearSenderCredentials(senderAccountKey);
+      const status = await getSenderAuthStatus(senderAccountKey);
+      return res.json({ success: true, message: 'Google sender account disconnected.', status });
+    } catch (err: any) {
+      return sendRouteError(res, err, 'Google sender disconnect failed');
+    }
+  });
+
   app.get('/api/auth/status', async (req, res) => {
     try {
-      const status = await getAuthStatus(parseEmailBrand(req.query.brand));
+      const status = await getSenderAuthStatus(parseSenderAccountKey(req.query.senderAccountKey || req.query.brand));
       return res.json(status);
     } catch (err: any) {
       return sendRouteError(res, err, 'Google auth status failed');
@@ -15,9 +62,9 @@ export function registerAuthRoutes(app: Express) {
 
   app.post('/api/auth/clear', async (req, res) => {
     try {
-      const brand = parseEmailBrand((req.body as any)?.brand || req.query.brand);
-      await clearCredentials(brand);
-      const status = await getAuthStatus(brand);
+      const senderAccountKey = parseSenderAccountKey((req.body as any)?.senderAccountKey || (req.body as any)?.brand || req.query.brand);
+      await clearSenderCredentials(senderAccountKey);
+      const status = await getSenderAuthStatus(senderAccountKey);
       return res.json({ success: true, message: 'Google authentication cleared.', status });
     } catch (err: any) {
       return sendRouteError(res, err, 'Google authentication clear failed');
@@ -26,12 +73,12 @@ export function registerAuthRoutes(app: Express) {
 
   app.get(['/api/auth/callback/google', '/api/auth/callback/google/'], async (req, res) => {
     try {
-      const { code } = req.query;
-      if (!code) {
+      const { code, state } = req.query;
+      if (!code || !state) {
         return res.status(400).send('Missing authorization code.');
       }
 
-      await exchangeCodeAndSave(String(code), parseEmailBrand(req.query.brand || req.query.state));
+      const senderAccountKey = await exchangeCodeAndSaveFromState(String(code), String(state));
 
       return res.send(`
         <html>
@@ -43,7 +90,7 @@ export function registerAuthRoutes(app: Express) {
             </div>
             <script>
               if (window.opener) {
-                window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
+                window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', senderAccountKey: ${JSON.stringify(senderAccountKey)} }, window.location.origin);
                 setTimeout(function() { window.close(); }, 2000);
               } else {
                 window.location.href = '/';

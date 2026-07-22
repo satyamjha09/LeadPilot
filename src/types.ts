@@ -1,5 +1,6 @@
 import { LeadStatusLabel } from '@/src/lib/leadStatus';
 import type { EmailBrandKey } from '@/src/lib/emailBrand';
+import type { SenderAccountKey } from '@/src/lib/senderAccount';
 
 export interface ExcelRow {
   id: string;
@@ -10,6 +11,7 @@ export interface ExcelRow {
   __spreadsheetId?: string;
   __sheetName?: string;
   __emailBrand?: EmailBrandKey;
+  __senderAccountKey?: SenderAccountKey;
   full_name?: string;
   email?: string;
   'Date of Demo'?: string | number;
@@ -85,6 +87,10 @@ export interface NotificationCounts {
 
 export interface AuthStatus {
   brand?: EmailBrandKey;
+  key?: SenderAccountKey;
+  senderAccountKey?: SenderAccountKey;
+  displayName?: string;
+  expectedEmail?: string;
   email?: string;
   connectedEmail?: string;
   authenticated: boolean;
