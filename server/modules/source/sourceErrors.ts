@@ -11,8 +11,8 @@ export class SourceHttpError extends Error {
 }
 
 export class SourceValidationError extends SourceHttpError {
-  constructor(message: string) {
-    super(400, 'SOURCE_VALIDATION_ERROR', message);
+  constructor(message: string, code = 'SOURCE_VALIDATION_ERROR') {
+    super(400, code, message);
   }
 }
 
@@ -29,14 +29,14 @@ export class SourceForbiddenError extends SourceHttpError {
 }
 
 export class SourceNotFoundError extends SourceHttpError {
-  constructor(message = 'Source not found.') {
-    super(404, 'SOURCE_NOT_FOUND', message);
+  constructor(message = 'Source not found.', code = 'SOURCE_NOT_FOUND') {
+    super(404, code, message);
   }
 }
 
 export class SourceConflictError extends SourceHttpError {
-  constructor(message: string) {
-    super(409, 'SOURCE_CONFLICT', message);
+  constructor(message: string, code = 'SOURCE_CONFLICT') {
+    super(409, code, message);
   }
 }
 

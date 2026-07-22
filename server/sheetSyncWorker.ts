@@ -48,7 +48,14 @@ export async function runSheetSyncScanner() {
             job.spreadsheetId,
             job.sheetName,
             headers,
-            [{ rowNumber: job.rowNumber, values, emailDeliveryId: job.emailDeliveryId || undefined }],
+            [{
+              rowNumber: job.rowNumber,
+              values,
+              emailDeliveryId: job.emailDeliveryId || undefined,
+              dataSourceId: job.dataSourceId || undefined,
+              sourceTabId: job.sourceTabId || undefined,
+              sourceRowId: job.sourceRowId || undefined
+            }],
             {},
             { workspaceKey, googleAccountKey }
           );

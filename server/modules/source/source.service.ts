@@ -1,6 +1,7 @@
 import { getObjectStorage } from '../../infrastructure/storage/storageFactory';
 import type { ObjectStorage } from '../../infrastructure/storage/objectStorage';
 import { parseEmailBrand } from '../../../src/lib/emailBrand';
+import { defaultSenderAccountForBrand } from '../../../src/lib/senderAccount';
 import { getWorkspaceOrThrow } from '../workspace/workspace.service';
 import { ExcelSourceAdapter, createExcelChecksum, type RegisterExcelInput } from './adapters/excelSource.adapter';
 import {
@@ -43,7 +44,7 @@ function tabsToDbInput(tabs: InspectedSourceTab[]): SourceTabUpsertInput[] {
   }));
 }
 
-function inspectedSourceDetails(inspected: InspectedSource) {
+function inspectedSourceDetails(inspected: InspectedSource, googleAccountKey?: string | null) {
   return {
     type: inspected.type,
     displayName: inspected.displayName,
@@ -53,6 +54,7 @@ function inspectedSourceDetails(inspected: InspectedSource) {
     mimeType: inspected.mimeType ?? null,
     checksum: inspected.checksum ?? null,
     fileSize: inspected.fileSize ?? null,
+    googleAccountKey: googleAccountKey ?? null,
     connectionStatus: 'CONNECTED' as const,
     syncEnabled: true,
     archivedAt: null,
@@ -74,6 +76,7 @@ export async function registerGoogleSheetsSource(
 ): Promise<SourceServiceResult> {
   const { brand, workspace } = await getWorkspace(workspaceKey);
   const googleAdapter = options.googleAdapter || new GoogleSheetsSourceAdapter();
+  const googleAccountKey = defaultSenderAccountForBrand(brand);
   const inspected = await googleAdapter.inspect(input, {
     workspaceId: workspace.id,
     workspaceKey: brand
@@ -89,7 +92,7 @@ export async function registerGoogleSheetsSource(
     const source = await refreshSourceWithTabs({
       workspaceId: workspace.id,
       sourceId: existing.id,
-      source: inspectedSourceDetails(inspected),
+      source: inspectedSourceDetails(inspected, googleAccountKey),
       tabs
     });
     return { created: false, source };
@@ -97,7 +100,7 @@ export async function registerGoogleSheetsSource(
 
   const source = await createSourceWithTabs({
     workspaceId: workspace.id,
-    ...inspectedSourceDetails(inspected),
+    ...inspectedSourceDetails(inspected, googleAccountKey),
     tabs,
     preferredTabId: inspected.preferredTabId
   });
@@ -144,7 +147,7 @@ export async function registerExcelSource(
   try {
     const source = await createSourceWithTabs({
       workspaceId: workspace.id,
-      ...inspectedSourceDetails(inspected),
+      ...inspectedSourceDetails(inspected, null),
       tabs,
       preferredTabId: inspected.preferredTabId
     });
@@ -221,7 +224,10 @@ export async function validateWorkspaceSource(workspaceKey: string, sourceId: st
   return refreshSourceWithTabs({
     workspaceId: workspace.id,
     sourceId,
-    source: inspectedSourceDetails(inspected),
+    source: inspectedSourceDetails(
+      inspected,
+      source.type === 'GOOGLE_SHEETS' ? source.googleAccountKey || defaultSenderAccountForBrand(brand) : null
+    ),
     tabs: tabsToDbInput(inspected.tabs)
   });
 }

@@ -16,6 +16,7 @@ export type DataSourceCreateInput = {
   mimeType?: string | null;
   checksum?: string | null;
   fileSize?: number | null;
+  googleAccountKey?: string | null;
   connectionStatus?: DataSourceConnectionStatus;
   syncEnabled?: boolean;
 };
@@ -83,6 +84,7 @@ export type SourceDetailsUpdateInput = {
   mimeType?: string | null;
   checksum?: string | null;
   fileSize?: number | null;
+  googleAccountKey?: string | null;
   syncEnabled?: boolean;
   connectionStatus?: DataSourceConnectionStatus;
   archivedAt?: Date | null;

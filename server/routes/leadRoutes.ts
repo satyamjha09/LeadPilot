@@ -73,6 +73,8 @@ import {
   beginWorkflowResetWindow,
   finishWorkflowResetWindow
 } from '../workflowControl';
+import { buildSelectedTabWorkflowRows } from '../modules/source/ingestion/sourceIngestion.service';
+import { SourceValidationError } from '../modules/source/sourceErrors';
 
 type SheetSyncRunner = (
   spreadsheetId: string,
@@ -88,6 +90,7 @@ function parseWorkspaceKey(value: unknown, fallback?: unknown): EmailBrandKey {
 function parseProcessingKeys(input: {
   workspaceKey?: unknown;
   senderAccountKey?: unknown;
+  googleAccountKey?: unknown;
   emailBrandKey?: unknown;
   emailBrand?: unknown;
 }): {
@@ -107,12 +110,117 @@ function parseProcessingKeys(input: {
   );
   const senderAccountKey = explicitSenderAccountKey || defaultSenderAccountForBrand(emailBrandKey);
   const workspaceKey = parseWorkspaceKey(input.workspaceKey, emailBrandKey);
-  const googleAccountKey = defaultSenderAccountForBrand(workspaceKey);
+  const googleAccountKey = input.googleAccountKey
+    ? parseSenderAccountKey(input.googleAccountKey)
+    : defaultSenderAccountForBrand(workspaceKey);
   return {
     workspaceKey,
     senderAccountKey,
     googleAccountKey,
     emailBrandKey
+  };
+}
+
+type PreparedProcessRequest = {
+  rows: ExcelRow[];
+  sourceType: 'excel' | 'google-sheet';
+  spreadsheetId?: string;
+  sheetName?: string;
+  headers?: string[];
+  sourceId?: string;
+  sourceTabId?: string;
+  sourceSnapshotId?: string;
+  selectedSourceRowIds?: string[];
+  googleAccountKey?: SenderAccountKey;
+  sourceScope?: {
+    workspaceKey: EmailBrandKey;
+    sourceId: string;
+    sourceTabId: string;
+    sourceSnapshotId: string;
+    sourceDisplayName: string;
+    sourceTabName: string;
+    sourceType: 'excel' | 'google-sheet';
+    googleAccountKey?: SenderAccountKey;
+  };
+};
+
+function selectedSourceIdsFromBody(body: any) {
+  const sourceId = String(body?.sourceId || body?.dataSourceId || '').trim();
+  const sourceTabId = String(body?.sourceTabId || '').trim();
+  const sourceSnapshotId = String(body?.sourceSnapshotId || '').trim();
+  const selectedSourceRowIds: string[] | undefined = Array.isArray(body?.selectedSourceRowIds)
+    ? Array.from(new Set<string>(body.selectedSourceRowIds.map((id: unknown) => String(id || '').trim()).filter(Boolean)))
+    : undefined;
+  return { sourceId, sourceTabId, sourceSnapshotId, selectedSourceRowIds };
+}
+
+function hasMultiSourceRows(rows: unknown) {
+  return Array.isArray(rows)
+    ? rows.some((row: any) => row?.__sourceId || row?.__sourceTabId || row?.__sourceRowId || row?.__sourceSnapshotId)
+    : false;
+}
+
+async function prepareProcessRequest(body: any, keys: ReturnType<typeof parseProcessingKeys>): Promise<PreparedProcessRequest> {
+  const selected = selectedSourceIdsFromBody(body);
+  const isSelectedSourceFlow = Boolean(selected.sourceId || selected.sourceTabId || selected.sourceSnapshotId);
+  if (hasMultiSourceRows(body?.rows) && !isSelectedSourceFlow) {
+    throw new SourceValidationError('sourceId, sourceTabId and sourceSnapshotId are required for multi-source rows.', 'MIXED_SOURCE_TAB_BATCH');
+  }
+
+  if (!isSelectedSourceFlow) {
+    if (!Array.isArray(body?.rows)) {
+      throw new SourceValidationError('Valid rows list must be supplied.');
+    }
+    return {
+      rows: await applyDbTruthToRows(body.rows, keys.emailBrandKey),
+      sourceType: body.sourceType === 'google-sheet' ? 'google-sheet' : 'excel',
+      spreadsheetId: body.spreadsheetId,
+      sheetName: body.sheetName,
+      headers: Array.isArray(body.headers) ? body.headers : undefined,
+      googleAccountKey: keys.googleAccountKey
+    };
+  }
+
+  if (!selected.sourceId || !selected.sourceTabId || !selected.sourceSnapshotId) {
+    throw new SourceValidationError('sourceId, sourceTabId and sourceSnapshotId are required.', 'SOURCE_TAB_REQUIRED');
+  }
+
+  const prepared = await buildSelectedTabWorkflowRows({
+    workspaceKey: keys.workspaceKey,
+    sourceId: selected.sourceId,
+    sourceTabId: selected.sourceTabId,
+    sourceSnapshotId: selected.sourceSnapshotId,
+    selectedSourceRowIds: selected.selectedSourceRowIds,
+    emailBrandKey: keys.emailBrandKey
+  });
+  const sourceType = prepared.source.type === 'GOOGLE_SHEETS' ? 'google-sheet' : 'excel';
+  const headers = Array.isArray(prepared.tab.headersJson) ? prepared.tab.headersJson.map(String) : [];
+  const googleAccountKey =
+    sourceType === 'google-sheet'
+      ? parseSenderAccountKey(prepared.source.googleAccountKey || keys.googleAccountKey)
+      : keys.googleAccountKey;
+
+  return {
+    rows: prepared.rows,
+    sourceType,
+    spreadsheetId: sourceType === 'google-sheet' ? prepared.source.externalFileId || undefined : undefined,
+    sheetName: sourceType === 'google-sheet' ? prepared.tab.name : undefined,
+    headers,
+    sourceId: prepared.source.id,
+    sourceTabId: prepared.tab.id,
+    sourceSnapshotId: prepared.snapshot.id,
+    selectedSourceRowIds: selected.selectedSourceRowIds,
+    googleAccountKey,
+    sourceScope: {
+      workspaceKey: prepared.workspaceKey,
+      sourceId: prepared.source.id,
+      sourceTabId: prepared.tab.id,
+      sourceSnapshotId: prepared.snapshot.id,
+      sourceDisplayName: prepared.source.displayName,
+      sourceTabName: prepared.tab.name,
+      sourceType,
+      googleAccountKey
+    }
   };
 }
 
@@ -742,7 +850,10 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         emailBrand: brand,
         spreadsheetId,
         sheetName,
-        rowNumber
+        rowNumber,
+        dataSourceId: row.__sourceId,
+        sourceTabId: row.__sourceTabId,
+        sourceRowId: row.__sourceRowId
       });
       return res.json({ jobs: jobs.map(serializeSheetSyncJob) });
     } catch (err: any) {
@@ -792,7 +903,14 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
             job.spreadsheetId,
             job.sheetName,
             headers,
-            [{ rowNumber: job.rowNumber, values, emailDeliveryId: job.emailDeliveryId || undefined }],
+            [{
+              rowNumber: job.rowNumber,
+              values,
+              emailDeliveryId: job.emailDeliveryId || undefined,
+              dataSourceId: job.dataSourceId || undefined,
+              sourceTabId: job.sourceTabId || undefined,
+              sourceRowId: job.sourceRowId || undefined
+            }],
             {},
             { workspaceKey, googleAccountKey }
           );
@@ -893,13 +1011,9 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/process-leads/preview', async (req, res) => {
     try {
-      const { rows } = req.body as { rows?: ExcelRow[] };
       const keys = parseProcessingKeys(req.body as any);
-      if (!rows || !Array.isArray(rows)) {
-        return res.status(400).json({ error: 'Valid rows list must be supplied.' });
-      }
-
-      const dbRows = await applyDbTruthToRows(rows, keys.emailBrandKey);
+      const preparedRequest = await prepareProcessRequest(req.body, keys);
+      const dbRows = preparedRequest.rows;
       const ownership = await assertProcessBatchLifecycleOwnership(
         dbRows,
         keys.emailBrandKey,
@@ -916,9 +1030,16 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       return res.json({
         workspaceKey: keys.workspaceKey,
         senderAccountKey: keys.senderAccountKey,
-        googleAccountKey: keys.googleAccountKey,
+        googleAccountKey: preparedRequest.googleAccountKey || keys.googleAccountKey,
         emailBrandKey: keys.emailBrandKey,
         emailBrand: keys.emailBrandKey,
+        sourceId: preparedRequest.sourceId,
+        sourceTabId: preparedRequest.sourceTabId,
+        sourceSnapshotId: preparedRequest.sourceSnapshotId,
+        sourceDisplayName: preparedRequest.sourceScope?.sourceDisplayName,
+        sourceTabName: preparedRequest.sourceScope?.sourceTabName,
+        sourceType: preparedRequest.sourceType,
+        sourceScope: preparedRequest.sourceScope,
         lockedSenderAccountKey: lockedSenderAccountKeys.length === 1 ? lockedSenderAccountKeys[0] : undefined,
         lockedSenderAccountKeys,
         lockedEmailBrand: ownership.lockedBrand,
@@ -956,53 +1077,53 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/process-leads/jobs', async (req, res) => {
     try {
-      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders } = req.body as {
-        rows?: ExcelRow[];
-        sourceType?: 'excel' | 'google-sheet';
-        spreadsheetId?: string;
-        sheetName?: string;
-        headers?: string[];
-      };
       const keys = parseProcessingKeys(req.body as any);
       return await withWorkflowActivity('lead-processing', keys.emailBrandKey, async () => {
         if (!isProcessQueueEnabled()) {
           return res.status(409).json({ error: 'Process queue is disabled.' });
         }
 
-        if (!rows || !Array.isArray(rows)) {
-          return res.status(400).json({ error: 'Valid rows list must be supplied.' });
-        }
+        const preparedRequest = await prepareProcessRequest(req.body, keys);
 
-        let headers = incomingHeaders || [];
-        if (sourceType === 'google-sheet') {
-          if (!spreadsheetId || !sheetName) {
+        let headers = preparedRequest.headers || [];
+        if (preparedRequest.sourceType === 'google-sheet') {
+          if (!preparedRequest.spreadsheetId || !preparedRequest.sheetName) {
             return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
           }
           if (!headers.length) {
             return res.status(400).json({ error: 'Google Sheet headers are required.' });
           }
-          const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, googleSheetAccessForWorkspace(keys.workspaceKey));
+          const ensured = await ensureRequiredColumns(preparedRequest.spreadsheetId, preparedRequest.sheetName, headers, {
+            workspaceKey: keys.workspaceKey,
+            googleAccountKey: preparedRequest.googleAccountKey || keys.googleAccountKey
+          });
           headers = ensured.headers;
         }
 
-        const dbRows = await applyDbTruthToRows(rows, keys.emailBrandKey);
+        const dbRows = preparedRequest.rows;
         await assertProcessBatchLifecycleOwnership(dbRows, keys.emailBrandKey, keys.senderAccountKey);
         const job = await createProcessLeadJob({
-          sourceType: sourceType || 'excel',
+          sourceType: preparedRequest.sourceType,
           workspaceKey: keys.workspaceKey,
-          spreadsheetId,
-          sheetName,
+          spreadsheetId: preparedRequest.spreadsheetId,
+          sheetName: preparedRequest.sheetName,
           headers,
           senderAccountKey: keys.senderAccountKey,
+          googleAccountKey: preparedRequest.googleAccountKey || keys.googleAccountKey,
           emailBrandKey: keys.emailBrandKey,
           emailBrand: keys.emailBrandKey,
+          sourceId: preparedRequest.sourceId,
+          sourceTabId: preparedRequest.sourceTabId,
+          sourceSnapshotId: preparedRequest.sourceSnapshotId,
+          sourceRowIds: preparedRequest.rows.map((row) => row.__sourceRowId || row.id).filter(Boolean),
           rows: dbRows
         });
         await enqueueProcessLeadJob(job.id, job.generation, keys.emailBrandKey);
 
         return res.status(202).json({
           jobId: job.id,
-          status: job.status
+          status: job.status,
+          sourceScope: preparedRequest.sourceScope
         });
       });
     } catch (err: any) {
@@ -1031,47 +1152,41 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/process-leads', async (req, res) => {
     try {
-      const { rows, sourceType, spreadsheetId, sheetName, headers: incomingHeaders } = req.body as {
-        rows?: ExcelRow[];
-        sourceType?: 'excel' | 'google-sheet';
-        spreadsheetId?: string;
-        sheetName?: string;
-        headers?: string[];
-      };
       const keys = parseProcessingKeys(req.body as any);
       return await withWorkflowActivity('lead-processing', keys.emailBrandKey, async () => {
 
-        if (!rows || !Array.isArray(rows)) {
-          return res.status(400).json({ error: 'Valid rows list must be supplied.' });
-        }
+        const preparedRequest = await prepareProcessRequest(req.body, keys);
 
-        let headers = incomingHeaders || [];
-        if (sourceType === 'google-sheet') {
-          if (!spreadsheetId || !sheetName) {
+        let headers = preparedRequest.headers || [];
+        if (preparedRequest.sourceType === 'google-sheet') {
+          if (!preparedRequest.spreadsheetId || !preparedRequest.sheetName) {
             return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
           }
           if (!headers.length) {
             return res.status(400).json({ error: 'Google Sheet headers are required.' });
           }
-          const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, googleSheetAccessForWorkspace(keys.workspaceKey));
+          const ensured = await ensureRequiredColumns(preparedRequest.spreadsheetId, preparedRequest.sheetName, headers, {
+            workspaceKey: keys.workspaceKey,
+            googleAccountKey: preparedRequest.googleAccountKey || keys.googleAccountKey
+          });
           headers = ensured.headers;
         }
 
-        const dbRows = await applyDbTruthToRows(rows, keys.emailBrandKey);
+        const dbRows = preparedRequest.rows;
         await assertProcessBatchLifecycleOwnership(dbRows, keys.emailBrandKey, keys.senderAccountKey);
         const result = await processLeadsByStatus(dbRows, {
-          sourceType: sourceType || 'excel',
-          spreadsheetId,
-          sheetName,
+          sourceType: preparedRequest.sourceType,
+          spreadsheetId: preparedRequest.spreadsheetId,
+          sheetName: preparedRequest.sheetName,
           headers,
           workspaceKey: keys.workspaceKey,
           senderAccountKey: keys.senderAccountKey,
-          googleAccountKey: keys.googleAccountKey,
+          googleAccountKey: preparedRequest.googleAccountKey || keys.googleAccountKey,
           emailBrandKey: keys.emailBrandKey,
           emailBrand: keys.emailBrandKey
         });
 
-        return res.json({ ...result, headers });
+        return res.json({ ...result, headers, sourceScope: preparedRequest.sourceScope });
       });
     } catch (err: any) {
       console.error('Lead processing failed:', err);
@@ -1156,6 +1271,9 @@ function serializeSheetSyncJob(job: Awaited<ReturnType<typeof findSheetSyncJobBy
     spreadsheetId: job.spreadsheetId,
     sheetName: job.sheetName,
     rowNumber: job.rowNumber,
+    dataSourceId: job.dataSourceId,
+    sourceTabId: job.sourceTabId,
+    sourceRowId: job.sourceRowId,
     status: job.status,
     retryCount: job.retryCount,
     maxRetries: job.maxRetries,

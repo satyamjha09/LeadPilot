@@ -15,6 +15,9 @@ export type SheetSyncJobRecord = {
   spreadsheetId: string;
   sheetName: string;
   rowNumber: number;
+  dataSourceId: string | null;
+  sourceTabId: string | null;
+  sourceRowId: string | null;
   headersJson: string;
   valuesJson: string;
   emailDeliveryId: string | null;
@@ -33,8 +36,8 @@ function nextDelayMs(nextRetryCount: number) {
   return SHEET_SYNC_DELAYS_MS[Math.min(Math.max(nextRetryCount, 1), SHEET_SYNC_DELAYS_MS.length) - 1];
 }
 
-function jobKey(input: { spreadsheetId: string; sheetName: string; rowNumber: number }) {
-  return [input.spreadsheetId, input.sheetName, input.rowNumber].join('|');
+function jobKey(input: { spreadsheetId: string; sheetName: string; rowNumber: number; sourceTabId?: string }) {
+  return [input.spreadsheetId, input.sourceTabId || input.sheetName, input.rowNumber].join('|');
 }
 
 function staleLockCutoff() {
@@ -50,6 +53,9 @@ export async function enqueueSheetSyncJob(input: {
   workspaceKey: EmailBrandKey;
   emailBrand: EmailBrandKey;
   googleAccountKey: SenderAccountKey;
+  dataSourceId?: string;
+  sourceTabId?: string;
+  sourceRowId?: string;
   emailDeliveryId?: string;
   error?: unknown;
 }) {
@@ -69,6 +75,9 @@ export async function enqueueSheetSyncJob(input: {
       "spreadsheetId",
       "sheetName",
       "rowNumber",
+      "dataSourceId",
+      "sourceTabId",
+      "sourceRowId",
       "headersJson",
       "valuesJson",
       "emailDeliveryId",
@@ -91,6 +100,9 @@ export async function enqueueSheetSyncJob(input: {
       ${input.spreadsheetId},
       ${input.sheetName},
       ${input.rowNumber},
+      ${input.dataSourceId || null},
+      ${input.sourceTabId || null},
+      ${input.sourceRowId || null},
       ${JSON.stringify(input.headers)},
       ${JSON.stringify(input.values)},
       ${input.emailDeliveryId || null},
@@ -107,6 +119,9 @@ export async function enqueueSheetSyncJob(input: {
     ON CONFLICT ("workspaceKey", "emailBrand", "jobKey") DO UPDATE SET
       "headersJson" = EXCLUDED."headersJson",
       "valuesJson" = EXCLUDED."valuesJson",
+      "dataSourceId" = EXCLUDED."dataSourceId",
+      "sourceTabId" = EXCLUDED."sourceTabId",
+      "sourceRowId" = EXCLUDED."sourceRowId",
       "emailDeliveryId" = EXCLUDED."emailDeliveryId",
       "status" = 'PENDING',
       "retryCount" = 0,
@@ -128,6 +143,9 @@ export async function listDueSheetSyncJobs(limit = 10) {
       "spreadsheetId",
       "sheetName",
       "rowNumber",
+      "dataSourceId",
+      "sourceTabId",
+      "sourceRowId",
       "headersJson",
       "valuesJson",
       "emailDeliveryId",
@@ -159,6 +177,9 @@ export async function listSheetSyncJobsForRow(input: {
   spreadsheetId: string;
   sheetName: string;
   rowNumber: number;
+  dataSourceId?: string;
+  sourceTabId?: string;
+  sourceRowId?: string;
 }) {
   const workspaceKey = parseEmailBrand(input.workspaceKey);
   const emailBrand = parseEmailBrand(input.emailBrand);
@@ -171,6 +192,9 @@ export async function listSheetSyncJobsForRow(input: {
       "spreadsheetId",
       "sheetName",
       "rowNumber",
+      "dataSourceId",
+      "sourceTabId",
+      "sourceRowId",
       "headersJson",
       "valuesJson",
       "emailDeliveryId",
@@ -189,6 +213,8 @@ export async function listSheetSyncJobsForRow(input: {
       AND "spreadsheetId" = ${input.spreadsheetId}
       AND "sheetName" = ${input.sheetName}
       AND "rowNumber" = ${input.rowNumber}
+      AND (${input.sourceTabId || null}::text IS NULL OR "sourceTabId" = ${input.sourceTabId || null})
+      AND (${input.sourceRowId || null}::text IS NULL OR "sourceRowId" = ${input.sourceRowId || null})
     ORDER BY "updatedAt" DESC
   `;
 }
@@ -203,6 +229,9 @@ export async function findSheetSyncJobById(jobId: string) {
       "spreadsheetId",
       "sheetName",
       "rowNumber",
+      "dataSourceId",
+      "sourceTabId",
+      "sourceRowId",
       "headersJson",
       "valuesJson",
       "emailDeliveryId",

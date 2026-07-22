@@ -47,7 +47,8 @@ import {
   DashboardTrendPoint,
   NotificationCounts,
   ScheduleSummary,
-  SheetSource
+  SheetSource,
+  SourceSelectionScope
 } from '@/src/types';
 import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
 import {
@@ -74,6 +75,12 @@ type ProcessPreview = {
   workspaceKey?: WorkspaceKey;
   senderAccountKey?: SenderAccountKey;
   emailBrandKey?: EmailBrandKey;
+  sourceId?: string;
+  sourceTabId?: string;
+  sourceSnapshotId?: string;
+  sourceDisplayName?: string;
+  sourceTabName?: string;
+  sourceScope?: Partial<SourceSelectionScope>;
   lockedSenderAccountKey?: SenderAccountKey;
   lockedSenderAccountKeys?: SenderAccountKey[];
   lockedEmailBrand?: EmailBrandKey;
@@ -117,6 +124,10 @@ type ProcessLeadJobResponse = {
   rows?: ExcelRow[];
   summary?: ScheduleSummary;
   headers?: string[];
+  sourceId?: string;
+  sourceTabId?: string;
+  sourceSnapshotId?: string;
+  sourceScope?: Partial<SourceSelectionScope>;
   sheetSyncError?: string;
   error?: string;
 };
@@ -239,6 +250,7 @@ export default function App() {
   const [rows, setRows] = useState<ExcelRow[]>(() => loadStoredRows(initialWorkspaceKey));
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => loadStoredSelectedIds(initialWorkspaceKey));
   const [source, setSource] = useState<SheetSource>(() => loadStoredSource(initialWorkspaceKey));
+  const [selectedSourceScope, setSelectedSourceScope] = useState<SourceSelectionScope | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<DashboardView>('dashboard');
   const [searchQuery, setSearchQuery] = useState('');
@@ -269,6 +281,7 @@ export default function App() {
   const importRef = useRef<HTMLDivElement>(null);
   const selectedEmailBrandRef = useRef(selectedEmailBrand);
   const selectedSenderAccountKeyRef = useRef(selectedSenderAccountKey);
+  const selectedSourceScopeRef = useRef<SourceSelectionScope | null>(selectedSourceScope);
   const workspaceKeyRef = useRef(workspaceKey);
   const workspaceGenerationRef = useRef(0);
   const dashboardRequestGenerationRef = useRef(0);
@@ -332,6 +345,7 @@ export default function App() {
     setProcessingProgress(null);
     setProcessTargetRows([]);
     setProcessPreview(null);
+    setSelectedSourceScope(null);
     setStatusRevertMap({});
     setIsProcessing(false);
     setIsLoadingFile(false);
@@ -390,7 +404,8 @@ export default function App() {
   const previewSelectionMatches =
     !!processPreview &&
     (processPreview.senderAccountKey || processPreview.emailBrand) === selectedSenderAccountKey &&
-    (processPreview.emailBrandKey || processPreview.emailBrand) === selectedEmailBrand;
+    (processPreview.emailBrandKey || processPreview.emailBrand) === selectedEmailBrand &&
+    selectedSourceScopeMatches(processPreview.sourceScope || processPreview);
   const authMatchesSelection =
     !isAuthStatusLoading &&
     !!authStatus?.authenticated &&
@@ -408,7 +423,7 @@ export default function App() {
     if (!processPreview) return 'Preparing...';
     if (hasMixedProcessBrands) return 'Process each brand separately';
     if (hasMixedProcessSenders) return 'Process each Google sender separately';
-    if (!previewSelectionMatches) return 'Refresh preview for selected options';
+    if (!previewSelectionMatches) return 'Refresh preview for selected source/options';
     if (!authMatchesSelection) {
       return isAuthStatusLoading
         ? 'Checking Google connection...'
@@ -433,14 +448,45 @@ export default function App() {
 
   const processRequestMeta = (
     senderAccountKey: SenderAccountKey = selectedSenderAccountKey,
-    emailBrandKey: EmailBrandKey = selectedEmailBrand
-  ) => ({
-    ...sheetRequestMeta(),
-    workspaceKey,
-    senderAccountKey,
-    emailBrandKey,
-    emailBrand: emailBrandKey
-  });
+    emailBrandKey: EmailBrandKey = selectedEmailBrand,
+    rowsForScope: ExcelRow[] = processTargetRows
+  ) => {
+    const selectedSourcePayload = selectedSourceScope
+      ? {
+          sourceId: selectedSourceScope.sourceId,
+          sourceTabId: selectedSourceScope.sourceTabId,
+          sourceSnapshotId: selectedSourceScope.sourceSnapshotId,
+          googleAccountKey: selectedSourceScope.googleAccountKey,
+          selectedSourceRowIds:
+            rowsForScope.length > 0
+              ? rowsForScope.map((row) => row.__sourceRowId || row.id).filter(Boolean)
+              : undefined
+        }
+      : {};
+    return {
+      ...sheetRequestMeta(),
+      ...selectedSourcePayload,
+      workspaceKey,
+      senderAccountKey,
+      emailBrandKey,
+      emailBrand: emailBrandKey
+    };
+  };
+
+  function selectedSourceScopeMatches(incoming?: {
+    sourceId?: string;
+    sourceTabId?: string;
+    sourceSnapshotId?: string;
+  }) {
+    if (!incoming?.sourceId && !incoming?.sourceTabId && !incoming?.sourceSnapshotId) return true;
+    const current = selectedSourceScopeRef.current;
+    return Boolean(
+      current &&
+        incoming.sourceId === current.sourceId &&
+        incoming.sourceTabId === current.sourceTabId &&
+        (!incoming.sourceSnapshotId || incoming.sourceSnapshotId === current.sourceSnapshotId)
+    );
+  }
 
   const updateRowInState = (updatedRow: ExcelRow) => {
     setRows((current) => current.map((row) => (row.id === updatedRow.id ? updatedRow : row)));
@@ -570,6 +616,10 @@ export default function App() {
   }, [selectedSenderAccountKey]);
 
   useEffect(() => {
+    selectedSourceScopeRef.current = selectedSourceScope;
+  }, [selectedSourceScope]);
+
+  useEffect(() => {
     workspaceKeyRef.current = workspaceKey;
   }, [workspaceKey]);
 
@@ -693,6 +743,7 @@ export default function App() {
     if (!reconciledRows) return;
     if (!isCurrentWorkspace(generation)) return;
     setWorkspaceBrand(workspaceKey);
+    setSelectedSourceScope(null);
     setSource({ type: 'excel' });
     setRows(reconciledRows);
     const initiallySelected = new Set<string>();
@@ -708,6 +759,7 @@ export default function App() {
     const generation = getWorkspaceGeneration();
     if (!isCurrentWorkspace(generation)) return;
     setWorkspaceBrand(workspaceKey);
+    setSelectedSourceScope(null);
     setSource(sheetSource);
     setRows(parsedRows);
     const initiallySelected = new Set<string>();
@@ -811,7 +863,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal,
-        body: JSON.stringify({ rows: targetRows, ...processRequestMeta(previewSenderAccountKey, previewEmailBrandKey) })
+        body: JSON.stringify({ rows: targetRows, ...processRequestMeta(previewSenderAccountKey, previewEmailBrandKey, targetRows) })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -822,6 +874,10 @@ export default function App() {
       }
 
       if (!isCurrentWorkspace(generation)) return;
+      if (!selectedSourceScopeMatches(data.sourceScope || data)) {
+        toast.info('Selection changed. Refresh preview for the selected tab.');
+        return;
+      }
       setProcessPreview(data);
       setConfirmProcessOpen(true);
     } catch (err: unknown) {
@@ -860,6 +916,35 @@ export default function App() {
     }
   };
 
+  const clearSelectedSourceRows = () => {
+    setRows([]);
+    setSelectedRowIds(new Set());
+    setProcessTargetRows([]);
+    setProcessPreview(null);
+    setSelectedSourceScope(null);
+  };
+
+  const handleSelectedTabPrepared = async (input: {
+    rows: ExcelRow[];
+    source: SheetSource;
+    scope: SourceSelectionScope;
+  }) => {
+    const generation = getWorkspaceGeneration();
+    if (!isCurrentWorkspace(generation)) return;
+    setWorkspaceBrand(input.scope.workspaceKey);
+    setSource(input.source);
+    setSelectedSourceScope(input.scope);
+    setRows(input.rows);
+    const initiallySelected = new Set<string>();
+    input.rows.forEach((row) => {
+      if (canProcessLead(row)) initiallySelected.add(row.id);
+    });
+    setSelectedRowIds(initiallySelected);
+    setActiveView('dashboard');
+    toast.success(`Prepared ${input.rows.length} row(s) from "${input.scope.sourceTabName}"`);
+    await openProcessPreflight(input.rows);
+  };
+
   const pollProcessJob = async (jobId: string, generation: number, signal: AbortSignal) => {
     while (true) {
       await abortableDelay(2000, signal);
@@ -887,6 +972,10 @@ export default function App() {
 
       if (data.status === 'COMPLETED') {
         if (!isCurrentWorkspace(generation)) return;
+        if (!selectedSourceScopeMatches(data.sourceScope || data)) {
+          toast.info('Previous selected sheet finished in the background.');
+          return;
+        }
         applyProcessResult(data.rows || [], data.summary, data.headers, data.sheetSyncError);
         return;
       }
@@ -1298,6 +1387,8 @@ export default function App() {
                 <ImportPanel
                   onExcelParsed={handleDataParsed}
                   onGoogleSheetParsed={handleGoogleSheetDataParsed}
+                  onSourceSelectionChanged={clearSelectedSourceRows}
+                  onSelectedTabPrepared={handleSelectedTabPrepared}
                   isLoading={isLoadingFile}
                   setIsLoading={setIsLoadingFile}
                   uploadedFileName={uploadedFileName}
@@ -1422,12 +1513,46 @@ export default function App() {
                         <p className="mt-1 text-base font-semibold">
                           {processPreview.summary.total} row(s) found from {source.type === 'google-sheet' ? 'Google Sheet' : 'Excel'}
                         </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Only the selected tab will be processed.
+                        </p>
                       </div>
                       <div className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
                         <Clock3 className="h-4 w-4" />
                         Estimated time: <span className="font-medium text-foreground">{processPreview.estimatedTime.label}</span>
                       </div>
                     </div>
+
+                    {(processPreview.sourceScope || selectedSourceScope) && (
+                      <div className="grid gap-2 rounded-lg border bg-muted/20 p-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
+                        <div>
+                          <p className="text-muted-foreground">Source Workspace</p>
+                          <p className="font-medium">{processPreview.sourceScope?.workspaceKey || selectedSourceScope?.workspaceKey}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Source Name</p>
+                          <p className="font-medium">{processPreview.sourceDisplayName || selectedSourceScope?.sourceDisplayName}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Selected Tab</p>
+                          <p className="font-medium">{processPreview.sourceTabName || selectedSourceScope?.sourceTabName}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Snapshot</p>
+                          <p className="font-medium">{processPreview.sourceSnapshotId || selectedSourceScope?.sourceSnapshotId}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Email Brand</p>
+                          <p className="font-medium">{emailBrandLabel(selectedEmailBrand)}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Sheet Account</p>
+                          <p className="font-medium">
+                            {processPreview.sourceScope?.googleAccountKey || selectedSourceScope?.googleAccountKey || 'Not applicable'}
+                          </p>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="grid gap-3 sm:grid-cols-3">
                       <div className="rounded-lg border bg-muted/30 p-3">

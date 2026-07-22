@@ -122,6 +122,7 @@ model DataSource {
   mimeType         String?
   checksum         String?
   fileSize         Int?
+  googleAccountKey String?
 
   connectionStatus DataSourceConnectionStatus @default(CONNECTED)
   syncEnabled      Boolean                    @default(true)
@@ -147,6 +148,7 @@ model DataSource {
   @@index([workspaceId, type])
   @@index([workspaceId, archivedAt])
   @@index([workspaceId, connectionStatus])
+  @@index([googleAccountKey])
 }
 
 model DataSourceTab {
@@ -707,6 +709,9 @@ model SheetSyncJob {
   spreadsheetId    String
   sheetName        String
   rowNumber        Int
+  dataSourceId     String?
+  sourceTabId      String?
+  sourceRowId      String?
   headersJson      String
   valuesJson       String
   emailDeliveryId  String?
@@ -730,6 +735,9 @@ model SheetSyncJob {
   @@index([status])
   @@index([nextRetryAt])
   @@index([emailDeliveryId])
+  @@index([dataSourceId])
+  @@index([sourceTabId])
+  @@index([sourceRowId])
 }
 
 model GoogleAuth {
@@ -773,6 +781,11 @@ model ProcessLeadJob {
   workspaceKey     String?
   emailBrandKey    String?
   senderAccountKey String
+  googleAccountKey String?
+  dataSourceId     String?
+  sourceTabId      String?
+  sourceSnapshotId String?
+  sourceRowIdsJson String?
   spreadsheetId    String?
   sheetName        String?
   headersJson      String?
@@ -788,4 +801,9 @@ model ProcessLeadJob {
   @@index([emailBrand])
   @@index([generation])
   @@index([createdAt])
+  @@index([dataSourceId])
+  @@index([sourceTabId])
+  @@index([sourceSnapshotId])
+  @@index([emailBrand, sourceTabId])
+  @@index([workspaceKey, dataSourceId])
 }

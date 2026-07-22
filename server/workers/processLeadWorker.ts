@@ -37,6 +37,13 @@ async function processLeadJob(jobId: string, queuedGeneration?: number) {
   await assertCurrentGeneration();
 
   let headers = input.headers || [];
+  const sheetAccess =
+    input.sourceType === 'google-sheet'
+      ? {
+          workspaceKey: input.workspaceKey,
+          googleAccountKey: input.googleAccountKey || googleSheetAccessForWorkspace(input.workspaceKey).googleAccountKey
+        }
+      : undefined;
   if (input.sourceType === 'google-sheet') {
     if (!input.spreadsheetId || !input.sheetName) {
       throw new Error('spreadsheetId and sheetName are required.');
@@ -48,7 +55,7 @@ async function processLeadJob(jobId: string, queuedGeneration?: number) {
       input.spreadsheetId,
       input.sheetName,
       headers,
-      googleSheetAccessForWorkspace(input.workspaceKey)
+      sheetAccess
     );
     headers = ensured.headers;
   }
@@ -73,7 +80,7 @@ async function processLeadJob(jobId: string, queuedGeneration?: number) {
       sheetName: input.sheetName,
       headers,
       senderAccountKey: input.senderAccountKey,
-      googleAccountKey: googleSheetAccessForWorkspace(input.workspaceKey).googleAccountKey,
+      googleAccountKey: sheetAccess?.googleAccountKey || googleSheetAccessForWorkspace(input.workspaceKey).googleAccountKey,
       emailBrandKey: input.emailBrandKey,
       emailBrand: input.emailBrand,
       assertStillCurrent: assertCurrentGeneration,

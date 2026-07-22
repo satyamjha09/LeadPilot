@@ -23,8 +23,13 @@ export type ProcessLeadJobInput = {
   sourceType: 'excel' | 'google-sheet';
   workspaceKey: EmailBrandKey;
   senderAccountKey: SenderAccountKey;
+  googleAccountKey?: SenderAccountKey;
   emailBrandKey: EmailBrandKey;
   emailBrand?: EmailBrandKey;
+  sourceId?: string;
+  sourceTabId?: string;
+  sourceSnapshotId?: string;
+  sourceRowIds?: string[];
   spreadsheetId?: string;
   sheetName?: string;
   headers?: string[];
@@ -64,6 +69,11 @@ export async function createProcessLeadJob(input: ProcessLeadJobInput) {
       workspaceKey,
       emailBrandKey,
       senderAccountKey,
+      googleAccountKey: input.googleAccountKey ? parseSenderAccountKey(input.googleAccountKey) : null,
+      dataSourceId: input.sourceId || null,
+      sourceTabId: input.sourceTabId || null,
+      sourceSnapshotId: input.sourceSnapshotId || null,
+      sourceRowIdsJson: input.sourceRowIds ? JSON.stringify(input.sourceRowIds) : null,
       spreadsheetId: input.spreadsheetId || null,
       sheetName: input.sheetName || null,
       headersJson: input.headers ? JSON.stringify(input.headers) : null,
@@ -152,7 +162,22 @@ export function serializeProcessLeadJob(job: Awaited<ReturnType<typeof getProces
     emailBrand: coerceStoredEmailBrand(job.emailBrand),
     workspaceKey: coerceStoredEmailBrand(job.workspaceKey || job.emailBrand),
     senderAccountKey: parseSenderAccountKey(job.senderAccountKey),
+    googleAccountKey: job.googleAccountKey ? parseSenderAccountKey(job.googleAccountKey) : undefined,
     emailBrandKey: coerceStoredEmailBrand(job.emailBrandKey || job.emailBrand),
+    sourceId: job.dataSourceId || undefined,
+    sourceTabId: job.sourceTabId || undefined,
+    sourceSnapshotId: job.sourceSnapshotId || undefined,
+    sourceRowIds: parseJson<string[]>(job.sourceRowIdsJson, []),
+    sourceScope: job.dataSourceId && job.sourceTabId && job.sourceSnapshotId
+      ? {
+          workspaceKey: coerceStoredEmailBrand(job.workspaceKey || job.emailBrand),
+          sourceId: job.dataSourceId,
+          sourceTabId: job.sourceTabId,
+          sourceSnapshotId: job.sourceSnapshotId,
+          sourceType: job.sourceType === 'google-sheet' ? 'google-sheet' : 'excel',
+          googleAccountKey: job.googleAccountKey ? parseSenderAccountKey(job.googleAccountKey) : undefined
+        }
+      : undefined,
     spreadsheetId: job.spreadsheetId || undefined,
     sheetName: job.sheetName || undefined,
     progress: parseJson<ProcessLeadJobProgress>(job.progressJson, initialProgress(inputRows.length)),
@@ -172,8 +197,13 @@ export function parseProcessLeadJobInput(job: Awaited<ReturnType<typeof getProce
     sourceType: job.sourceType === 'google-sheet' ? 'google-sheet' : 'excel',
     workspaceKey: coerceStoredEmailBrand(job.workspaceKey || job.emailBrand),
     senderAccountKey: parseSenderAccountKey(job.senderAccountKey),
+    googleAccountKey: job.googleAccountKey ? parseSenderAccountKey(job.googleAccountKey) : undefined,
     emailBrandKey: coerceStoredEmailBrand(job.emailBrandKey || job.emailBrand),
     emailBrand: coerceStoredEmailBrand(job.emailBrand),
+    sourceId: job.dataSourceId || undefined,
+    sourceTabId: job.sourceTabId || undefined,
+    sourceSnapshotId: job.sourceSnapshotId || undefined,
+    sourceRowIds: parseJson<string[]>(job.sourceRowIdsJson, []),
     spreadsheetId: job.spreadsheetId || undefined,
     sheetName: job.sheetName || undefined,
     headers: parseJson<string[]>(job.headersJson, []),

@@ -6,9 +6,11 @@ import { toSourceHttpError } from './sourceErrors';
 import {
   getWorkspaceCurrentSourceRow,
   getWorkspaceSourceSnapshot,
+  ingestWorkspaceSourceTab,
   ingestWorkspaceSource,
   listWorkspaceCurrentSourceRows,
-  listWorkspaceSourceSnapshots
+  listWorkspaceSourceSnapshots,
+  prepareSelectedTabProcessing
 } from './ingestion/sourceIngestion.service';
 import {
   archiveWorkspaceSource,
@@ -54,6 +56,7 @@ function sanitizeSource(source: any) {
     mimeType: source.mimeType,
     checksum: source.checksum,
     fileSize: source.fileSize,
+    googleAccountKey: source.googleAccountKey,
     connectionStatus: source.connectionStatus,
     syncEnabled: source.syncEnabled,
     lastValidatedAt: source.lastValidatedAt,
@@ -110,6 +113,30 @@ export function registerSourceRoutes(app: express.Express) {
       errorResponse(res, error);
     }
   });
+
+  router('/api/v2/workspaces/:workspaceKey/sources/:sourceId/tabs/:tabId/ingest').post(
+    requireMultiSourceAdmin,
+    async (req, res) => {
+      try {
+        const snapshot = await ingestWorkspaceSourceTab(req.params.workspaceKey, req.params.sourceId, req.params.tabId);
+        res.status(200).json({ snapshot });
+      } catch (error) {
+        errorResponse(res, error);
+      }
+    }
+  );
+
+  router('/api/v2/workspaces/:workspaceKey/sources/:sourceId/tabs/:tabId/prepare-processing').post(
+    requireMultiSourceAdmin,
+    async (req, res) => {
+      try {
+        const result = await prepareSelectedTabProcessing(req.params.workspaceKey, req.params.sourceId, req.params.tabId);
+        res.status(200).json(result);
+      } catch (error) {
+        errorResponse(res, error);
+      }
+    }
+  );
 
   router('/api/v2/workspaces/:workspaceKey/sources/:sourceId/snapshots').get(requireMultiSourceAdmin, async (req, res) => {
     try {

@@ -374,6 +374,9 @@ function collectSheetUpdate(
   updates.push({
     rowNumber,
     emailDeliveryId: String(row.__emailDeliveryId || '') || undefined,
+    dataSourceId: row.__sourceId,
+    sourceTabId: row.__sourceTabId,
+    sourceRowId: row.__sourceRowId,
     values: {
       ...values,
       ...(row.automation_id && values.automation_id === undefined ? { automation_id: row.automation_id } : {})
@@ -1026,6 +1029,9 @@ export async function processLeadsByStatus(
           headers: context.headers,
           values: result.values,
           emailDeliveryId: result.emailDeliveryId,
+          dataSourceId: result.dataSourceId,
+          sourceTabId: result.sourceTabId,
+          sourceRowId: result.sourceRowId,
           workspaceKey: context.workspaceKey,
           emailBrand: context.emailBrand,
           googleAccountKey: context.googleAccountKey,

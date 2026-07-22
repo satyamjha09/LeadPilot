@@ -6,10 +6,15 @@ export interface ExcelRow {
   id: string;
   __originalColumns?: string[];
   __sourceType?: SourceType;
+  __sourceId?: string;
+  __sourceTabId?: string;
+  __sourceRowId?: string;
+  __sourceSnapshotId?: string;
   __sourceRowNumber?: number;
   __sheetRowNumber?: number;
   __spreadsheetId?: string;
   __sheetName?: string;
+  __externalTabId?: string;
   __workspaceKey?: EmailBrandKey;
   __emailBrand?: EmailBrandKey;
   __senderAccountKey?: SenderAccountKey;
@@ -57,6 +62,42 @@ export type GoogleSheetMeta = {
 export type SheetSource =
   | { type: 'excel' }
   | ({ type: 'google-sheet' } & GoogleSheetMeta);
+
+export type RegisteredSourceTab = {
+  id: string;
+  externalTabId: string;
+  name: string;
+  position: number;
+  isEnabled: boolean;
+  headers: string[];
+  rowCount: number;
+  lastSyncedAt?: string | null;
+  lastError?: string | null;
+};
+
+export type RegisteredSource = {
+  id: string;
+  type: 'EXCEL' | 'GOOGLE_SHEETS';
+  displayName: string;
+  externalFileId?: string | null;
+  connectionStatus: string;
+  syncEnabled: boolean;
+  googleAccountKey?: SenderAccountKey | null;
+  tabs: RegisteredSourceTab[];
+};
+
+export type SourceSelectionScope = {
+  workspaceKey: WorkspaceKey;
+  sourceId: string;
+  sourceTabId: string;
+  sourceSnapshotId?: string;
+  sourceType: SourceType;
+  sourceDisplayName: string;
+  sourceTabName: string;
+  externalTabId?: string;
+  googleAccountKey?: SenderAccountKey;
+  generation: number;
+};
 
 export interface ReminderConfig {
   offsetMinutes: number;

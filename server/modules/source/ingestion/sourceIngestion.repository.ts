@@ -1,4 +1,4 @@
-import { Prisma, type SourceSnapshotStatus } from '@prisma/client';
+import { Prisma, type SourceRow, type SourceSnapshotStatus } from '@prisma/client';
 import { prisma } from '../../../db';
 import { SourceConflictError, SourceNotFoundError } from '../sourceErrors';
 import type { IngestionSummary, NormalizedReadRow } from './sourceIngestion.types';
@@ -74,7 +74,7 @@ export async function markStaleProcessingSnapshotsFailed(sourceId: string) {
   });
 }
 
-export async function createProcessingSnapshot(sourceId: string, trigger = 'MANUAL') {
+export async function createProcessingSnapshot(sourceId: string, trigger = 'MANUAL', sourceTabId?: string) {
   await markStaleProcessingSnapshotsFailed(sourceId);
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -96,6 +96,7 @@ export async function createProcessingSnapshot(sourceId: string, trigger = 'MANU
         return tx.sourceSnapshot.create({
           data: {
             dataSourceId: sourceId,
+            sourceTabId: sourceTabId || null,
             version: (latest._max.version || 0) + 1,
             status: 'PROCESSING',
             trigger
@@ -346,6 +347,60 @@ export async function finalizeSnapshot(input: {
       include: { tabResults: true }
     });
   });
+}
+
+export async function getSourceSnapshotForTab(sourceId: string, sourceTabId: string, snapshotId: string) {
+  const snapshot = await prisma.sourceSnapshot.findFirst({
+    where: {
+      id: snapshotId,
+      dataSourceId: sourceId,
+      sourceTabId,
+      status: { in: ['COMPLETED', 'PARTIAL'] }
+    },
+    include: { tabResults: true }
+  });
+  if (!snapshot) throw new SourceNotFoundError('Selected-tab snapshot not found.', 'SOURCE_SNAPSHOT_NOT_FOUND');
+  return snapshot;
+}
+
+export async function listAllActiveSourceRowsForTab(input: {
+  sourceId: string;
+  sourceTabId: string;
+  sourceSnapshotId?: string;
+  selectedSourceRowIds?: string[];
+  batchSize?: number;
+}) {
+  const take = input.batchSize && input.batchSize > 0 ? Math.min(input.batchSize, 500) : 250;
+  const selectedIds = input.selectedSourceRowIds?.filter(Boolean);
+  const snapshot = input.sourceSnapshotId
+    ? await getSourceSnapshotForTab(input.sourceId, input.sourceTabId, input.sourceSnapshotId)
+    : null;
+  const rows: SourceRow[] = [];
+  let cursor: string | undefined;
+
+  while (true) {
+    const batch = await prisma.sourceRow.findMany({
+      where: {
+        dataSourceId: input.sourceId,
+        sourceTabId: input.sourceTabId,
+        isActive: true,
+        ...(snapshot ? { lastSeenVersion: snapshot.version } : {}),
+        ...(selectedIds?.length ? { id: { in: selectedIds } } : {})
+      },
+      orderBy: [{ rowNumber: 'asc' }, { id: 'asc' }],
+      take,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {})
+    });
+    rows.push(...batch);
+    if (batch.length < take) break;
+    cursor = batch[batch.length - 1].id;
+  }
+
+  if (selectedIds?.length && rows.length !== new Set(selectedIds).size) {
+    throw new SourceNotFoundError('One or more selected source rows were not found in this tab.', 'SOURCE_ROW_NOT_FOUND');
+  }
+
+  return rows;
 }
 
 export async function failSnapshot(snapshotId: string, sourceId: string, error: string) {

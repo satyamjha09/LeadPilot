@@ -22,6 +22,7 @@ export async function createDataSource(input: DataSourceCreateInput) {
       mimeType: input.mimeType ?? null,
       checksum: input.checksum ?? null,
       fileSize: input.fileSize ?? null,
+      googleAccountKey: input.googleAccountKey ?? null,
       connectionStatus: input.connectionStatus || 'CONNECTED',
       syncEnabled: input.syncEnabled ?? true
     }
@@ -96,6 +97,7 @@ export async function createSourceWithTabs(input: SourceWithTabsInput) {
         mimeType: input.mimeType ?? null,
         checksum: input.checksum ?? null,
         fileSize: input.fileSize ?? null,
+        googleAccountKey: input.googleAccountKey ?? null,
         connectionStatus: input.connectionStatus || 'CONNECTED',
         syncEnabled: input.syncEnabled ?? true
       }

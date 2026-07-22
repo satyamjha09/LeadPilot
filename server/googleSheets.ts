@@ -14,6 +14,9 @@ export type GoogleSheetRowUpdate = {
   rowNumber: number;
   values: Record<string, any>;
   emailDeliveryId?: string;
+  dataSourceId?: string;
+  sourceTabId?: string;
+  sourceRowId?: string;
 };
 
 export type GoogleSheetRowUpdateResult = GoogleSheetRowUpdate & {
