@@ -28,6 +28,7 @@ vi.mock('./emailTemplates', () => ({
 const emailDeliveryMock = vi.hoisted(() => ({
   claimEmailDelivery: vi.fn(),
   claimEmailRetryById: vi.fn(),
+  findEmailDeliveryById: vi.fn(),
   listDueEmailRetries: vi.fn(),
   markEmailDeliveryFailed: vi.fn(),
   markEmailDeliverySent: vi.fn()
@@ -38,9 +39,13 @@ vi.mock('./emailDelivery', () => emailDeliveryMock);
 const prismaMock = vi.hoisted(() => ({
   demoHistory: {
     findMany: vi.fn(),
+    findUnique: vi.fn(),
     update: vi.fn()
   },
   customerDemoState: {
+    findUnique: vi.fn()
+  },
+  workflowControl: {
     findUnique: vi.fn()
   }
 }));
@@ -48,6 +53,13 @@ const prismaMock = vi.hoisted(() => ({
 vi.mock('./db', () => ({
   prisma: prismaMock
 }));
+
+const workflowActivityMock = vi.hoisted(() => ({
+  withWorkflowActivity: vi.fn((_type: string, _emailBrand: string, action: () => unknown) => action()),
+  WORKFLOW_BUSY_RESET_MESSAGE: 'A workflow is currently running. Wait for it to finish before resetting.'
+}));
+
+vi.mock('./workflowActivity', () => workflowActivityMock);
 
 const { checkAndSendReminders } = await import('./reminders');
 const { runEmailRetryScanner } = await import('./emailRetryWorker');
@@ -71,6 +83,13 @@ describe('brand-scoped background email delivery', () => {
     sendGmailReminderMock.mockResolvedValue({ messageId: 'gmail-reminder-1' });
     sendGmailTemplateMock.mockResolvedValue({ messageId: 'gmail-retry-1' });
     prismaMock.demoHistory.update.mockResolvedValue({});
+    prismaMock.demoHistory.findUnique.mockImplementation(async ({ where }: any) => ({
+      sessionId: where.sessionId,
+      status: 'Demo Scheduled',
+      meetingLink: 'https://meet.google.com/awt-demo'
+    }));
+    prismaMock.workflowControl.findUnique.mockResolvedValue({ isResetting: false });
+    workflowActivityMock.withWorkflowActivity.mockImplementation((_type: string, _emailBrand: string, action: () => unknown) => action());
   });
 
   it('sends AnyWhereTally reminders with the DemoHistory brand', async () => {
@@ -394,6 +413,12 @@ describe('brand-scoped background email delivery', () => {
 
     await runEmailRetryScanner();
 
+    expect(workflowActivityMock.withWorkflowActivity).toHaveBeenCalledWith(
+      'email-retry',
+      'anywheretally',
+      expect.any(Function)
+    );
+    expect(emailDeliveryMock.claimEmailRetryById).toHaveBeenCalledWith('retry-awt');
     expect(sendGmailTemplateMock).toHaveBeenCalledWith(
       'moh@example.com',
       {
@@ -403,6 +428,65 @@ describe('brand-scoped background email delivery', () => {
       },
       'anywheretally-google'
     );
+  });
+
+  it('does not send automatic retries while the delivery brand is resetting', async () => {
+    workflowActivityMock.withWorkflowActivity.mockImplementationOnce(() => {
+      throw new Error(workflowActivityMock.WORKFLOW_BUSY_RESET_MESSAGE);
+    });
+    emailDeliveryMock.listDueEmailRetries.mockResolvedValue([
+      {
+        id: 'retry-resetting',
+        eventKey: 'event-resetting',
+        automationId: 'lead_resetting',
+        emailBrand: 'anywheretally',
+        senderAccountKey: 'anywheretally-google',
+        emailType: 'DEMO_DONE',
+        recipient: 'resetting@example.com',
+        payloadHash: 'payload',
+        subject: 'Retry',
+        textBody: 'Retry text',
+        htmlBody: '<p>Retry</p>',
+        attemptCount: 1,
+        retryCount: 1,
+        maxRetries: 3,
+        nextRetryAt: new Date()
+      }
+    ]);
+
+    await runEmailRetryScanner();
+
+    expect(emailDeliveryMock.claimEmailRetryById).not.toHaveBeenCalled();
+    expect(sendGmailTemplateMock).not.toHaveBeenCalled();
+  });
+
+  it('does not finalize if a claimed retry disappears before completion', async () => {
+    emailDeliveryMock.claimEmailRetryById.mockResolvedValue(true);
+    emailDeliveryMock.findEmailDeliveryById.mockResolvedValue(null);
+    emailDeliveryMock.listDueEmailRetries.mockResolvedValue([
+      {
+        id: 'retry-deleted',
+        eventKey: 'event-deleted',
+        automationId: 'lead_deleted',
+        emailBrand: 'anywheretally',
+        senderAccountKey: 'anywheretally-google',
+        emailType: 'DEMO_DONE',
+        recipient: 'deleted@example.com',
+        payloadHash: 'payload',
+        subject: 'Retry',
+        textBody: 'Retry text',
+        htmlBody: '<p>Retry</p>',
+        attemptCount: 1,
+        retryCount: 1,
+        maxRetries: 3,
+        nextRetryAt: new Date()
+      }
+    ]);
+
+    await runEmailRetryScanner();
+
+    expect(sendGmailTemplateMock).toHaveBeenCalled();
+    expect(emailDeliveryMock.markEmailDeliverySent).not.toHaveBeenCalled();
   });
 
   it('fails an invalid retry sender without stopping the next due retry', async () => {

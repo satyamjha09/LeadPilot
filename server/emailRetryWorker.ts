@@ -1,11 +1,14 @@
 import {
   claimEmailRetryById,
+  findEmailDeliveryById,
   listDueEmailRetries,
   markEmailDeliveryFailed,
   markEmailDeliverySent
 } from './emailDelivery';
 import { sendGmailTemplate } from './googleAuth';
+import { parseEmailBrand } from '../src/lib/emailBrand';
 import { parseSenderAccountKey } from '../src/lib/senderAccount';
+import { WORKFLOW_BUSY_RESET_MESSAGE, withWorkflowActivity } from './workflowActivity';
 
 const RETRY_SCAN_INTERVAL_MS = Number(process.env.EMAIL_RETRY_SCAN_INTERVAL_MS || 60_000);
 const RETRY_BATCH_SIZE = Number(process.env.EMAIL_RETRY_BATCH_SIZE || 10);
@@ -25,44 +28,53 @@ export async function runEmailRetryScanner() {
   try {
     const dueDeliveries = await listDueEmailRetries(RETRY_BATCH_SIZE);
     for (const delivery of dueDeliveries) {
-      if (!delivery.subject || !delivery.textBody || !delivery.htmlBody) {
-        await markEmailDeliveryFailed({
-          deliveryId: delivery.id,
-          error: new Error('Retry payload is missing; cannot resend email.')
-        });
-        continue;
-      }
-
-      const claimed = await claimEmailRetryById(delivery.id);
-      if (!claimed) continue;
-
       try {
-        const senderAccountKey = parseSenderAccountKey(delivery.senderAccountKey);
-        console.log('EMAIL_RETRY_STARTED', {
-          deliveryId: delivery.id,
-          eventKey: delivery.eventKey,
-          emailType: delivery.emailType,
-          retryCount: delivery.retryCount,
-          attemptCount: delivery.attemptCount + 1
-        });
+        const emailBrand = parseEmailBrand(delivery.emailBrand);
+        await withWorkflowActivity('email-retry', emailBrand, async () => {
+          if (!delivery.subject || !delivery.textBody || !delivery.htmlBody) {
+            await markEmailDeliveryFailed({
+              deliveryId: delivery.id,
+              error: new Error('Retry payload is missing; cannot resend email.')
+            });
+            return;
+          }
 
-        const result = await sendGmailTemplate(delivery.recipient, {
-          subject: delivery.subject,
-          text: delivery.textBody,
-          html: delivery.htmlBody
-        }, senderAccountKey);
+          const claimed = await claimEmailRetryById(delivery.id);
+          if (!claimed) return;
 
-        await markEmailDeliverySent({
-          deliveryId: delivery.id,
-          providerMessageId: result.messageId
-        });
+          const senderAccountKey = parseSenderAccountKey(delivery.senderAccountKey);
+          console.log('EMAIL_RETRY_STARTED', {
+            deliveryId: delivery.id,
+            eventKey: delivery.eventKey,
+            emailType: delivery.emailType,
+            retryCount: delivery.retryCount,
+            attemptCount: delivery.attemptCount + 1
+          });
 
-        console.log('EMAIL_RETRY_SUCCESS', {
-          deliveryId: delivery.id,
-          eventKey: delivery.eventKey,
-          messageId: result.messageId
+          const result = await sendGmailTemplate(delivery.recipient, {
+            subject: delivery.subject,
+            text: delivery.textBody,
+            html: delivery.htmlBody
+          }, senderAccountKey);
+
+          const stillClaimed = await findEmailDeliveryById(delivery.id);
+          if (!stillClaimed) return;
+
+          await markEmailDeliverySent({
+            deliveryId: delivery.id,
+            providerMessageId: result.messageId
+          });
+
+          console.log('EMAIL_RETRY_SUCCESS', {
+            deliveryId: delivery.id,
+            eventKey: delivery.eventKey,
+            messageId: result.messageId
+          });
         });
       } catch (error) {
+        if (error instanceof Error && error.message === WORKFLOW_BUSY_RESET_MESSAGE) {
+          continue;
+        }
         const classification = await markEmailDeliveryFailed({
           deliveryId: delivery.id,
           error

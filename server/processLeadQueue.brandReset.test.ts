@@ -3,6 +3,16 @@ import { prepareProcessQueueForReset } from './processLeadQueue';
 
 const originalQueueEnabled = process.env.PROCESS_QUEUE_ENABLED;
 
+const prismaMock = vi.hoisted(() => ({
+  processLeadJob: {
+    findUnique: vi.fn()
+  }
+}));
+
+vi.mock('./db', () => ({
+  prisma: prismaMock
+}));
+
 function fakeJob(emailBrand: 'tallykonnect' | 'anywheretally', state: string) {
   return {
     data: {
@@ -27,7 +37,9 @@ function fakeQueue(activeJobs: any[], queuedJobs: any[]) {
 
 describe('brand-scoped process queue reset', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     process.env.PROCESS_QUEUE_ENABLED = 'true';
+    prismaMock.processLeadJob.findUnique.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -66,6 +78,23 @@ describe('brand-scoped process queue reset', () => {
     );
 
     expect(waitingSelectedBrand.remove).not.toHaveBeenCalled();
+    expect(queue.resume).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks reset and resumes the queue when job ownership is unknown', async () => {
+    const unknownWaitingJob = {
+      data: { jobId: 'missing-process-job' },
+      getState: vi.fn().mockResolvedValue('waiting'),
+      remove: vi.fn().mockResolvedValue(undefined)
+    };
+    const queue = fakeQueue([], [unknownWaitingJob]);
+
+    await expect(prepareProcessQueueForReset('anywheretally', queue as any)).rejects.toMatchObject({
+      code: 'UNKNOWN_QUEUE_JOB_OWNERSHIP',
+      statusCode: 409
+    });
+
+    expect(unknownWaitingJob.remove).not.toHaveBeenCalled();
     expect(queue.resume).toHaveBeenCalledTimes(1);
   });
 });

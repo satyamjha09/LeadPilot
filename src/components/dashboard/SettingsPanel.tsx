@@ -46,6 +46,7 @@ export default function SettingsPanel({
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [adminResetToken, setAdminResetToken] = useState('');
+  const [resetConfirmationInput, setResetConfirmationInput] = useState('');
 
   const loadStatus = async () => {
     try {
@@ -91,6 +92,7 @@ export default function SettingsPanel({
   const activeValue = config.enabled ? String(config.offsetMinutes) : 'off';
   const pendingCount = reminders.filter((r) => r.status === 'Pending' && !r.reminderSent).length;
   const brandLabel = emailBrandLabel(emailBrand);
+  const resetConfirmation = `RESET_${emailBrand.toUpperCase()}`;
 
   const resetDatabase = async () => {
     setIsResetting(true);
@@ -102,7 +104,7 @@ export default function SettingsPanel({
           'Content-Type': 'application/json',
           'X-Admin-Reset-Token': adminResetToken.trim()
         },
-        body: JSON.stringify({ adminResetToken: adminResetToken.trim(), emailBrand })
+        body: JSON.stringify({ emailBrand, confirmation: resetConfirmationInput.trim() })
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -113,6 +115,7 @@ export default function SettingsPanel({
       else toast.success(`${brandLabel} workflow data deleted`);
       setConfirmResetOpen(false);
       setAdminResetToken('');
+      setResetConfirmationInput('');
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Database reset failed');
     } finally {
@@ -198,17 +201,19 @@ export default function SettingsPanel({
                 This resets only the selected brand: {brandLabel}.
               </span>
               <span className="block">
-                It also clears imported browser data after the reset succeeds.
+                It also cancels active {brandLabel} Calendar demo events and clears imported browser data after the reset succeeds.
               </span>
               <span className="block">
                 It does not:<br />
                 - Delete Google Sheet rows<br />
-                - Delete Google Calendar events<br />
                 - Disconnect either Google account<br />
                 - Undo previously sent emails
               </span>
             </DialogDescription>
           </DialogHeader>
+          <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            Confirmation phrase: {resetConfirmation}
+          </p>
           <div className="space-y-2">
             <Label htmlFor="admin-reset-token">Admin reset key</Label>
             <Input
@@ -220,6 +225,16 @@ export default function SettingsPanel({
               autoComplete="off"
             />
           </div>
+          <div className="space-y-2">
+            <Label htmlFor="admin-reset-confirmation">Type confirmation phrase</Label>
+            <Input
+              id="admin-reset-confirmation"
+              value={resetConfirmationInput}
+              onChange={(event) => setResetConfirmationInput(event.target.value)}
+              placeholder={resetConfirmation}
+              autoComplete="off"
+            />
+          </div>
           <DialogFooter>
             <Button
               type="button"
@@ -227,12 +242,18 @@ export default function SettingsPanel({
               onClick={() => {
                 setConfirmResetOpen(false);
                 setAdminResetToken('');
+                setResetConfirmationInput('');
               }}
               disabled={isResetting}
             >
               Cancel
             </Button>
-            <Button type="button" variant="destructive" onClick={resetDatabase} disabled={isResetting || !adminResetToken.trim()}>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={resetDatabase}
+              disabled={isResetting || !adminResetToken.trim() || resetConfirmationInput.trim() !== resetConfirmation}
+            >
               {isResetting ? 'Resetting...' : 'Confirm Reset'}
             </Button>
           </DialogFooter>

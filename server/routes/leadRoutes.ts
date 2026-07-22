@@ -26,7 +26,7 @@ import {
 import { cancelCalendarMeeting, sendGmailTemplate } from '../googleAuth';
 import { updateGoogleSheetRowsResilient } from '../googleSheets';
 import { isValidLeadStatus, LEAD_STATUS, normalizeLeadStatus } from '../leadStatus';
-import { resetDemoTestData } from '../adminDb';
+import { assertNoActiveResetClaims, cancelActiveCalendarEventsForReset, resetDemoTestData } from '../adminDb';
 import { applyDbTruthToRows, assertDemoLifecycleOwnership, forceCloseActiveDemoForRow } from '../scheduleDb';
 import {
   findSheetSyncJobById,
@@ -349,9 +349,7 @@ async function getDashboardHealth(emailBrand: EmailBrandKey) {
 
 function getProvidedAdminResetToken(req: Request) {
   return String(
-    req.get('x-admin-reset-token') ||
-    (req.body as { adminResetToken?: string } | undefined)?.adminResetToken ||
-    ''
+    req.get('x-admin-reset-token') || ''
   ).trim();
 }
 
@@ -383,21 +381,33 @@ async function resetDemoDataHandler(req: Request, res: Response) {
   let resetBrand: EmailBrandKey | null = null;
 
   try {
-    const { emailBrand } = req.body as { emailBrand?: any };
+    const { emailBrand, confirmation } = req.body as { emailBrand?: any; confirmation?: any };
     const brand = parseEmailBrand(emailBrand);
+    const expectedConfirmation = `RESET_${brand.toUpperCase()}`;
+    if (String(confirmation || '').trim() !== expectedConfirmation) {
+      const error = new Error(`Confirmation must be ${expectedConfirmation}.`);
+      (error as Error & { code?: string; statusCode?: number }).code = 'INVALID_RESET_CONFIRMATION';
+      (error as Error & { code?: string; statusCode?: number }).statusCode = 400;
+      throw error;
+    }
     resetBrand = brand;
     finishResetGuard = beginResetGuard(brand);
     await beginWorkflowResetWindow(brand);
     workflowResetWindowStarted = true;
     resumeQueue = await prepareProcessQueueForReset(brand);
+    await assertNoActiveResetClaims(brand);
+    const calendarCleanup = await cancelActiveCalendarEventsForReset(brand);
     const workflowControl = await advanceWorkflowGenerationForReset(brand);
     const deletedCounts = await resetDemoTestData(brand);
     return res.json({
       success: true,
       emailBrand: brand,
       generation: workflowControl.generation,
+      cancelledCalendarEventCount: calendarCleanup.cancelledCalendarEventCount,
+      alreadyDeletedCalendarEventCount: calendarCleanup.alreadyDeletedCalendarEventCount,
+      removedQueueJobCount: (resumeQueue as typeof resumeQueue & { removedQueueJobCount?: number })?.removedQueueJobCount || 0,
       deletedCounts,
-      message: 'Selected brand workflow database and pending process jobs cleared.'
+      message: 'Selected brand workflow data, active Calendar events, and pending process jobs cleared.'
     });
   } catch (err: any) {
     console.error('Database reset failed:', err);
@@ -980,7 +990,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       const workspaceKey = parseEmailBrand(job.workspaceKey);
       const emailBrand = parseEmailBrand(job.emailBrand);
       const googleAccountKey = parseSenderAccountKey(job.googleAccountKey);
-      return await withWorkflowActivity('sheet-sync', workspaceKey, async () => {
+      return await withWorkflowActivity('sheet-sync', emailBrand, async () => {
         if (job.status === 'SYNCED') {
           return res.json({ success: true, job: serializeSheetSyncJob(job), skipped: true });
         }

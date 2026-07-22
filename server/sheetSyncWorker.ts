@@ -30,7 +30,7 @@ export async function runSheetSyncScanner() {
         const claimed = await claimSheetSyncJobForProcessing(job.id);
         if (!claimed) continue;
 
-        await withWorkflowActivity('sheet-sync', workspaceKey, async () => {
+        await withWorkflowActivity('sheet-sync', emailBrand, async () => {
           if (job.emailDeliveryId) {
             const delivery = await findEmailDeliveryById(job.emailDeliveryId);
             if (!delivery) {

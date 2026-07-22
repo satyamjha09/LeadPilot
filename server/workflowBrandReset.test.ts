@@ -5,7 +5,8 @@ const prismaMock = vi.hoisted(() => ({
     findUnique: vi.fn(),
     create: vi.fn(),
     findUniqueOrThrow: vi.fn(),
-    upsert: vi.fn()
+    upsert: vi.fn(),
+    updateMany: vi.fn()
   }
 }));
 
@@ -40,6 +41,7 @@ describe('brand-scoped workflow control and activity reset', () => {
       generation: 4,
       isResetting: true
     });
+    prismaMock.workflowControl.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it('reads new job generation from the selected brand row', async () => {
@@ -68,20 +70,28 @@ describe('brand-scoped workflow control and activity reset', () => {
     await beginWorkflowResetWindow('tallykonnect');
     await finishWorkflowResetWindow('tallykonnect');
 
-    expect(prismaMock.workflowControl.upsert).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        where: { id: 'tallykonnect' },
-        update: { isResetting: true }
-      })
-    );
-    expect(prismaMock.workflowControl.upsert).toHaveBeenNthCalledWith(
-      2,
+    expect(prismaMock.workflowControl.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'tallykonnect',
+        isResetting: false
+      },
+      data: { isResetting: true }
+    });
+    expect(prismaMock.workflowControl.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'tallykonnect' },
         update: { isResetting: false }
       })
     );
+  });
+
+  it('blocks concurrent durable reset acquisition for the same brand', async () => {
+    prismaMock.workflowControl.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(beginWorkflowResetWindow('anywheretally')).rejects.toMatchObject({
+      code: 'WORKFLOW_BUSY',
+      statusCode: 409
+    });
   });
 
   it('checks stale generation against the selected brand row', async () => {
@@ -98,6 +108,18 @@ describe('brand-scoped workflow control and activity reset', () => {
     });
   });
 
+  it('blocks generation checks while the selected brand is resetting', async () => {
+    prismaMock.workflowControl.findUnique.mockResolvedValue({
+      id: 'anywheretally',
+      generation: 8,
+      isResetting: true
+    });
+
+    await expect(assertWorkflowGenerationCurrent('anywheretally', 8)).rejects.toMatchObject({
+      code: 'WORKFLOW_BUSY'
+    });
+  });
+
   it('allows one brand reset while the other brand has in-memory activity', async () => {
     let releaseActivity!: () => void;
     const activeWork = withWorkflowActivity(
@@ -108,6 +130,7 @@ describe('brand-scoped workflow control and activity reset', () => {
           releaseActivity = resolve;
         })
     );
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(getActiveWorkflowSnapshot('anywheretally').total).toBe(1);
     let finishTallyReset!: () => void;

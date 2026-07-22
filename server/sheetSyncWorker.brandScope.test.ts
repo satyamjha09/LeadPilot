@@ -23,8 +23,12 @@ const emailDeliveryMock = vi.hoisted(() => ({
 
 vi.mock('./emailDelivery', () => emailDeliveryMock);
 
+const workflowActivityMock = vi.hoisted(() => ({
+  withWorkflowActivity: vi.fn((_type: string, _emailBrand: string, action: () => unknown) => action())
+}));
+
 vi.mock('./workflowActivity', () => ({
-  withWorkflowActivity: (_type: string, _workspaceKey: string, action: () => unknown) => action(),
+  withWorkflowActivity: workflowActivityMock.withWorkflowActivity,
   WORKFLOW_BUSY_RESET_MESSAGE: 'A workflow is currently running. Wait for it to finish before resetting.'
 }));
 
@@ -71,6 +75,11 @@ describe('workspace-owned Google Sheet retry worker', () => {
 
     await runSheetSyncScanner();
 
+    expect(workflowActivityMock.withWorkflowActivity).toHaveBeenCalledWith(
+      'sheet-sync',
+      'anywheretally',
+      expect.any(Function)
+    );
     expect(sheetSyncQueueMock.claimSheetSyncJobForProcessing).toHaveBeenCalledWith('sheet-sync-1');
     expect(googleSheetsMock.updateGoogleSheetRowsResilient).toHaveBeenCalledWith(
       'sheet-1',

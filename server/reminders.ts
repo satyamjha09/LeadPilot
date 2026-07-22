@@ -17,6 +17,7 @@ import { prisma } from './db';
 import { LEAD_STATUS } from './leadStatus';
 import { coerceStoredEmailBrand } from '../src/lib/emailBrand';
 import { parseSenderAccountKey } from '../src/lib/senderAccount';
+import { WORKFLOW_BUSY_RESET_MESSAGE, withWorkflowActivity } from './workflowActivity';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const CONFIG_PATH = path.join(DATA_DIR, 'reminder_config.json');
@@ -115,97 +116,120 @@ export async function checkAndSendReminders() {
     let activeDeliveryId = '';
     try {
       const emailBrand = coerceStoredEmailBrand(history.emailBrand);
-      const senderAccountKey = parseSenderAccountKey(history.senderAccountKey);
-      const activeState = await prisma.customerDemoState.findUnique({
-        where: {
-          emailBrand_userId: {
-            emailBrand,
-            userId: history.userId
+      await withWorkflowActivity('reminder', emailBrand, async () => {
+        const senderAccountKey = parseSenderAccountKey(history.senderAccountKey);
+        const activeState = await prisma.customerDemoState.findUnique({
+          where: {
+            emailBrand_userId: {
+              emailBrand,
+              userId: history.userId
+            }
           }
+        });
+        const stillActive =
+          activeState?.status === LEAD_STATUS.DEMO_SCHEDULED &&
+          activeState.activeDemoSessionId === history.sessionId &&
+          activeState.senderAccountKey === senderAccountKey &&
+          activeState.meetingLink === history.meetingLink &&
+          activeState.demoDate === history.displayDate &&
+          activeState.demoTime === history.displayTime;
+
+        if (!stillActive) return;
+
+        console.log('REMINDER_SEND_DUE', {
+          sessionId: history.sessionId,
+          userId: history.userId,
+          recipient: history.email,
+          offsetMinutes: config.offsetMinutes
+        });
+
+        const eventKey = createEmailEventKey({
+          automationId: history.userId,
+          recipient: history.email,
+          emailType: EMAIL_TYPES.REMINDER,
+          date: history.displayDate,
+          time: history.displayTime,
+          reminderWindow: `${config.offsetMinutes}_MINUTES`
+        });
+        const template = buildReminderEmail({
+          fullName: history.fullName || 'Client',
+          date: history.displayDate,
+          time: history.displayTime,
+          meetLink: history.meetingLink,
+          brand: emailBrand
+        });
+        const payloadHash = createEmailPayloadHash({
+          recipient: history.email,
+          subject: template.subject,
+          text: template.text,
+          html: template.html
+        });
+        const claim = await claimEmailDelivery({
+          eventKey,
+          automationId: history.userId,
+          emailType: EMAIL_TYPES.REMINDER,
+          recipient: history.email,
+          emailBrand,
+          senderAccountKey,
+          payloadHash,
+          subject: template.subject,
+          text: template.text,
+          html: template.html
+        });
+
+        if (claim.claimed === false) {
+          if (claim.reason === 'ALREADY_SENT') {
+            await prisma.demoHistory.update({
+              where: { sessionId: history.sessionId },
+              data: { [sentField]: new Date().toISOString() } as any
+            });
+          }
+          return;
         }
-      });
-      const stillActive =
-        activeState?.status === LEAD_STATUS.DEMO_SCHEDULED &&
-        activeState.activeDemoSessionId === history.sessionId &&
-        activeState.senderAccountKey === senderAccountKey &&
-        activeState.meetingLink === history.meetingLink &&
-        activeState.demoDate === history.displayDate &&
-        activeState.demoTime === history.displayTime;
 
-      if (!stillActive) continue;
+        activeDeliveryId = claim.deliveryId;
+        const freshHistory = await prisma.demoHistory.findUnique({
+          where: { sessionId: history.sessionId }
+        });
+        const freshState = await prisma.customerDemoState.findUnique({
+          where: {
+            emailBrand_userId: {
+              emailBrand,
+              userId: history.userId
+            }
+          }
+        });
+        const freshStillActive =
+          freshHistory?.status === LEAD_STATUS.DEMO_SCHEDULED &&
+          freshHistory.sessionId === history.sessionId &&
+          freshState?.status === LEAD_STATUS.DEMO_SCHEDULED &&
+          freshState.activeDemoSessionId === history.sessionId;
+        if (!freshStillActive) return;
 
-      console.log('REMINDER_SEND_DUE', {
-        sessionId: history.sessionId,
-        userId: history.userId,
-        recipient: history.email,
-        offsetMinutes: config.offsetMinutes
-      });
+        const sendResult = await sendGmailReminder(
+          history.fullName || 'Client',
+          history.email,
+          history.displayDate,
+          history.displayTime,
+          history.meetingLink,
+          senderAccountKey,
+          emailBrand
+        );
 
-      const eventKey = createEmailEventKey({
-        automationId: history.userId,
-        recipient: history.email,
-        emailType: EMAIL_TYPES.REMINDER,
-        date: history.displayDate,
-        time: history.displayTime,
-        reminderWindow: `${config.offsetMinutes}_MINUTES`
-      });
-      const template = buildReminderEmail({
-        fullName: history.fullName || 'Client',
-        date: history.displayDate,
-        time: history.displayTime,
-        meetLink: history.meetingLink,
-        brand: emailBrand
-      });
-      const payloadHash = createEmailPayloadHash({
-        recipient: history.email,
-        subject: template.subject,
-        text: template.text,
-        html: template.html
-      });
-      const claim = await claimEmailDelivery({
-        eventKey,
-        automationId: history.userId,
-        emailType: EMAIL_TYPES.REMINDER,
-        recipient: history.email,
-        emailBrand,
-        senderAccountKey,
-        payloadHash,
-        subject: template.subject,
-        text: template.text,
-        html: template.html
-      });
+        await markEmailDeliverySent({
+          deliveryId: claim.deliveryId,
+          providerMessageId: sendResult.messageId
+        });
 
-      if (claim.claimed === false) {
-        if (claim.reason === 'ALREADY_SENT') {
-          await prisma.demoHistory.update({
-            where: { sessionId: history.sessionId },
-            data: { [sentField]: new Date().toISOString() } as any
-          });
-        }
-        continue;
-      }
-
-      activeDeliveryId = claim.deliveryId;
-      const sendResult = await sendGmailReminder(
-        history.fullName || 'Client',
-        history.email,
-        history.displayDate,
-        history.displayTime,
-        history.meetingLink,
-        senderAccountKey,
-        emailBrand
-      );
-
-      await markEmailDeliverySent({
-        deliveryId: claim.deliveryId,
-        providerMessageId: sendResult.messageId
-      });
-
-      await prisma.demoHistory.update({
-        where: { sessionId: history.sessionId },
-        data: { [sentField]: new Date().toISOString() } as any
+        await prisma.demoHistory.update({
+          where: { sessionId: history.sessionId },
+          data: { [sentField]: new Date().toISOString() } as any
+        });
       });
     } catch (err) {
+      if (err instanceof Error && err.message === WORKFLOW_BUSY_RESET_MESSAGE) {
+        continue;
+      }
       console.error('REMINDER_SEND_FAILED', {
         sessionId: history.sessionId,
         error: err instanceof Error ? err.message : String(err)

@@ -2,11 +2,12 @@ import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { createWorkflowBusyError } from './workflowActivity';
 import { prisma } from './db';
-import { coerceStoredEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
+import { parseEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
 
 export const PROCESS_LEAD_QUEUE_NAME = 'process-lead-jobs';
 const PROCESS_QUEUE_RESET_COUNT = 1000;
 const REMOVABLE_RESET_JOB_STATES = ['waiting', 'delayed', 'prioritized', 'paused'] as const;
+export const UNKNOWN_QUEUE_JOB_OWNERSHIP_CODE = 'UNKNOWN_QUEUE_JOB_OWNERSHIP';
 
 let connection: IORedis | null = null;
 let queue: Queue | null = null;
@@ -60,20 +61,29 @@ export async function enqueueProcessLeadJob(jobId: string, generation: number | 
   );
 }
 
+function createUnknownQueueJobOwnershipError(jobId?: string) {
+  const error = new Error('Process queue job ownership could not be determined.');
+  (error as Error & { code?: string; statusCode?: number; jobId?: string }).code = UNKNOWN_QUEUE_JOB_OWNERSHIP_CODE;
+  (error as Error & { code?: string; statusCode?: number; jobId?: string }).statusCode = 409;
+  (error as Error & { code?: string; statusCode?: number; jobId?: string }).jobId = jobId;
+  return error;
+}
+
 async function getProcessQueueJobBrand(job: { data?: any }) {
   if (job.data?.emailBrand) {
-    return coerceStoredEmailBrand(job.data.emailBrand);
+    return parseEmailBrand(job.data.emailBrand);
   }
 
   const jobId = String(job.data?.jobId || '');
-  if (!jobId) return null;
+  if (!jobId) throw createUnknownQueueJobOwnershipError();
 
   const processJob = await prisma.processLeadJob.findUnique({
     where: { id: jobId },
     select: { emailBrand: true }
   });
 
-  return processJob ? coerceStoredEmailBrand(processJob.emailBrand) : null;
+  if (!processJob) throw createUnknownQueueJobOwnershipError(jobId);
+  return parseEmailBrand(processJob.emailBrand);
 }
 
 export async function clearProcessQueueResetData(emailBrand: EmailBrandKey, processQueue?: Queue) {
@@ -110,16 +120,18 @@ export async function prepareProcessQueueForReset(emailBrand: EmailBrandKey, pro
     const activeJobs = await queueToPrepare.getJobs(['active'], 0, PROCESS_QUEUE_RESET_COUNT - 1);
     for (const activeJob of activeJobs) {
       const activeBrand = await getProcessQueueJobBrand(activeJob);
-      if (!activeBrand || activeBrand === emailBrand) {
+      if (activeBrand === emailBrand) {
         throw createWorkflowBusyError();
       }
     }
 
-    await clearProcessQueueResetData(emailBrand, queueToPrepare);
+    const resetData = await clearProcessQueueResetData(emailBrand, queueToPrepare);
 
-    return async () => {
+    const resume = async () => {
       await queueToPrepare.resume();
     };
+    (resume as typeof resume & { removedQueueJobCount?: number }).removedQueueJobCount = resetData.removed;
+    return resume;
   } catch (error) {
     await queueToPrepare.resume();
     throw error;

@@ -55,14 +55,17 @@ export async function getWorkflowGenerationForNewJob(emailBrand: EmailBrandKey) 
 }
 
 export async function beginWorkflowResetWindow(emailBrand: EmailBrandKey) {
-  await prisma.workflowControl.upsert({
-    where: { id: emailBrand },
-    update: { isResetting: true },
-    create: {
+  await getWorkflowControl(emailBrand);
+  const acquired = await prisma.workflowControl.updateMany({
+    where: {
       id: emailBrand,
-      isResetting: true
-    }
+      isResetting: false
+    },
+    data: { isResetting: true }
   });
+  if (acquired.count !== 1) {
+    throw createWorkflowBusyError();
+  }
 }
 
 export async function advanceWorkflowGenerationForReset(emailBrand: EmailBrandKey) {
@@ -93,6 +96,9 @@ export async function finishWorkflowResetWindow(emailBrand: EmailBrandKey) {
 
 export async function assertWorkflowGenerationCurrent(emailBrand: EmailBrandKey, jobGeneration: number) {
   const control = await getWorkflowControl(emailBrand);
+  if (control.isResetting) {
+    throw createWorkflowBusyError();
+  }
   if (control.generation !== jobGeneration) {
     throw createStaleWorkflowGenerationError(jobGeneration, control.generation);
   }
