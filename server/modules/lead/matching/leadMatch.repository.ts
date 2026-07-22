@@ -19,6 +19,22 @@ export async function getSourceForLeadMatching(workspaceId: string, sourceId: st
   return source;
 }
 
+export async function assertSourceTabForLeadMatching(input: {
+  workspaceId: string;
+  sourceId?: string;
+  tabId: string;
+}) {
+  const tab = await prisma.dataSourceTab.findFirst({
+    where: {
+      id: input.tabId,
+      ...(input.sourceId ? { dataSourceId: input.sourceId } : {}),
+      dataSource: { workspaceId: input.workspaceId }
+    },
+    select: { id: true }
+  });
+  if (!tab) throw new SourceNotFoundError('Source tab not found.');
+}
+
 export async function getSnapshotForLeadMatching(sourceId: string, snapshotId: string) {
   const snapshot = await prisma.sourceSnapshot.findFirst({
     where: { id: snapshotId, dataSourceId: sourceId, status: { in: ['COMPLETED', 'PARTIAL'] } },
@@ -133,7 +149,11 @@ async function ensureIdentity(
   identity: IdentityCandidate,
   source: 'AUTO' | 'MANUAL' = 'AUTO'
 ) {
-  const record = await tx.leadIdentity.upsert({
+  if (lead.workspaceId !== row.workspaceId) {
+    throw new SourceConflictError('Lead and source row belong to different workspaces.');
+  }
+
+  const existing = await tx.leadIdentity.findUnique({
     where: {
       workspaceId_type_scopeKey_value: {
         workspaceId: row.workspaceId,
@@ -141,11 +161,23 @@ async function ensureIdentity(
         scopeKey: identity.scopeKey,
         value: identity.value
       }
-    },
-    update: {
-      leadId: lead.id
-    },
-    create: {
+    }
+  });
+
+  if (existing && existing.leadId !== lead.id) {
+    throw new SourceConflictError('Identity is already owned by another lead.');
+  }
+
+  const record = existing
+    ? await tx.leadIdentity.update({
+        where: { id: existing.id },
+        data: {
+          source: existing.source === 'MANUAL' ? existing.source : source,
+          isVerified: existing.isVerified || identity.type === 'EMAIL' || identity.type === 'PHONE'
+        }
+      })
+    : await tx.leadIdentity.create({
+        data: {
       workspaceId: row.workspaceId,
       leadId: lead.id,
       type: identity.type,
@@ -153,8 +185,8 @@ async function ensureIdentity(
       value: identity.value,
       source,
       isVerified: identity.type === 'EMAIL' || identity.type === 'PHONE'
-    }
-  });
+        }
+      });
 
   await tx.leadIdentityObservation.upsert({
     where: {
@@ -318,10 +350,17 @@ export async function applyLeadMatchPlans(input: {
           createdLeadCount += 1;
         }
       } else {
-        lead = await tx.lead.findUniqueOrThrow({
-          where: { id: plan.candidateLeadIds[0] }
+        const existingLead = await tx.lead.findFirst({
+          where: {
+            id: plan.candidateLeadIds[0],
+            workspaceId: input.workspaceId,
+            mergedIntoLeadId: null
+          }
         });
-        lead = await fillCanonicalFields(tx, lead, row);
+        if (!existingLead) {
+          throw new SourceConflictError('Candidate lead is no longer available in this workspace.');
+        }
+        lead = await fillCanonicalFields(tx, existingLead, row);
         if (plan.status === 'UNCHANGED') {
           unchangedRowCount += 1;
         } else {
@@ -395,6 +434,14 @@ export async function failLeadMatchRun(runId: string, error: string) {
 }
 
 export async function listLeadMatchRuns(sourceId: string, cursor?: string, limit = 50) {
+  if (cursor) {
+    const cursorRun = await prisma.leadMatchRun.findFirst({
+      where: { id: cursor, dataSourceId: sourceId },
+      select: { id: true }
+    });
+    if (!cursorRun) throw new SourceNotFoundError('Lead match run cursor not found.');
+  }
+
   return prisma.leadMatchRun.findMany({
     where: { dataSourceId: sourceId },
     orderBy: { startedAt: 'desc' },
@@ -420,6 +467,20 @@ export async function listLeadConflicts(input: {
   cursor?: string;
   limit: number;
 }) {
+  if (input.cursor) {
+    const cursorConflict = await prisma.leadMatchConflict.findFirst({
+      where: {
+        id: input.cursor,
+        workspaceId: input.workspaceId,
+        ...(input.status ? { status: input.status } : {}),
+        ...(input.type ? { type: input.type } : {}),
+        ...(input.sourceId ? { sourceRow: { dataSourceId: input.sourceId } } : {})
+      },
+      select: { id: true }
+    });
+    if (!cursorConflict) throw new SourceNotFoundError('Lead conflict cursor not found.');
+  }
+
   return prisma.leadMatchConflict.findMany({
     where: {
       workspaceId: input.workspaceId,
@@ -460,16 +521,19 @@ export async function resolveLeadConflictLink(input: {
     if (!lead) throw new SourceNotFoundError('Lead not found.');
 
     const identities = (conflict.identityClaims as unknown as IdentityCandidate[]) || [];
-    const claimed = await tx.leadIdentity.findMany({
-      where: {
-        workspaceId: input.workspaceId,
-        OR: identities.map((identity) => ({
-          type: identity.type,
-          scopeKey: identity.scopeKey,
-          value: identity.value
-        }))
-      }
-    });
+    const claimed =
+      identities.length > 0
+        ? await tx.leadIdentity.findMany({
+            where: {
+              workspaceId: input.workspaceId,
+              OR: identities.map((identity) => ({
+                type: identity.type,
+                scopeKey: identity.scopeKey,
+                value: identity.value
+              }))
+            }
+          })
+        : [];
     if (claimed.some((identity) => identity.leadId !== input.leadId)) {
       throw new SourceConflictError('Conflicting identities still belong to another lead. Merge leads first.');
     }
@@ -522,10 +586,23 @@ export async function listCanonicalLeads(input: {
   cursor?: string;
   limit: number;
 }) {
+  if (input.cursor) {
+    const cursorLead = await prisma.lead.findFirst({
+      where: {
+        id: input.cursor,
+        workspaceId: input.workspaceId,
+        ...(input.includeMerged ? {} : { mergedIntoLeadId: null })
+      },
+      select: { id: true }
+    });
+    if (!cursorLead) throw new SourceNotFoundError('Canonical lead cursor not found.');
+  }
+
   const sourceRowFilter: Prisma.SourceRowListRelationFilter | undefined =
     input.sourceId || input.tabId || input.hasConflict
       ? {
           some: {
+            workspaceId: input.workspaceId,
             isActive: true,
             ...(input.sourceId ? { dataSourceId: input.sourceId } : {}),
             ...(input.tabId ? { sourceTabId: input.tabId } : {}),
@@ -553,7 +630,7 @@ export async function listCanonicalLeads(input: {
     ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
     include: {
       sourceRows: {
-        where: { isActive: true },
+        where: { workspaceId: input.workspaceId, isActive: true },
         include: {
           dataSource: true,
           matchConflicts: {
@@ -572,8 +649,8 @@ export async function getCanonicalLead(workspaceId: string, leadId: string) {
   const lead = await prisma.lead.findFirst({
     where: { id: leadId, workspaceId },
     include: {
-      identities: { include: { observations: true } },
-      sourceRows: { include: { dataSource: true, sourceTab: true } },
+      identities: { where: { workspaceId }, include: { observations: true } },
+      sourceRows: { where: { workspaceId }, include: { dataSource: true, sourceTab: true } },
       resolvedConflicts: { where: { status: 'OPEN' } },
       mergedInto: true,
       mergedLeads: true

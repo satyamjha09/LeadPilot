@@ -3,6 +3,8 @@ import 'dotenv/config';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { applyLeadMatchPlans } from './leadMatch.repository';
+
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const shouldRun = Boolean(testDatabaseUrl) && testDatabaseUrl !== process.env.DATABASE_URL;
 const describeIntegration = shouldRun ? describe : describe.skip;
@@ -150,5 +152,84 @@ describeIntegration('canonical lead matching database constraints', () => {
         }
       })
     );
+  });
+
+  it('does not reassign an existing identity to another lead during apply', async () => {
+    const { workspace, sourceA, leadA, leadB } = await fixture();
+    const tab = await prisma.dataSourceTab.create({
+      data: {
+        dataSourceId: sourceA.id,
+        externalTabId: '0',
+        name: 'Leads',
+        headersJson: ['email'],
+        isEnabled: true
+      }
+    });
+    const row = await prisma.sourceRow.create({
+      data: {
+        workspaceId: workspace.id,
+        dataSourceId: sourceA.id,
+        sourceTabId: tab.id,
+        externalRowId: 'row:2',
+        rowNumber: 2,
+        rowHash: 'hash',
+        rawData: { headers: ['email'], values: ['owned@example.com'] },
+        normalizedData: { email: 'owned@example.com' },
+        email: 'owned@example.com'
+      }
+    });
+    await prisma.leadIdentity.create({
+      data: {
+        workspaceId: workspace.id,
+        leadId: leadB.id,
+        type: 'EMAIL',
+        scopeKey: 'workspace',
+        value: 'owned@example.com'
+      }
+    });
+    const snapshot = await prisma.sourceSnapshot.create({
+      data: { dataSourceId: sourceA.id, version: 1, status: 'COMPLETED' }
+    });
+    const run = await prisma.leadMatchRun.create({
+      data: {
+        workspaceId: workspace.id,
+        dataSourceId: sourceA.id,
+        snapshotId: snapshot.id
+      }
+    });
+
+    await expect(
+      applyLeadMatchPlans({
+        runId: run.id,
+        workspaceId: workspace.id,
+        plans: [
+          {
+            sourceRow: row,
+            identities: [
+              {
+                type: 'EMAIL',
+                scopeKey: 'workspace',
+                value: 'owned@example.com',
+                isStrong: true
+              }
+            ],
+            candidateLeadIds: [leadA.id],
+            status: 'MATCHED'
+          }
+        ]
+      })
+    ).rejects.toThrow('Identity is already owned by another lead');
+
+    const identity = await prisma.leadIdentity.findUniqueOrThrow({
+      where: {
+        workspaceId_type_scopeKey_value: {
+          workspaceId: workspace.id,
+          type: 'EMAIL',
+          scopeKey: 'workspace',
+          value: 'owned@example.com'
+        }
+      }
+    });
+    expect(identity.leadId).toBe(leadB.id);
   });
 });

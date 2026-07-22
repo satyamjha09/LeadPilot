@@ -50,6 +50,14 @@ export async function getSourceForIngestion(workspaceId: string, sourceId: strin
   return source;
 }
 
+export async function assertSourceTabBelongsToSource(sourceId: string, tabId: string) {
+  const tab = await prisma.dataSourceTab.findFirst({
+    where: { id: tabId, dataSourceId: sourceId },
+    select: { id: true }
+  });
+  if (!tab) throw new SourceNotFoundError('Source tab not found.');
+}
+
 export async function markStaleProcessingSnapshotsFailed(sourceId: string) {
   const cutoff = new Date(Date.now() - staleMinutes() * 60 * 1000);
   await prisma.sourceSnapshot.updateMany({
@@ -161,6 +169,10 @@ export async function finalizeSnapshot(input: {
       where: { id: input.snapshotId },
       select: { version: true }
     });
+    const source = await tx.dataSource.findUniqueOrThrow({
+      where: { id: input.sourceId },
+      select: { workspaceId: true }
+    });
     let total = emptySummary();
 
     for (const tab of input.successfulTabs) {
@@ -186,7 +198,7 @@ export async function finalizeSnapshot(input: {
           summary.addedCount += 1;
           await tx.sourceRow.create({
             data: {
-              workspaceId: (await tx.dataSource.findUniqueOrThrow({ where: { id: input.sourceId }, select: { workspaceId: true } })).workspaceId,
+              workspaceId: source.workspaceId,
               dataSourceId: input.sourceId,
               sourceTabId: tab.sourceTabId,
               externalRowId: row.externalRowId,
@@ -356,6 +368,14 @@ export async function failSnapshot(snapshotId: string, sourceId: string, error: 
 }
 
 export async function listSourceSnapshots(sourceId: string, cursor?: string, limit = 50) {
+  if (cursor) {
+    const cursorSnapshot = await prisma.sourceSnapshot.findFirst({
+      where: { id: cursor, dataSourceId: sourceId },
+      select: { id: true }
+    });
+    if (!cursorSnapshot) throw new SourceNotFoundError('Snapshot cursor not found.');
+  }
+
   return prisma.sourceSnapshot.findMany({
     where: { dataSourceId: sourceId },
     orderBy: { createdAt: 'desc' },
@@ -383,6 +403,33 @@ export async function listCurrentSourceRows(input: {
   cursor?: string;
   limit: number;
 }) {
+  if (input.tabId) {
+    await assertSourceTabBelongsToSource(input.sourceId, input.tabId);
+  }
+
+  if (input.cursor) {
+    const cursorRow = await prisma.sourceRow.findFirst({
+      where: {
+        id: input.cursor,
+        dataSourceId: input.sourceId,
+        ...(input.tabId ? { sourceTabId: input.tabId } : {}),
+        ...(typeof input.active === 'boolean' ? { isActive: input.active } : {}),
+        ...(input.validationStatus ? { validationStatus: input.validationStatus } : {}),
+        ...(input.search
+          ? {
+              OR: [
+                { email: { contains: input.search, mode: 'insensitive' } },
+                { fullName: { contains: input.search, mode: 'insensitive' } },
+                { automationId: { contains: input.search, mode: 'insensitive' } }
+              ]
+            }
+          : {})
+      },
+      select: { id: true }
+    });
+    if (!cursorRow) throw new SourceNotFoundError('Source row cursor not found.');
+  }
+
   return prisma.sourceRow.findMany({
     where: {
       dataSourceId: input.sourceId,
@@ -404,6 +451,7 @@ export async function listCurrentSourceRows(input: {
     ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
     select: {
       id: true,
+      dataSourceId: true,
       sourceTabId: true,
       externalRowId: true,
       rowNumber: true,
@@ -419,6 +467,7 @@ export async function listCurrentSourceRows(input: {
       remarks: true,
       validationStatus: true,
       validationErrors: true,
+      canonicalLeadId: true,
       isActive: true,
       firstSeenVersion: true,
       lastSeenVersion: true,

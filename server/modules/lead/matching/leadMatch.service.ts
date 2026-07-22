@@ -8,6 +8,7 @@ import { planLeadMatches, summarizePlans } from './leadMatchPlanner';
 import type { MatchPlan } from './leadMatch.types';
 import {
   applyLeadMatchPlans,
+  assertSourceTabForLeadMatching,
   createLeadMatchRun,
   failLeadMatchRun,
   getCanonicalLead,
@@ -24,10 +25,26 @@ import {
   resolveLeadConflictLink
 } from './leadMatch.repository';
 
+const CONFLICT_TYPES = new Set([
+  'MULTIPLE_LEADS',
+  'IDENTITY_OWNED_BY_ANOTHER_LEAD',
+  'LINKED_LEAD_CHANGED',
+  'NO_STRONG_IDENTITY',
+  'INVALID_IDENTITY'
+]);
+
 function parseLimit(value: unknown) {
   const parsed = Number(value || 50);
   if (!Number.isFinite(parsed) || parsed <= 0) return 50;
   return Math.min(Math.floor(parsed), 200);
+}
+
+function parseConflictType(value: unknown) {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !CONFLICT_TYPES.has(value)) {
+    throw new SourceValidationError('Invalid lead conflict type filter.');
+  }
+  return value;
 }
 
 function parseBatchSize() {
@@ -132,11 +149,14 @@ export async function listWorkspaceLeadConflicts(
   const brand = parseEmailBrand(workspaceKey);
   const workspace = await getWorkspaceOrThrow(brand);
   const limit = parseLimit(query.limit);
+  if (query.sourceId) {
+    await getSourceForLeadMatching(workspace.id, query.sourceId);
+  }
   const conflicts = await listLeadConflicts({
     workspaceId: workspace.id,
     status: query.status,
     sourceId: query.sourceId,
-    type: query.type,
+    type: parseConflictType(query.type),
     cursor: query.cursor,
     limit
   });
@@ -184,6 +204,16 @@ export async function listWorkspaceCanonicalLeads(
   const brand = parseEmailBrand(workspaceKey);
   const workspace = await getWorkspaceOrThrow(brand);
   const limit = parseLimit(query.limit);
+  if (query.sourceId) {
+    await getSourceForLeadMatching(workspace.id, query.sourceId);
+  }
+  if (query.tabId) {
+    await assertSourceTabForLeadMatching({
+      workspaceId: workspace.id,
+      sourceId: query.sourceId,
+      tabId: query.tabId
+    });
+  }
   const leads = await listCanonicalLeads({
     workspaceId: workspace.id,
     search: query.search,
