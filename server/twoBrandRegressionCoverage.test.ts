@@ -22,9 +22,11 @@ describe('two-brand workflow regression coverage', () => {
     expect(leadWorkflow).toContain('sendThankYouEmail({');
     expect(leadWorkflow).toContain('sendNoResponseEmail({');
     expect(leadWorkflow).toContain('updateGoogleSheetRowsResilient(');
-    expect(leadWorkflow).toContain('context.workspaceKey || context.emailBrand');
+    expect(leadWorkflow).toContain('googleSheetAccessForContext(context)');
     expect(leadWorkflow).toContain('enqueueSheetSyncJob({');
-    expect(leadWorkflow).toContain('emailBrand: context.workspaceKey || context.emailBrand');
+    expect(leadWorkflow).toContain('workspaceKey: context.workspaceKey');
+    expect(leadWorkflow).toContain('emailBrand: context.emailBrand');
+    expect(leadWorkflow).toContain('googleAccountKey: context.googleAccountKey');
   });
 
   it('keeps reminders and retry workers tied to persisted sender owners', () => {
@@ -38,7 +40,8 @@ describe('two-brand workflow regression coverage', () => {
     expect(reminders).toContain('history.emailBrand');
     expect(emailRetryWorker).toContain('delivery.senderAccountKey');
     expect(emailRetryWorker).toContain('sendGmailTemplate(');
-    expect(sheetSyncWorker).toContain('job.emailBrand');
+    expect(sheetSyncWorker).toContain('job.googleAccountKey');
+    expect(sheetSyncWorker).toContain('claimSheetSyncJobForProcessing(job.id)');
     expect(sheetSyncWorker).toContain('updateGoogleSheetRowsResilient(');
   });
 
@@ -53,11 +56,11 @@ describe('two-brand workflow regression coverage', () => {
     expect(schema).toContain('@@unique([emailBrand, automationId, dateOfDemo, timeOfDemo])');
     expect(schema).toContain('@@unique([emailBrand, userId])');
     expect(schema).toContain('@@unique([emailBrand, eventKey])');
-    expect(schema).toContain('@@unique([emailBrand, jobKey])');
+    expect(schema).toContain('@@unique([workspaceKey, emailBrand, jobKey])');
     expect(schema).toContain('@@unique([emailBrand, sheetRowKey])');
     expect(emailDelivery).toContain('emailBrand_eventKey');
     expect(emailDelivery).toContain('ON CONFLICT ("emailBrand", "eventKey") DO NOTHING');
-    expect(sheetSyncQueue).toContain('ON CONFLICT ("emailBrand", "jobKey") DO UPDATE SET');
+    expect(sheetSyncQueue).toContain('ON CONFLICT ("workspaceKey", "emailBrand", "jobKey") DO UPDATE SET');
     expect(adminDb).toContain('resetDemoTestData(emailBrand');
     expect(adminDb).toContain('where: { emailBrand }');
     expect(workflowControl).toContain('getWorkflowControl(emailBrand');

@@ -1,11 +1,14 @@
-import { markEmailSheetSyncFailed, markEmailSheetSyncSucceeded } from './emailDelivery';
+import { findEmailDeliveryById, markEmailSheetSyncFailed, markEmailSheetSyncSucceeded } from './emailDelivery';
 import { updateGoogleSheetRowsResilient } from './googleSheets';
 import {
+  claimSheetSyncJobForProcessing,
   listDueSheetSyncJobs,
   markSheetSyncJobFailed,
   markSheetSyncJobSucceeded
 } from './sheetSyncQueue';
 import { WORKFLOW_BUSY_RESET_MESSAGE, withWorkflowActivity } from './workflowActivity';
+import { parseEmailBrand } from '../src/lib/emailBrand';
+import { parseSenderAccountKey } from '../src/lib/senderAccount';
 
 const SHEET_SYNC_SCAN_INTERVAL_MS = Number(process.env.SHEET_SYNC_SCAN_INTERVAL_MS || 60_000);
 const SHEET_SYNC_BATCH_SIZE = Number(process.env.SHEET_SYNC_BATCH_SIZE || 10);
@@ -19,8 +22,26 @@ export async function runSheetSyncScanner() {
   try {
     const jobs = await listDueSheetSyncJobs(SHEET_SYNC_BATCH_SIZE);
     for (const job of jobs) {
+      let linkedDeliveryId: string | undefined;
       try {
-        await withWorkflowActivity('sheet-sync', job.emailBrand, async () => {
+        const workspaceKey = parseEmailBrand(job.workspaceKey);
+        const emailBrand = parseEmailBrand(job.emailBrand);
+        const googleAccountKey = parseSenderAccountKey(job.googleAccountKey);
+        const claimed = await claimSheetSyncJobForProcessing(job.id);
+        if (!claimed) continue;
+
+        await withWorkflowActivity('sheet-sync', workspaceKey, async () => {
+          if (job.emailDeliveryId) {
+            const delivery = await findEmailDeliveryById(job.emailDeliveryId);
+            if (!delivery) {
+              throw new Error('Linked EmailDelivery was not found for this sheet sync job.');
+            }
+            if (parseEmailBrand(delivery.emailBrand) !== emailBrand) {
+              throw new Error('Linked EmailDelivery brand does not match this sheet sync job.');
+            }
+            linkedDeliveryId = delivery.id;
+          }
+
           const headers = JSON.parse(job.headersJson) as string[];
           const values = JSON.parse(job.valuesJson) as Record<string, any>;
           const [result] = await updateGoogleSheetRowsResilient(
@@ -29,7 +50,7 @@ export async function runSheetSyncScanner() {
             headers,
             [{ rowNumber: job.rowNumber, values, emailDeliveryId: job.emailDeliveryId || undefined }],
             {},
-            job.emailBrand
+            { workspaceKey, googleAccountKey }
           );
 
           if (!result?.success) {
@@ -37,8 +58,8 @@ export async function runSheetSyncScanner() {
           }
 
           await markSheetSyncJobSucceeded(job.id);
-          if (job.emailDeliveryId) {
-            await markEmailSheetSyncSucceeded(job.emailDeliveryId);
+          if (linkedDeliveryId) {
+            await markEmailSheetSyncSucceeded(linkedDeliveryId);
           }
         });
       } catch (error) {
@@ -46,8 +67,8 @@ export async function runSheetSyncScanner() {
           continue;
         }
         await markSheetSyncJobFailed(job.id, error);
-        if (job.emailDeliveryId) {
-          await markEmailSheetSyncFailed(job.emailDeliveryId, error);
+        if (linkedDeliveryId) {
+          await markEmailSheetSyncFailed(linkedDeliveryId, error);
         }
       }
     }

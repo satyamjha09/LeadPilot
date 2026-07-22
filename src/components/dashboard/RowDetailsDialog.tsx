@@ -45,6 +45,7 @@ export default function RowDetailsDialog({ row, emailBrand, open, onOpenChange }
   const [sheetJobError, setSheetJobError] = useState('');
   const [sheetRetryId, setSheetRetryId] = useState<string | null>(null);
   const effectiveEmailBrand = row?.__emailBrand || emailBrand;
+  const effectiveWorkspaceKey = row?.__workspaceKey || effectiveEmailBrand;
 
   const loadEmailHistory = useCallback(async () => {
     if (!row) return;
@@ -55,7 +56,7 @@ export default function RowDetailsDialog({ row, emailBrand, open, onOpenChange }
       const res = await fetch('/api/leads/email-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ row, emailBrand: effectiveEmailBrand })
+        body: JSON.stringify({ row, workspaceKey: effectiveWorkspaceKey, emailBrand: effectiveEmailBrand })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not load email history.');
@@ -66,7 +67,7 @@ export default function RowDetailsDialog({ row, emailBrand, open, onOpenChange }
     } finally {
       setIsLoadingLogs(false);
     }
-  }, [row, effectiveEmailBrand]);
+  }, [row, effectiveWorkspaceKey, effectiveEmailBrand]);
 
   const loadSheetSyncJobs = useCallback(async () => {
     if (!row) return;
@@ -77,7 +78,7 @@ export default function RowDetailsDialog({ row, emailBrand, open, onOpenChange }
       const res = await fetch('/api/sheet-sync/jobs-for-row', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ row, emailBrand: effectiveEmailBrand })
+        body: JSON.stringify({ row, workspaceKey: effectiveWorkspaceKey, emailBrand: effectiveEmailBrand })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not load sheet sync jobs.');
@@ -88,7 +89,7 @@ export default function RowDetailsDialog({ row, emailBrand, open, onOpenChange }
     } finally {
       setIsLoadingSheetJobs(false);
     }
-  }, [row, effectiveEmailBrand]);
+  }, [row, effectiveWorkspaceKey, effectiveEmailBrand]);
 
   useEffect(() => {
     if (!open || !row) return;

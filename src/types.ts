@@ -10,6 +10,7 @@ export interface ExcelRow {
   __sheetRowNumber?: number;
   __spreadsheetId?: string;
   __sheetName?: string;
+  __workspaceKey?: EmailBrandKey;
   __emailBrand?: EmailBrandKey;
   __senderAccountKey?: SenderAccountKey;
   full_name?: string;

@@ -17,7 +17,9 @@ export type EmailHistoryLog = {
 
 export type SheetSyncJob = {
   id: string;
+  workspaceKey?: EmailBrandKey;
   emailBrand?: EmailBrandKey;
+  googleAccountKey?: string;
   status: string;
   retryCount: number;
   maxRetries: number;

@@ -100,7 +100,7 @@ function ManualReviewRow({
         fetch('/api/sheet-sync/jobs-for-row', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ row, emailBrand })
+          body: JSON.stringify({ row, workspaceKey: row.__workspaceKey || emailBrand, emailBrand })
         })
       ]);
 

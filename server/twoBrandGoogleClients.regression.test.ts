@@ -94,6 +94,7 @@ function lastOAuthClientId() {
 const brandCases = [
   {
     brand: 'tallykonnect' as const,
+    googleAccountKey: 'tallykonnect-google' as const,
     clientId: 'tally-client',
     sender: 'TallyKonnect <demo.tallykonnect@gmail.com>',
     calendarName: 'TallyKonnect',
@@ -102,6 +103,7 @@ const brandCases = [
   },
   {
     brand: 'anywheretally' as const,
+    googleAccountKey: 'anywheretally-google' as const,
     clientId: 'awt-client',
     sender: 'AnyWhereTally <info.anywheretally@gmail.com>',
     calendarName: 'AnyWhereTally',
@@ -207,7 +209,7 @@ describe('two-brand Google client routing regression', () => {
         }
       ],
       {},
-      entry.brand
+      { workspaceKey: entry.brand, googleAccountKey: entry.googleAccountKey }
     );
 
     expect(lastOAuthClientId()).toBe(entry.clientId);

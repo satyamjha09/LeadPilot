@@ -699,25 +699,32 @@ model EmailDelivery {
 }
 
 model SheetSyncJob {
-  id              String   @id @default(cuid())
-  emailBrand      String   @default("tallykonnect")
-  jobKey          String
-  spreadsheetId   String
-  sheetName       String
-  rowNumber       Int
-  headersJson     String
-  valuesJson      String
-  emailDeliveryId String?
-  status          String   @default("PENDING")
-  retryCount      Int      @default(0)
-  maxRetries      Int      @default(3)
-  nextRetryAt     DateTime @default(now())
-  lastError       String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id               String    @id @default(cuid())
+  workspaceKey     String
+  emailBrand       String    @default("tallykonnect")
+  googleAccountKey String
+  jobKey           String
+  spreadsheetId    String
+  sheetName        String
+  rowNumber        Int
+  headersJson      String
+  valuesJson       String
+  emailDeliveryId  String?
+  status           String    @default("PENDING")
+  retryCount       Int       @default(0)
+  maxRetries       Int       @default(3)
+  nextRetryAt      DateTime  @default(now())
+  lockedAt         DateTime?
+  lockedBy         String?
+  lastError        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  @@unique([emailBrand, jobKey])
+  @@unique([workspaceKey, emailBrand, jobKey])
+  @@index([workspaceKey])
   @@index([emailBrand])
+  @@index([workspaceKey, status])
+  @@index([workspaceKey, nextRetryAt])
   @@index([emailBrand, status])
   @@index([emailBrand, nextRetryAt])
   @@index([status])

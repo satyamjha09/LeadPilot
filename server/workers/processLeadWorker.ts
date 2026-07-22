@@ -15,7 +15,7 @@ import {
   ProcessLeadJobProgress,
   updateProcessLeadJobProgress
 } from '../processLeadJobs';
-import { ensureRequiredColumns, friendlySheetsError } from '../googleSheets';
+import { ensureRequiredColumns, friendlySheetsError, googleSheetAccessForWorkspace } from '../googleSheets';
 import { processLeadsByStatus } from '../leadWorkflow';
 import { applyDbTruthToRows } from '../scheduleDb';
 import { withWorkflowActivity } from '../workflowActivity';
@@ -44,7 +44,12 @@ async function processLeadJob(jobId: string, queuedGeneration?: number) {
     if (!headers.length) {
       throw new Error('Google Sheet headers are required.');
     }
-    const ensured = await ensureRequiredColumns(input.spreadsheetId, input.sheetName, headers, input.workspaceKey);
+    const ensured = await ensureRequiredColumns(
+      input.spreadsheetId,
+      input.sheetName,
+      headers,
+      googleSheetAccessForWorkspace(input.workspaceKey)
+    );
     headers = ensured.headers;
   }
 
@@ -68,6 +73,7 @@ async function processLeadJob(jobId: string, queuedGeneration?: number) {
       sheetName: input.sheetName,
       headers,
       senderAccountKey: input.senderAccountKey,
+      googleAccountKey: googleSheetAccessForWorkspace(input.workspaceKey).googleAccountKey,
       emailBrandKey: input.emailBrandKey,
       emailBrand: input.emailBrand,
       assertStillCurrent: assertCurrentGeneration,

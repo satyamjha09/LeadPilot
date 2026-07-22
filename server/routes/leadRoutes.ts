@@ -9,6 +9,8 @@ import {
   listEmailDeliveriesForRow,
   markEmailDeliveryFailed,
   markEmailDeliverySent,
+  markEmailSheetSyncFailed,
+  markEmailSheetSyncSucceeded,
   markUnknownEmailDeliveryManuallyFailed,
   markUnknownEmailDeliveryManuallySent
 } from '../emailDelivery';
@@ -17,6 +19,7 @@ import {
   ensureRequiredColumns,
   extractSheetInfo,
   friendlySheetsError,
+  googleSheetAccessForWorkspace,
   getSheetTitleByGid,
   updateGoogleSheetRow
 } from '../googleSheets';
@@ -27,9 +30,9 @@ import { resetDemoTestData } from '../adminDb';
 import { applyDbTruthToRows, assertDemoLifecycleOwnership, forceCloseActiveDemoForRow } from '../scheduleDb';
 import {
   findSheetSyncJobById,
+  claimSheetSyncJobForProcessing,
   listSheetSyncJobsForRow,
   markSheetSyncJobFailed,
-  markSheetSyncJobRetryNow,
   markSheetSyncJobSucceeded
 } from '../sheetSyncQueue';
 import {
@@ -82,6 +85,7 @@ function parseProcessingKeys(input: {
 }): {
   workspaceKey: EmailBrandKey;
   senderAccountKey: SenderAccountKey;
+  googleAccountKey: SenderAccountKey;
   emailBrandKey: EmailBrandKey;
 } {
   const explicitSenderAccountKey = input.senderAccountKey
@@ -95,9 +99,11 @@ function parseProcessingKeys(input: {
   );
   const senderAccountKey = explicitSenderAccountKey || defaultSenderAccountForBrand(emailBrandKey);
   const workspaceKey = parseWorkspaceKey(input.workspaceKey, emailBrandKey);
+  const googleAccountKey = defaultSenderAccountForBrand(workspaceKey);
   return {
     workspaceKey,
     senderAccountKey,
+    googleAccountKey,
     emailBrandKey
   };
 }
@@ -485,7 +491,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         }
 
         const { spreadsheetId, gid } = extractSheetInfo(sheetUrl);
-        const sheetName = await getSheetTitleByGid(spreadsheetId, gid, brand);
+        const sheetName = await getSheetTitleByGid(spreadsheetId, gid, googleSheetAccessForWorkspace(brand));
         const syncResult = await options.runSheetSync(spreadsheetId, sheetName, undefined, brand);
 
         return res.json({
@@ -554,6 +560,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
             sourceType: 'excel',
             workspaceKey: keys.workspaceKey,
             senderAccountKey: keys.senderAccountKey,
+            googleAccountKey: keys.googleAccountKey,
             emailBrandKey: keys.emailBrandKey,
             emailBrand: keys.emailBrandKey
           }
@@ -588,10 +595,11 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         }
 
         console.log(`Received request to schedule ${rows.length} Google Sheet rows...`);
-        const { headers } = await ensureRequiredColumns(spreadsheetId, sheetName, incomingHeaders, keys.workspaceKey);
+        const { headers } = await ensureRequiredColumns(spreadsheetId, sheetName, incomingHeaders, googleSheetAccessForWorkspace(keys.workspaceKey));
         const preparedRows = rows.map((row) => ({
           ...row,
           __sourceType: 'google-sheet' as const,
+          __workspaceKey: keys.workspaceKey,
           __spreadsheetId: spreadsheetId,
           __sheetName: sheetName,
           __originalColumns: headers
@@ -604,6 +612,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers,
           workspaceKey: keys.workspaceKey,
           senderAccountKey: keys.senderAccountKey,
+          googleAccountKey: keys.googleAccountKey,
           emailBrandKey: keys.emailBrandKey,
           emailBrand: keys.emailBrandKey
         });
@@ -650,6 +659,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers,
           workspaceKey: keys.workspaceKey,
           senderAccountKey: keys.senderAccountKey,
+          googleAccountKey: keys.googleAccountKey,
           emailBrandKey: keys.emailBrandKey,
           emailBrand: keys.emailBrandKey
         });
@@ -689,6 +699,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers,
           workspaceKey: keys.workspaceKey,
           senderAccountKey: keys.senderAccountKey,
+          googleAccountKey: keys.googleAccountKey,
           emailBrandKey: keys.emailBrandKey,
           emailBrand: keys.emailBrandKey
         };
@@ -789,6 +800,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
             headers,
             workspaceKey: keys.workspaceKey,
             senderAccountKey: keys.senderAccountKey,
+            googleAccountKey: keys.googleAccountKey,
             emailBrandKey: keys.emailBrandKey,
             emailBrand: keys.emailBrandKey
           },
@@ -831,7 +843,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
             'Meeting Details': '',
             lead_status: String(updatedRow.lead_status || LEAD_STATUS.DEMO_SCHEDULED),
             Remarks: String(updatedRow.Remarks || '')
-          }, keys.workspaceKey);
+          }, googleSheetAccessForWorkspace(keys.workspaceKey));
         }
 
         return res.json({ success: true, row: updatedRow });
@@ -924,11 +936,21 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
 
   app.post('/api/sheet-sync/jobs-for-row', async (req, res) => {
     try {
-      const { row, emailBrand } = req.body as { row?: ExcelRow; emailBrand?: any };
+      const { row, workspaceKey, emailBrand, emailBrandKey } = req.body as {
+        row?: ExcelRow;
+        workspaceKey?: any;
+        emailBrand?: any;
+        emailBrandKey?: any;
+      };
       if (!row) return res.status(400).json({ error: 'Row is required.' });
-      const brand = row.__emailBrand
-        ? coerceStoredEmailBrand(row.__emailBrand)
-        : parseEmailBrand(emailBrand);
+      if (!workspaceKey && !row.__workspaceKey) {
+        return res.status(400).json({ error: 'workspaceKey is required.' });
+      }
+      if (!emailBrandKey && !emailBrand && !row.__emailBrand) {
+        return res.status(400).json({ error: 'emailBrand is required.' });
+      }
+      const sourceWorkspaceKey = parseEmailBrand(workspaceKey ?? row.__workspaceKey);
+      const brand = parseEmailBrand(emailBrandKey ?? emailBrand ?? row.__emailBrand);
       const spreadsheetId = String(row.__spreadsheetId || '');
       const sheetName = String(row.__sheetName || '');
       const rowNumber = Number(row.__sheetRowNumber || row.__sourceRowNumber);
@@ -936,7 +958,13 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         return res.json({ jobs: [] });
       }
 
-      const jobs = await listSheetSyncJobsForRow({ emailBrand: brand, spreadsheetId, sheetName, rowNumber });
+      const jobs = await listSheetSyncJobsForRow({
+        workspaceKey: sourceWorkspaceKey,
+        emailBrand: brand,
+        spreadsheetId,
+        sheetName,
+        rowNumber
+      });
       return res.json({ jobs: jobs.map(serializeSheetSyncJob) });
     } catch (err: any) {
       console.error('Sheet sync job lookup failed:', err);
@@ -949,14 +977,36 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       const { jobId } = req.params;
       const job = await findSheetSyncJobById(jobId);
       if (!job) return res.status(404).json({ error: 'Sheet sync job was not found.' });
-      return await withWorkflowActivity('sheet-sync', job.emailBrand, async () => {
+      const workspaceKey = parseEmailBrand(job.workspaceKey);
+      const emailBrand = parseEmailBrand(job.emailBrand);
+      const googleAccountKey = parseSenderAccountKey(job.googleAccountKey);
+      return await withWorkflowActivity('sheet-sync', workspaceKey, async () => {
         if (job.status === 'SYNCED') {
           return res.json({ success: true, job: serializeSheetSyncJob(job), skipped: true });
         }
 
-        await markSheetSyncJobRetryNow(jobId);
+        const claimed = await claimSheetSyncJobForProcessing(jobId, { manual: true });
+        if (!claimed) {
+          const updated = await findSheetSyncJobById(jobId);
+          return res.status(409).json({
+            error: 'This sheet sync job is already being processed.',
+            job: serializeSheetSyncJob(updated)
+          });
+        }
 
         try {
+          let linkedDeliveryId: string | undefined;
+          if (job.emailDeliveryId) {
+            const delivery = await findEmailDeliveryById(job.emailDeliveryId);
+            if (!delivery) {
+              throw new Error('Linked EmailDelivery was not found for this sheet sync job.');
+            }
+            if (parseEmailBrand(delivery.emailBrand) !== emailBrand) {
+              throw new Error('Linked EmailDelivery brand does not match this sheet sync job.');
+            }
+            linkedDeliveryId = delivery.id;
+          }
+
           const headers = JSON.parse(job.headersJson) as string[];
           const values = JSON.parse(job.valuesJson) as Record<string, any>;
           const [result] = await updateGoogleSheetRowsResilient(
@@ -965,7 +1015,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
             headers,
             [{ rowNumber: job.rowNumber, values, emailDeliveryId: job.emailDeliveryId || undefined }],
             {},
-            job.emailBrand
+            { workspaceKey, googleAccountKey }
           );
 
           if (!result?.success) {
@@ -973,10 +1023,19 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           }
 
           await markSheetSyncJobSucceeded(jobId);
+          if (linkedDeliveryId) {
+            await markEmailSheetSyncSucceeded(linkedDeliveryId);
+          }
           const updated = await findSheetSyncJobById(jobId);
           return res.json({ success: true, job: serializeSheetSyncJob(updated) });
         } catch (error) {
           await markSheetSyncJobFailed(jobId, error);
+          if (job.emailDeliveryId) {
+            const delivery = await findEmailDeliveryById(job.emailDeliveryId);
+            if (delivery && parseEmailBrand(delivery.emailBrand) === emailBrand) {
+              await markEmailSheetSyncFailed(delivery.id, error);
+            }
+          }
           const updated = await findSheetSyncJobById(jobId);
           return res.status(502).json({
             error: error instanceof Error ? error.message : 'Sheet sync retry failed',
@@ -1078,6 +1137,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
       return res.json({
         workspaceKey: keys.workspaceKey,
         senderAccountKey: keys.senderAccountKey,
+        googleAccountKey: keys.googleAccountKey,
         emailBrandKey: keys.emailBrandKey,
         emailBrand: keys.emailBrandKey,
         lockedSenderAccountKey: lockedSenderAccountKeys.length === 1 ? lockedSenderAccountKeys[0] : undefined,
@@ -1142,7 +1202,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           if (!headers.length) {
             return res.status(400).json({ error: 'Google Sheet headers are required.' });
           }
-          const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, keys.workspaceKey);
+          const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, googleSheetAccessForWorkspace(keys.workspaceKey));
           headers = ensured.headers;
         }
 
@@ -1214,7 +1274,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           if (!headers.length) {
             return res.status(400).json({ error: 'Google Sheet headers are required.' });
           }
-          const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, keys.workspaceKey);
+          const ensured = await ensureRequiredColumns(spreadsheetId, sheetName, headers, googleSheetAccessForWorkspace(keys.workspaceKey));
           headers = ensured.headers;
         }
 
@@ -1227,6 +1287,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers,
           workspaceKey: keys.workspaceKey,
           senderAccountKey: keys.senderAccountKey,
+          googleAccountKey: keys.googleAccountKey,
           emailBrandKey: keys.emailBrandKey,
           emailBrand: keys.emailBrandKey
         });
@@ -1310,7 +1371,9 @@ function serializeSheetSyncJob(job: Awaited<ReturnType<typeof findSheetSyncJobBy
   if (!job) return null;
   return {
     id: job.id,
+    workspaceKey: job.workspaceKey,
     emailBrand: job.emailBrand,
+    googleAccountKey: job.googleAccountKey,
     spreadsheetId: job.spreadsheetId,
     sheetName: job.sheetName,
     rowNumber: job.rowNumber,
@@ -1318,6 +1381,8 @@ function serializeSheetSyncJob(job: Awaited<ReturnType<typeof findSheetSyncJobBy
     retryCount: job.retryCount,
     maxRetries: job.maxRetries,
     nextRetryAt: job.nextRetryAt,
+    lockedAt: job.lockedAt,
+    lockedBy: job.lockedBy,
     lastError: job.lastError,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt

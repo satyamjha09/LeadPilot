@@ -8,7 +8,13 @@ import {
   sendThankYouEmail,
   updateCalendarMeeting
 } from './googleAuth';
-import { friendlySheetsError, updateGoogleSheetRow, updateGoogleSheetRowsResilient, type GoogleSheetRowUpdate } from './googleSheets';
+import {
+  friendlySheetsError,
+  updateGoogleSheetRow,
+  updateGoogleSheetRowsResilient,
+  type GoogleSheetAccessContext,
+  type GoogleSheetRowUpdate
+} from './googleSheets';
 import { EMAIL_LOG_TYPES } from './emailLog';
 import { LEAD_STATUS, isDemoScheduledStatus, normalizeLeadStatus } from './leadStatus';
 import {
@@ -84,6 +90,7 @@ export type SheetContext = {
   headers?: string[];
   workspaceKey: EmailBrandKey;
   senderAccountKey: SenderAccountKey;
+  googleAccountKey: SenderAccountKey;
   emailBrandKey: EmailBrandKey;
   /** Business/workflow owner used for database scoping and duplicate prevention. */
   emailBrand: EmailBrandKey;
@@ -97,6 +104,13 @@ type WorkflowOptions = {
 
 function senderAccountKeyForContext(context: SheetContext): SenderAccountKey {
   return parseSenderAccountKey(context.senderAccountKey);
+}
+
+function googleSheetAccessForContext(context: SheetContext): GoogleSheetAccessContext {
+  return {
+    workspaceKey: coerceStoredEmailBrand(context.workspaceKey),
+    googleAccountKey: parseSenderAccountKey(context.googleAccountKey)
+  };
 }
 
 function emailBrandKeyForContext(context: SheetContext): EmailBrandKey {
@@ -991,7 +1005,7 @@ export async function processLeadsByStatus(
         context.headers,
         sheetUpdates,
         {},
-        context.workspaceKey || context.emailBrand
+        googleSheetAccessForContext(context)
       );
 
       const failedResults = sheetResults.filter((result) => !result.success);
@@ -1012,7 +1026,9 @@ export async function processLeadsByStatus(
           headers: context.headers,
           values: result.values,
           emailDeliveryId: result.emailDeliveryId,
-          emailBrand: context.workspaceKey || context.emailBrand,
+          workspaceKey: context.workspaceKey,
+          emailBrand: context.emailBrand,
+          googleAccountKey: context.googleAccountKey,
           error: result.error
         });
         if (result.emailDeliveryId) {
@@ -1083,7 +1099,7 @@ export async function syncSheetRow(
     sheetRowNumber,
     context.headers,
     payload,
-    context.workspaceKey || context.emailBrand
+    googleSheetAccessForContext(context)
   );
 }
 

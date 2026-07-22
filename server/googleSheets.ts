@@ -5,7 +5,7 @@ import { getLeadStatusParse, isValidLeadStatus, normalizeHeader } from './leadSt
 import { createNewAutomationId } from './emailIdentity';
 import { normalizeDisplayDate } from '../src/lib/dateFormat';
 import { parseEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
-import { defaultSenderAccountForBrand } from '../src/lib/senderAccount';
+import { defaultSenderAccountForBrand, parseSenderAccountKey, type SenderAccountKey } from '../src/lib/senderAccount';
 
 const REQUIRED_UPDATE_COLUMNS = ['Meeting Details', 'lead_status', 'Remarks', 'automation_id'];
 const SHEET_BATCH_SIZE = 20;
@@ -20,6 +20,26 @@ export type GoogleSheetRowUpdateResult = GoogleSheetRowUpdate & {
   success: boolean;
   error?: string;
 };
+
+export type GoogleSheetAccessContext = {
+  workspaceKey: EmailBrandKey;
+  googleAccountKey: SenderAccountKey;
+};
+
+export function googleSheetAccessForWorkspace(workspaceKey: EmailBrandKey): GoogleSheetAccessContext {
+  const parsedWorkspaceKey = parseEmailBrand(workspaceKey);
+  return {
+    workspaceKey: parsedWorkspaceKey,
+    googleAccountKey: defaultSenderAccountForBrand(parsedWorkspaceKey)
+  };
+}
+
+function normalizeGoogleSheetAccess(access: GoogleSheetAccessContext): GoogleSheetAccessContext {
+  return {
+    workspaceKey: parseEmailBrand(access.workspaceKey),
+    googleAccountKey: parseSenderAccountKey(access.googleAccountKey)
+  };
+}
 
 const FIELD_KEYS: Record<string, string[]> = {
   full_name: ['full_name', 'Full Name', 'Name', 'client_name', 'Client Name', 'lead_name', 'Lead Name', 'Lead', 'Client'],
@@ -49,14 +69,14 @@ export function extractSheetInfo(sheetUrl: string) {
   return { spreadsheetId, gid };
 }
 
-export async function getSheetsClient(brand?: EmailBrandKey) {
-  const workspaceBrand = parseEmailBrand(brand);
-  const oauth2Client = await getOAuthClient(defaultSenderAccountForBrand(workspaceBrand));
+export async function getSheetsClient(access: GoogleSheetAccessContext) {
+  const { googleAccountKey } = normalizeGoogleSheetAccess(access);
+  const oauth2Client = await getOAuthClient(googleAccountKey);
   return google.sheets({ version: 'v4', auth: oauth2Client });
 }
 
-export async function getSheetTitleByGid(spreadsheetId: string, gid?: string, brand?: EmailBrandKey) {
-  const sheets = await getSheetsClient(brand);
+export async function getSheetTitleByGid(spreadsheetId: string, gid: string | undefined, access: GoogleSheetAccessContext) {
+  const sheets = await getSheetsClient(access);
   const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
   const sheetTabs = spreadsheet.data.sheets || [];
 
@@ -80,8 +100,8 @@ export async function getSheetTitleByGid(spreadsheetId: string, gid?: string, br
   return firstTitle;
 }
 
-export async function readSheetRows(spreadsheetId: string, sheetName: string, brand?: EmailBrandKey) {
-  const sheets = await getSheetsClient(brand);
+export async function readSheetRows(spreadsheetId: string, sheetName: string, access: GoogleSheetAccessContext) {
+  const sheets = await getSheetsClient(access);
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `${quoteSheetName(sheetName)}!A:Z`
@@ -161,8 +181,8 @@ export async function readSheetRows(spreadsheetId: string, sheetName: string, br
   return { headers, rows };
 }
 
-export async function ensureRequiredColumns(spreadsheetId: string, sheetName: string, headers: string[], brand?: EmailBrandKey) {
-  const sheets = await getSheetsClient(brand);
+export async function ensureRequiredColumns(spreadsheetId: string, sheetName: string, headers: string[], access: GoogleSheetAccessContext) {
+  const sheets = await getSheetsClient(access);
   const updatedHeaders = [...headers];
   let changed = false;
 
@@ -195,11 +215,11 @@ export async function updateGoogleSheetRow(
   rowNumber: number,
   headers: string[],
   updates: Record<string, any>,
-  brand?: EmailBrandKey
+  access: GoogleSheetAccessContext
 ) {
   await updateGoogleSheetRowsBatch(spreadsheetId, sheetName, headers, [
     { rowNumber, values: updates }
-  ], brand);
+  ], access);
 }
 
 export async function updateGoogleSheetRowsBatch(
@@ -207,11 +227,11 @@ export async function updateGoogleSheetRowsBatch(
   sheetName: string,
   headers: string[],
   updates: GoogleSheetRowUpdate[],
-  brand?: EmailBrandKey
+  access: GoogleSheetAccessContext
 ) {
   const results = await updateGoogleSheetRowsResilient(spreadsheetId, sheetName, headers, updates, {
     throwOnFailure: true
-  }, brand);
+  }, access);
   const firstFailure = results.find((result) => !result.success);
   if (firstFailure) throw new Error(firstFailure.error || 'Google Sheet row update failed');
 }
@@ -222,11 +242,11 @@ export async function updateGoogleSheetRowsResilient(
   headers: string[],
   updates: GoogleSheetRowUpdate[],
   options: { throwOnFailure?: boolean } = {},
-  brand?: EmailBrandKey
+  access: GoogleSheetAccessContext
 ): Promise<GoogleSheetRowUpdateResult[]> {
   if (!updates.length) return [];
 
-  const sheets = await getSheetsClient(brand);
+  const sheets = await getSheetsClient(access);
   const columnIndexMap = buildColumnIndexMap(headers);
   const validUpdates = updates.filter((update) => update.rowNumber >= 2);
   const results: GoogleSheetRowUpdateResult[] = [];
@@ -318,7 +338,7 @@ export async function ensureSheetAutomationIds(
   sheetName: string,
   headers: string[],
   rows: ExcelRow[],
-  brand?: EmailBrandKey
+  access: GoogleSheetAccessContext
 ) {
   const updates: Array<{ rowNumber: number; values: Record<string, any> }> = [];
 
@@ -344,7 +364,7 @@ export async function ensureSheetAutomationIds(
 
   if (updates.length > 0) {
     try {
-      await updateGoogleSheetRowsBatch(spreadsheetId, sheetName, headers, updates, brand);
+      await updateGoogleSheetRowsBatch(spreadsheetId, sheetName, headers, updates, access);
     } catch (err) {
       const friendly = friendlySheetsError(err);
       console.warn('GOOGLE_SHEETS_AUTOMATION_ID_SYNC_SKIPPED', {

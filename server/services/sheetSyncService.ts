@@ -1,5 +1,5 @@
 import { ExcelRow } from '../../src/types';
-import { ensureRequiredColumns, ensureSheetAutomationIds, readSheetRows } from '../googleSheets';
+import { ensureRequiredColumns, ensureSheetAutomationIds, googleSheetAccessForWorkspace, readSheetRows } from '../googleSheets';
 import { buildProcessLeadPlan } from '../leadWorkflow';
 import { applyDbTruthToRows } from '../scheduleDb';
 import type { EmailBrandKey } from '../../src/lib/emailBrand';
@@ -10,14 +10,18 @@ export function createSheetSyncService() {
   return {
     async runSheetSync(spreadsheetId: string, sheetName: string, incomingHeaders: string[] | undefined, emailBrand: EmailBrandKey) {
       const lockKey = `${spreadsheetId}|${sheetName}`;
+      const sheetAccess = googleSheetAccessForWorkspace(emailBrand);
       if (sheetProcessingLocks.has(lockKey)) {
-        const freshRows = await readSheetRows(spreadsheetId, sheetName, emailBrand);
-        const dbRows = await applyDbTruthToRows(freshRows.rows, emailBrand);
+        const freshRows = await readSheetRows(spreadsheetId, sheetName, sheetAccess);
+        const dbRows = await applyDbTruthToRows(freshRows.rows.map((row) => ({
+          ...row,
+          __workspaceKey: emailBrand
+        })), emailBrand);
         const { headers } = await ensureRequiredColumns(
           spreadsheetId,
           sheetName,
           incomingHeaders?.length ? incomingHeaders : freshRows.headers,
-          emailBrand
+          sheetAccess
         );
         return {
           skippedDueToLock: true,
@@ -48,15 +52,16 @@ export function createSheetSyncService() {
 
       sheetProcessingLocks.add(lockKey);
       try {
-        const sheetData = await readSheetRows(spreadsheetId, sheetName, emailBrand);
+        const sheetData = await readSheetRows(spreadsheetId, sheetName, sheetAccess);
         const { headers } = await ensureRequiredColumns(
           spreadsheetId,
           sheetName,
           incomingHeaders?.length ? incomingHeaders : sheetData.headers,
-          emailBrand
+          sheetAccess
         );
         const dbRows = await applyDbTruthToRows(sheetData.rows.map((row) => ({
           ...row,
+          __workspaceKey: emailBrand,
           __originalColumns: headers,
           __spreadsheetId: spreadsheetId,
           __sheetName: sheetName
@@ -66,7 +71,7 @@ export function createSheetSyncService() {
           sheetName,
           headers,
           dbRows,
-          emailBrand
+          sheetAccess
         );
         const plan = await buildProcessLeadPlan(rows);
         return {
