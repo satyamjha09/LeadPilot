@@ -76,6 +76,7 @@ describe('strict demo lifecycle integrity source guards', () => {
     expect(source).toContain('DEMO_HISTORY_WITHOUT_SESSION_SCHEDULE');
     expect(source).toContain('ACTIVE_STATE_WITHOUT_SESSION_SCHEDULE');
     expect(source).toContain('h."sessionId" = c."activeDemoSessionId"');
+    expect(source).toContain('MULTIPLE_PERMANENT_AUTOMATION_IDENTITIES_FOR_LEAD');
     expect(source).toContain('legacyScheduleSessionIdsBackfilled');
   });
 
@@ -85,6 +86,7 @@ describe('strict demo lifecycle integrity source guards', () => {
     const source = readRepoFile('server', 'scheduleDb.ts');
 
     expect(migration).toContain('unambiguous_email_automation');
+    expect(migration).toContain('Preflight failed: % canonical lead(s) already have multiple permanent automation_id identities');
     expect(migration).toContain('UPDATE "CustomerDemoState" c');
     expect(migration).toContain('LOWER(c."userId") = LOWER(c."email")');
     expect(script).toContain('legacyEmailStatesAdopted');
@@ -103,7 +105,11 @@ describe('strict demo lifecycle integrity source guards', () => {
     expect(finalize).toBeGreaterThan(calendarCall);
     expect(workflow).toContain('await cancelCalendarMeeting(createdCalendarEventId, senderAccountKeyForContext(sheetContext))');
     expect(workflow).toContain('await clearDemoSchedulingReservation(');
+    expect(workflow).toContain('reservationToClear?.reserved && !reservationFinalized');
+    expect(workflow).toContain('SCHEDULING_RESERVATION_CLEANUP_FAILED');
     expect(scheduleDb).toContain('SCHEDULING_RESERVED_STATUS');
+    expect(scheduleDb).toContain('SCHEDULING_RESERVATION_STALE_MS');
+    expect(scheduleDb).toContain('isStaleSchedulingReservation(existingState)');
     expect(scheduleDb).toContain('Demo scheduling is already in progress for this customer.');
   });
 
@@ -114,6 +120,8 @@ describe('strict demo lifecycle integrity source guards', () => {
     expect(workflow).toContain('terminalPostCommitErrorMessage(LEAD_STATUS.DEMO_DONE, error)');
     expect(workflow).toContain('terminalPostCommitErrorMessage(LEAD_STATUS.NO_RESPONSE, error)');
     expect(workflow).toContain('TERMINAL_OUTCOME_SHEET_SYNC_POST_COMMIT_FAILED');
+    expect(workflow).toContain('TERMINAL_BATCH_STATE_RECONCILE_FAILED');
+    expect(workflow).toContain('Local UI/state reconciliation requires retry.');
     expect(workflow).toContain("'Meeting Details': ''");
   });
 });

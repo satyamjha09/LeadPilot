@@ -1029,21 +1029,31 @@ export async function processLeadsByStatus(
     await assertStillCurrent();
     try {
       const result = await sendThankYouForRow(row, context, { skipSheetSync: true });
-      resultsById.set(row.id, result.row);
+      const terminalRow = result.row;
       if (result.skipped) summary.skipped++;
       else summary.demoDone++;
-      collectSheetUpdate(sheetUpdates, result.row, {
+      try {
+        await assertStillCurrent();
+        await saveSheetLeadState(terminalRow, {
+          lastMeetingLink: null,
+          lastAction: 'DEMO_DONE_THANK_YOU',
+          lastActionStatus: result.skipped ? 'skipped' : 'success'
+        }, context.emailBrand);
+        await notifyRowProcessed(terminalRow);
+      } catch (postCommitError) {
+        console.error('TERMINAL_BATCH_STATE_RECONCILE_FAILED', {
+          rowId: row.id,
+          status: LEAD_STATUS.DEMO_DONE,
+          error: postCommitError instanceof Error ? postCommitError.message : String(postCommitError)
+        });
+        terminalRow.Remarks = `${terminalRow.Remarks || result.message || 'Demo completed.'} Local UI/state reconciliation requires retry.`;
+      }
+      resultsById.set(row.id, terminalRow);
+      collectSheetUpdate(sheetUpdates, terminalRow, {
         'Meeting Details': '',
-        lead_status: result.row.lead_status || LEAD_STATUS.DEMO_DONE,
-        Remarks: result.row.Remarks || result.message || ''
+        lead_status: terminalRow.lead_status || LEAD_STATUS.DEMO_DONE,
+        Remarks: terminalRow.Remarks || result.message || ''
       });
-      await assertStillCurrent();
-      await saveSheetLeadState(result.row, {
-        lastMeetingLink: null,
-        lastAction: 'DEMO_DONE_THANK_YOU',
-        lastActionStatus: result.skipped ? 'skipped' : 'success'
-      }, context.emailBrand);
-      await notifyRowProcessed(result.row);
     } catch (err: unknown) {
       if (isStaleWorkflowGenerationError(err)) throw err;
       const message = err instanceof Error ? err.message : 'Thank-you email failed.';
@@ -1068,23 +1078,49 @@ export async function processLeadsByStatus(
     await assertStillCurrent();
     try {
       const isNoResponse = normalizeLeadStatus(row.lead_status) === LEAD_STATUS.NO_RESPONSE;
+      if (isNoResponse) {
+        const result = await sendNoResponseForRow(row, context, { skipSheetSync: true });
+        const terminalRow = result.row;
+        summary.noResponse++;
+        try {
+          await assertStillCurrent();
+          await saveSheetLeadState(terminalRow, {
+            lastMeetingLink: null,
+            lastAction: 'NO_RESPONSE',
+            lastActionStatus: result.skipped ? 'skipped' : 'success'
+          }, context.emailBrand);
+          await notifyRowProcessed(terminalRow);
+        } catch (postCommitError) {
+          console.error('TERMINAL_BATCH_STATE_RECONCILE_FAILED', {
+            rowId: row.id,
+            status: LEAD_STATUS.NO_RESPONSE,
+            error: postCommitError instanceof Error ? postCommitError.message : String(postCommitError)
+          });
+          terminalRow.Remarks = `${terminalRow.Remarks || result.message || 'Not Attended recorded.'} Local UI/state reconciliation requires retry.`;
+        }
+        resultsById.set(row.id, terminalRow);
+        collectSheetUpdate(sheetUpdates, terminalRow, {
+          'Meeting Details': '',
+          lead_status: terminalRow.lead_status || LEAD_STATUS.NO_RESPONSE,
+          Remarks: terminalRow.Remarks || result.message || ''
+        });
+        continue;
+      }
+
       const result =
-        isNoResponse
-          ? await sendNoResponseForRow(row, context, { skipSheetSync: true })
-          : {
-              row: await updateLeadStatusOnly(
-                row,
-                String(row.lead_status || ''),
-                context,
-                row.Remarks,
-                { skipSheetSync: true }
-              ),
-              skipped: false
-            };
+        {
+          row: await updateLeadStatusOnly(
+            row,
+            String(row.lead_status || ''),
+            context,
+            row.Remarks,
+            { skipSheetSync: true }
+          ),
+          skipped: false
+        };
       const updatedRow = result.row;
       resultsById.set(row.id, updatedRow);
-      if (isNoResponse) summary.noResponse++;
-      else summary.statusOnly++;
+      summary.statusOnly++;
       collectSheetUpdate(sheetUpdates, updatedRow, {
         'Meeting Details': updatedRow['Meeting Details'] || '',
         lead_status: updatedRow.lead_status || '',
@@ -1846,6 +1882,8 @@ export async function processScheduleRows(
       continue;
     }
 
+    let reservationToClear: Awaited<ReturnType<typeof reserveDemoScheduling>> | null = null;
+    let reservationFinalized = false;
     try {
       await assertStillCurrent();
       const reservation = await reserveDemoScheduling(row, {
@@ -1854,6 +1892,7 @@ export async function processScheduleRows(
         emailBrand: sheetContext.emailBrand,
         senderAccountKey: senderAccountKeyForContext(sheetContext)
       });
+      reservationToClear = reservation;
       let meetLink = existingMeetLink;
       let calendarEventId = reservation.calendarEventId || '';
       let startTime = parseExcelDateTime(row['Date of Demo'], row['Time of Demo']).getTime();
@@ -1914,6 +1953,7 @@ export async function processScheduleRows(
                 senderAccountKey: senderAccountKeyForContext(sheetContext)
               }
             );
+            reservationFinalized = true;
           } catch (finalizeError) {
             try {
               await cancelCalendarMeeting(createdCalendarEventId, senderAccountKeyForContext(sheetContext));
@@ -2039,6 +2079,7 @@ export async function processScheduleRows(
           senderAccountKey: senderAccountKeyForContext(sheetContext)
         }
       );
+      reservationFinalized = true;
       if (emailResult.sent) {
         await assertStillCurrent();
         await markScheduledEmailSent(updatedRow, sheetContext.emailBrand);
@@ -2051,6 +2092,21 @@ export async function processScheduleRows(
       logResult('Scheduled');
       await notifyScheduleRowProcessed(updatedRow, index);
     } catch (err: unknown) {
+      if (reservationToClear?.reserved && !reservationFinalized) {
+        try {
+          await clearDemoSchedulingReservation(
+            row,
+            sheetContext.emailBrand,
+            reservationToClear.sessionId,
+            err instanceof Error ? err.message : 'Scheduling failed before finalization.'
+          );
+        } catch (cleanupError) {
+          console.error('SCHEDULING_RESERVATION_CLEANUP_FAILED', {
+            demoSessionId: reservationToClear.sessionId,
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+          });
+        }
+      }
       if (isStaleWorkflowGenerationError(err)) throw err;
       const failureMessage =
         err instanceof Error ? err.message : 'Scheduling failed: Google API transaction did not complete.';

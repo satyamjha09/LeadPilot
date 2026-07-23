@@ -13,6 +13,7 @@ import type { EmailType } from './emailIdentity';
 const DEFAULT_TIMEZONE = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Kolkata';
 const FORCE_CLOSED_STATUS = 'Force Closed';
 const SCHEDULING_RESERVED_STATUS = 'Scheduling Reserved';
+const SCHEDULING_RESERVATION_STALE_MS = 15 * 60 * 1000;
 
 type PrismaTransaction = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -96,6 +97,11 @@ function isSchedulingReserved(state: {
     !state.meetingLink &&
     !state.calendarEventId
   );
+}
+
+function isStaleSchedulingReservation(state: { updatedAt?: Date | string | null }) {
+  const updatedAtMs = state.updatedAt ? new Date(state.updatedAt).getTime() : 0;
+  return Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs > SCHEDULING_RESERVATION_STALE_MS;
 }
 
 function assertHistoryMeetingStarted(history: { scheduledStartUtc?: string | null }, state: { demoStartUtc?: string | null }) {
@@ -385,10 +391,31 @@ export async function reserveDemoScheduling(
       const sameSlot =
         normalizeLeadDate(existingState.demoDate) === displayDate &&
         existingState.demoTime === displayTime;
-      if (sameSlot) {
+      if (isStaleSchedulingReservation(existingState)) {
+        await tx.customerDemoState.update({
+          where: {
+            emailBrand_userId: {
+              emailBrand,
+              userId
+            }
+          },
+          data: {
+            status: 'Failed',
+            activeDemoSessionId: null,
+            meetingLink: null,
+            calendarEventId: null,
+            demoStartUtc: null,
+            demoEndUtc: null,
+            demoDate: null,
+            demoTime: null,
+            timezone: null
+          }
+        });
+      } else if (sameSlot) {
         throw new Error('Demo scheduling is already in progress for this customer.');
+      } else {
+        throw new Error('This customer already has an active demo reservation. Use Reschedule after it finishes.');
       }
-      throw new Error('This customer already has an active demo reservation. Use Reschedule after it finishes.');
     }
 
     const sessionId = `demo_${randomUUID()}`;

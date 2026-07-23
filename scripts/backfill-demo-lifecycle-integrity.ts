@@ -159,6 +159,38 @@ async function main() {
     samples: duplicateAutomationByEmail
   });
 
+  const duplicateAutomationIdentityByLeadCount = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(*) AS count
+    FROM (
+      SELECT "leadId"
+      FROM "LeadIdentity"
+      WHERE "type" = 'AUTOMATION_ID'
+        AND "scopeKey" = 'workspace'
+      GROUP BY "leadId"
+      HAVING COUNT(*) > 1
+    ) duplicate_leads
+  `;
+  const duplicateAutomationIdentityByLead = await prisma.$queryRaw<Array<{
+    leadId: string;
+    automationCount: bigint;
+    automationIds: string[];
+  }>>`
+    SELECT "leadId",
+           COUNT(*) AS "automationCount",
+           ARRAY_AGG("value" ORDER BY "createdAt") AS "automationIds"
+    FROM "LeadIdentity"
+    WHERE "type" = 'AUTOMATION_ID'
+      AND "scopeKey" = 'workspace'
+    GROUP BY "leadId"
+    HAVING COUNT(*) > 1
+    LIMIT 10
+  `;
+  findings.push({
+    code: 'MULTIPLE_PERMANENT_AUTOMATION_IDENTITIES_FOR_LEAD',
+    count: Number(duplicateAutomationIdentityByLeadCount[0]?.count || 0),
+    samples: duplicateAutomationIdentityByLead
+  });
+
   const historyWithoutScheduleCount = await prisma.$queryRaw<Array<{ count: bigint }>>`
     SELECT COUNT(*) AS count
     FROM "DemoHistory" h

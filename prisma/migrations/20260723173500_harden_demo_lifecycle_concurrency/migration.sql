@@ -2,6 +2,27 @@
 -- This migration is conservative: legacy email-keyed states are adopted only when
 -- one brand/email maps to exactly one automation_id and no target state exists.
 
+DO $$
+DECLARE
+  duplicate_count INTEGER;
+BEGIN
+  SELECT COUNT(*) INTO duplicate_count
+  FROM (
+    SELECT "leadId"
+    FROM "LeadIdentity"
+    WHERE "type" = 'AUTOMATION_ID'
+      AND "scopeKey" = 'workspace'
+    GROUP BY "leadId"
+    HAVING COUNT(*) > 1
+  ) duplicate_leads;
+
+  IF duplicate_count > 0 THEN
+    RAISE EXCEPTION
+      'Preflight failed: % canonical lead(s) already have multiple permanent automation_id identities. Run the lifecycle audit/backfill report and resolve these records before applying this migration.',
+      duplicate_count;
+  END IF;
+END $$;
+
 WITH unambiguous_email_automation AS (
   SELECT
     "emailBrand",
