@@ -17,7 +17,7 @@ interface HeaderProps {
   activeAccountKey: ActiveAccountKey;
   activeAccounts: ActiveAccountDefinition[];
   onSelectActiveAccount: (key: ActiveAccountKey) => void;
-  onConnectGoogle: (senderAccountKey: SenderAccountKey) => void;
+  onConnectGoogle: (senderAccountKey: SenderAccountKey, mode?: 'CONNECT' | 'RECONNECT') => void;
   onVerifyGoogle: (senderAccountKey: SenderAccountKey) => void;
   onDisconnectGoogle: (senderAccountKey: SenderAccountKey) => void;
   onLogout: () => void | Promise<void>;
@@ -162,7 +162,16 @@ export default function Header({
                     {activeGoogleStatus.requiresReconnect ? 'Reconnect required' : 'Google auth issue'}
                   </Badge>
                 )}
-                <Button type="button" size="sm" onClick={() => onConnectGoogle(activeAccount.senderAccountKey)}>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() =>
+                    onConnectGoogle(
+                      activeAccount.senderAccountKey,
+                      activeGoogleStatus.requiresReconnect ? 'RECONNECT' : 'CONNECT'
+                    )
+                  }
+                >
                   <Key className="h-4 w-4" />
                   {activeGoogleStatus.requiresReconnect ? 'Reconnect Google' : 'Connect Google'}
                 </Button>
@@ -248,7 +257,7 @@ export default function Header({
                               onClick={(event) => {
                                 event.stopPropagation();
                                 setAccountMenuOpen(false);
-                                onConnectGoogle(account.senderAccountKey);
+                                onConnectGoogle(account.senderAccountKey, reconnect ? 'RECONNECT' : 'CONNECT');
                               }}
                             >
                               {reconnect ? 'Reconnect' : 'Connect'}

@@ -15,7 +15,7 @@ interface AppShellProps {
   activeAccountKey: ActiveAccountKey;
   activeAccounts: ActiveAccountDefinition[];
   onSelectActiveAccount: (key: ActiveAccountKey) => void;
-  onConnectGoogle: (senderAccountKey: SenderAccountKey) => void;
+  onConnectGoogle: (senderAccountKey: SenderAccountKey, mode?: 'CONNECT' | 'RECONNECT') => void;
   onVerifyGoogle: (senderAccountKey: SenderAccountKey) => void;
   onDisconnectGoogle: (senderAccountKey: SenderAccountKey) => void;
   onLogout: () => void | Promise<void>;

@@ -25,9 +25,14 @@ describe('Phase 14 Google OAuth UI hardening', () => {
 
   it('keeps account switching separate from OAuth and workflow side effects', () => {
     expect(headerSource).toContain('onSelectActiveAccount(account.key)');
-    expect(headerSource).toContain('onConnectGoogle(account.senderAccountKey)');
+    expect(headerSource).toContain("onConnectGoogle(account.senderAccountKey, reconnect ? 'RECONNECT' : 'CONNECT')");
     expect(headerSource).toContain('onVerifyGoogle(account.senderAccountKey)');
     expect(headerSource).toContain('onDisconnectGoogle(account.senderAccountKey)');
+  });
+
+  it('uses reconnect OAuth consent mode when Google offline access is missing', () => {
+    expect(headerSource).toContain("activeGoogleStatus.requiresReconnect ? 'RECONNECT' : 'CONNECT'");
+    expect(appSource).toContain('JSON.stringify({ mode })');
   });
 
   it('does not store OAuth tokens in browser storage or the DOM', () => {
