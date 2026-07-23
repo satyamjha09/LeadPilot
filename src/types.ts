@@ -11,6 +11,8 @@ export interface ExcelRow {
   __sourceRowId?: string;
   __sourceSnapshotId?: string;
   __sourceRowNumber?: number;
+  __canonicalLeadId?: string;
+  __demoSessionId?: string;
   __sheetRowNumber?: number;
   __spreadsheetId?: string;
   __sheetName?: string;

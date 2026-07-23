@@ -7,6 +7,7 @@ import type { EmailBrandKey } from '../src/lib/emailBrand';
 import { type SenderAccountKey } from '../src/lib/senderAccount';
 
 export const EMAIL_DELIVERY_STATUS = {
+  PENDING: 'PENDING',
   PROCESSING: 'PROCESSING',
   SENT: 'SENT',
   RETRY_PENDING: 'RETRY_PENDING',
@@ -19,6 +20,7 @@ const INSTANCE_ID = process.env.INSTANCE_ID || `${process.pid}_${randomUUID().sl
 export type EmailClaimInput = {
   eventKey: string;
   automationId: string;
+  demoSessionId?: string | null;
   emailType: EmailType;
   recipient: string;
   payloadHash: string;
@@ -28,6 +30,8 @@ export type EmailClaimInput = {
   text?: string;
   html?: string;
 };
+
+export type PendingEmailIntentInput = EmailClaimInput;
 
 export type EmailClaimResult =
   | { claimed: true; deliveryId: string; attemptCount: number }
@@ -76,6 +80,7 @@ export async function findEmailDeliveryById(deliveryId: string) {
       id: string;
       eventKey: string;
       automationId: string;
+      demoSessionId: string | null;
       emailBrand: EmailBrandKey;
       senderAccountKey: SenderAccountKey;
       emailType: string;
@@ -102,6 +107,7 @@ export async function findEmailDeliveryById(deliveryId: string) {
       "id",
       "eventKey",
       "automationId",
+      "demoSessionId",
       "emailBrand",
       "senderAccountKey",
       "emailType",
@@ -157,6 +163,7 @@ export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailC
       "automationId",
       "emailBrand",
       "senderAccountKey",
+      "demoSessionId",
       "emailType",
       "recipient",
       "payloadHash",
@@ -178,6 +185,7 @@ export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailC
       ${input.automationId},
       ${emailBrand},
       ${senderAccountKey},
+      ${input.demoSessionId || null},
       ${input.emailType},
       ${input.recipient.toLowerCase().trim()},
       ${input.payloadHash},
@@ -213,6 +221,94 @@ export async function claimEmailDelivery(input: EmailClaimInput): Promise<EmailC
   return resolveExistingDeliveryClaim(existing);
 }
 
+export async function createPendingEmailDeliveryIntent(input: PendingEmailIntentInput) {
+  if (!input.senderAccountKey) {
+    throw new Error('senderAccountKey is required to create an email delivery intent.');
+  }
+
+  const existing = await prisma.emailDelivery.findUnique({
+    where: {
+      emailBrand_eventKey: {
+        emailBrand: input.emailBrand,
+        eventKey: input.eventKey
+      }
+    }
+  });
+  if (existing) {
+    return {
+      created: false as const,
+      deliveryId: existing.id,
+      status: existing.status,
+      providerMessageId: existing.providerMessageId
+    };
+  }
+
+  const deliveryId = randomUUID();
+  const now = new Date();
+  const inserted = await prisma.$executeRaw`
+    INSERT INTO "EmailDelivery" (
+      "id",
+      "eventKey",
+      "automationId",
+      "emailBrand",
+      "senderAccountKey",
+      "demoSessionId",
+      "emailType",
+      "recipient",
+      "payloadHash",
+      "status",
+      "attemptCount",
+      "retryCount",
+      "maxRetries",
+      "subject",
+      "textBody",
+      "htmlBody",
+      "createdAt",
+      "updatedAt"
+    )
+    VALUES (
+      ${deliveryId},
+      ${input.eventKey},
+      ${input.automationId},
+      ${input.emailBrand},
+      ${input.senderAccountKey},
+      ${input.demoSessionId || null},
+      ${input.emailType},
+      ${input.recipient.toLowerCase().trim()},
+      ${input.payloadHash},
+      ${EMAIL_DELIVERY_STATUS.PENDING},
+      ${0},
+      ${0},
+      ${3},
+      ${input.subject || null},
+      ${input.text || null},
+      ${input.html || null},
+      ${now},
+      ${now}
+    )
+    ON CONFLICT ("emailBrand", "eventKey") DO NOTHING
+  `;
+
+  if (inserted === 1) {
+    return { created: true as const, deliveryId, status: EMAIL_DELIVERY_STATUS.PENDING, providerMessageId: null };
+  }
+
+  const raced = await prisma.emailDelivery.findUniqueOrThrow({
+    where: {
+      emailBrand_eventKey: {
+        emailBrand: input.emailBrand,
+        eventKey: input.eventKey
+      }
+    }
+  });
+  return {
+    created: false as const,
+    deliveryId: raced.id,
+    status: raced.status,
+    providerMessageId: raced.providerMessageId
+  };
+}
+
 async function resolveExistingDeliveryClaim(existing: Awaited<ReturnType<typeof findEmailDeliveryByEventKey>>): Promise<EmailClaimResult> {
   if (!existing) throw new Error('Email delivery record was not found.');
 
@@ -241,6 +337,10 @@ async function resolveExistingDeliveryClaim(existing: Awaited<ReturnType<typeof 
     });
 
     return { claimed: false, reason: 'UNKNOWN_RESULT', deliveryId: existing.id };
+  }
+
+  if (existing.status === EMAIL_DELIVERY_STATUS.PENDING) {
+    return { claimed: false, reason: 'ALREADY_PROCESSING', deliveryId: existing.id };
   }
 
   if (existing.status === EMAIL_DELIVERY_STATUS.UNKNOWN) {
@@ -468,6 +568,7 @@ export async function listDueEmailRetries(limit = 10) {
       id: string;
       eventKey: string;
       automationId: string;
+      demoSessionId: string | null;
       emailBrand: EmailBrandKey;
       senderAccountKey: SenderAccountKey;
       emailType: string;
@@ -486,6 +587,7 @@ export async function listDueEmailRetries(limit = 10) {
       "id",
       "eventKey",
       "automationId",
+      "demoSessionId",
       "emailBrand",
       "senderAccountKey",
       "emailType",
@@ -499,23 +601,27 @@ export async function listDueEmailRetries(limit = 10) {
       "maxRetries",
       "nextRetryAt"
     FROM "EmailDelivery"
-    WHERE "status" = ${EMAIL_DELIVERY_STATUS.RETRY_PENDING}
-      AND "nextRetryAt" IS NOT NULL
-      AND "nextRetryAt" <= NOW()
-    ORDER BY "nextRetryAt" ASC
+    WHERE "status" = ${EMAIL_DELIVERY_STATUS.PENDING}
+       OR (
+        "status" = ${EMAIL_DELIVERY_STATUS.RETRY_PENDING}
+        AND "nextRetryAt" IS NOT NULL
+        AND "nextRetryAt" <= NOW()
+      )
+    ORDER BY COALESCE("nextRetryAt", "createdAt") ASC
     LIMIT ${limit}
   `;
 }
 
 export async function claimEmailRetryById(deliveryId: string) {
   const claimed = await prisma.emailDelivery.updateMany({
-    where: { id: deliveryId, status: EMAIL_DELIVERY_STATUS.RETRY_PENDING },
+    where: { id: deliveryId, status: { in: [EMAIL_DELIVERY_STATUS.PENDING, EMAIL_DELIVERY_STATUS.RETRY_PENDING] } },
     data: {
       status: EMAIL_DELIVERY_STATUS.PROCESSING,
       attemptCount: { increment: 1 },
       lockedAt: new Date(),
       lockedBy: INSTANCE_ID,
-      lastError: null
+      lastError: null,
+      nextRetryAt: null
     }
   });
 

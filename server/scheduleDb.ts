@@ -9,9 +9,7 @@ import { parseSenderAccountKey, type SenderAccountKey } from '../src/lib/senderA
 import { EmailBrandMismatchError, SenderAccountMismatchError } from './brandOwnership';
 
 const DEFAULT_TIMEZONE = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Kolkata';
-const DEMO_EXPIRED_STATUS = 'Expired';
-const ACTIVE_DEMO_BLOCKING_WINDOW_MS = Number(process.env.ACTIVE_DEMO_BLOCKING_WINDOW_MS || 60 * 60 * 1000);
-const ACTIVE_DEMO_AUTO_EXPIRE_MS = Number(process.env.ACTIVE_DEMO_AUTO_EXPIRE_MS || 24 * 60 * 60 * 1000);
+const FORCE_CLOSED_STATUS = 'Force Closed';
 
 export function normalizeLeadEmail(email: unknown) {
   return String(email || '').trim().toLowerCase();
@@ -48,7 +46,7 @@ function getCompatibleLeadDates(row: ExcelRow) {
 }
 
 export function getLeadUserId(row: ExcelRow) {
-  return getLeadAutomationId(row) || normalizeLeadEmail(row.email);
+  return getLeadAutomationId(row);
 }
 
 function nowIso() {
@@ -81,22 +79,7 @@ function isActiveDemo(state: {
   );
 }
 
-function demoStartTime(state: { demoStartUtc?: string | null }) {
-  const parsed = Date.parse(String(state.demoStartUtc || ''));
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function isPastBlockingWindow(state: { demoStartUtc?: string | null }) {
-  const start = demoStartTime(state);
-  return !!start && Date.now() > start + ACTIVE_DEMO_BLOCKING_WINDOW_MS;
-}
-
-function isDemoExpired(state: { demoStartUtc?: string | null }) {
-  const start = demoStartTime(state);
-  return !!start && Date.now() > start + ACTIVE_DEMO_AUTO_EXPIRE_MS;
-}
-
-async function expireActiveDemoState(
+async function forceCloseActiveDemoState(
   state: {
     emailBrand: string;
     userId: string;
@@ -115,7 +98,7 @@ async function expireActiveDemoState(
       await tx.demoHistory.updateMany({
         where: { emailBrand, sessionId: state.activeDemoSessionId, status: LEAD_STATUS.DEMO_SCHEDULED },
         data: {
-          status: DEMO_EXPIRED_STATUS,
+          status: FORCE_CLOSED_STATUS,
           cancelledAt: timestamp
         }
       });
@@ -129,7 +112,7 @@ async function expireActiveDemoState(
         }
       },
       data: {
-        status: DEMO_EXPIRED_STATUS,
+        status: FORCE_CLOSED_STATUS,
         activeDemoSessionId: null,
         meetingLink: null,
         calendarEventId: null,
@@ -201,10 +184,6 @@ function lifecycleOwnerFromActive(active: {
 export async function getActiveDemoForRow(row: ExcelRow, emailBrand: EmailBrandKey) {
   const state = await getCustomerDemoState(row, emailBrand);
   if (!state || !isActiveDemo(state) || !state.activeDemoSessionId) return null;
-  if (isDemoExpired(state)) {
-    await expireActiveDemoState(state, 'Active demo expired automatically after 24 hours.');
-    return null;
-  }
   const history = await prisma.demoHistory.findUnique({
     where: { sessionId: state.activeDemoSessionId }
   });
@@ -256,14 +235,7 @@ export async function assertCanCreateOrReuseActiveDemo(row: ExcelRow, emailBrand
     normalizeLeadTime(row['Time of Demo']) === active.state.demoTime;
 
   if (!sameSlot) {
-    if (isPastBlockingWindow(active.state)) {
-      await expireActiveDemoState(
-        active.state,
-        'Previous active demo expired because its active window passed.'
-      );
-      return null;
-    }
-    throw new Error('This customer already has an active demo.');
+    throw new Error('This customer already has an active demo. Use Reschedule.');
   }
 
   return active;
@@ -308,62 +280,7 @@ export async function ensureScheduledDemoHistory(
         existingState.calendarEventId === data.calendarEventId;
 
       if (!sameSlot && !sameMeeting) {
-        if (isPastBlockingWindow(existingState)) {
-          canReuseExistingActiveDemo = false;
-          if (existingState.activeDemoSessionId) {
-            await tx.demoHistory.updateMany({
-              where: { emailBrand, sessionId: existingState.activeDemoSessionId, status: LEAD_STATUS.DEMO_SCHEDULED },
-              data: {
-                status: DEMO_EXPIRED_STATUS,
-                cancelledAt: timestamp
-              }
-            });
-          }
-          await tx.customerDemoState.update({
-            where: {
-              emailBrand_userId: {
-                emailBrand,
-                userId
-              }
-            },
-            data: {
-              status: DEMO_EXPIRED_STATUS,
-              activeDemoSessionId: null,
-              meetingLink: null,
-              calendarEventId: null,
-              demoStartUtc: null,
-              demoEndUtc: null,
-              demoDate: null,
-              demoTime: null,
-              timezone: null
-            }
-          });
-          await (tx.leadSchedule as any).updateMany({
-            where: {
-              emailBrand,
-              OR: [
-                {
-                  automationId: existingState.userId,
-                  dateOfDemo: { in: Array.from(new Set([normalizeLeadDate(existingState.demoDate), normalizeIsoDate(existingState.demoDate)].filter(Boolean))) },
-                  timeOfDemo: existingState.demoTime || ''
-                },
-                {
-                  email: existingState.email,
-                  dateOfDemo: { in: Array.from(new Set([normalizeLeadDate(existingState.demoDate), normalizeIsoDate(existingState.demoDate)].filter(Boolean))) },
-                  timeOfDemo: existingState.demoTime || ''
-                }
-              ]
-            },
-            data: {
-              status: LEAD_STATUS.FOLLOW_UP,
-              meetingLink: null,
-              calendarEventId: null,
-              remarks: 'Previous active demo expired because its active window passed.'
-            }
-          });
-        } else {
-          throw new Error('This customer already has an active demo.');
-        }
+        throw new Error('This customer already has an active demo. Use Reschedule.');
       }
     }
 
@@ -454,6 +371,53 @@ export async function ensureScheduledDemoHistory(
       }
     });
 
+    await (tx.leadSchedule as any).upsert({
+      where: {
+        emailBrand_demoSessionId: {
+          emailBrand,
+          demoSessionId: sessionId
+        }
+      },
+      create: {
+        emailBrand,
+        senderAccountKey,
+        demoSessionId: sessionId,
+        automationId: userId,
+        fullName: row.full_name || null,
+        email,
+        dateOfDemo: displayDate,
+        timeOfDemo: displayTime,
+        meetingLink: data.meetingLink,
+        calendarEventId: data.calendarEventId,
+        status: LEAD_STATUS.DEMO_SCHEDULED,
+        remarks: data.scheduledEmailSentAt ? 'Meeting scheduled and email sent' : 'Meeting link created; email pending',
+        sourceType: options.sourceType || row.__sourceType || null,
+        sourceId: options.sourceId || row.__spreadsheetId || null,
+        sourceRowId: row.__sourceRowId || null,
+        sourceTabId: row.__sourceTabId || null,
+        sourceSnapshotId: row.__sourceSnapshotId || null,
+        sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
+      },
+      update: {
+        senderAccountKey,
+        automationId: userId,
+        fullName: row.full_name || null,
+        email,
+        dateOfDemo: displayDate,
+        timeOfDemo: displayTime,
+        meetingLink: data.meetingLink,
+        calendarEventId: data.calendarEventId,
+        status: LEAD_STATUS.DEMO_SCHEDULED,
+        remarks: data.scheduledEmailSentAt ? 'Meeting scheduled and email sent' : undefined,
+        sourceType: options.sourceType || row.__sourceType || null,
+        sourceId: options.sourceId || row.__spreadsheetId || null,
+        sourceRowId: row.__sourceRowId || null,
+        sourceTabId: row.__sourceTabId || null,
+        sourceSnapshotId: row.__sourceSnapshotId || null,
+        sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
+      }
+    });
+
     return { state, history };
   });
 }
@@ -470,7 +434,7 @@ export async function forceCloseActiveDemoForRow(
   const active = await assertDemoLifecycleOwnership(row, emailBrand, senderAccountKey);
 
   const message = remarks?.trim() || 'Previous active demo force closed by user.';
-  await expireActiveDemoState(active.state, message);
+  await forceCloseActiveDemoState(active.state, message);
 
   return {
     ...row,
@@ -488,6 +452,21 @@ export async function markScheduledEmailSent(row: ExcelRow, emailBrand: EmailBra
   return prisma.demoHistory.update({
     where: { sessionId: active.state.activeDemoSessionId },
     data: { scheduledEmailSentAt: sentAt }
+  });
+}
+
+export async function markOutcomeEmailSent(
+  sessionId: string,
+  status: typeof LEAD_STATUS.DEMO_DONE | typeof LEAD_STATUS.NO_RESPONSE,
+  sentAt = nowIso()
+) {
+  if (!sessionId) return null;
+  return prisma.demoHistory.update({
+    where: { sessionId },
+    data:
+      status === LEAD_STATUS.DEMO_DONE
+        ? { demoDoneEmailSentAt: sentAt }
+        : { noResponseEmailSentAt: sentAt }
   });
 }
 
@@ -578,6 +557,29 @@ export async function rescheduleActiveDemoForRow(
       }
     });
 
+    await (tx.leadSchedule as any).updateMany({
+      where: {
+        emailBrand,
+        demoSessionId: state.activeDemoSessionId
+      },
+      data: {
+        senderAccountKey: owningSenderAccountKey,
+        automationId: userId,
+        fullName: row.full_name || history.fullName,
+        email: normalizeLeadEmail(row.email) || history.email,
+        dateOfDemo: displayDate,
+        timeOfDemo: displayTime,
+        meetingLink: data.meetingLink,
+        calendarEventId: data.calendarEventId,
+        status: LEAD_STATUS.DEMO_SCHEDULED,
+        remarks: 'Rescheduled. Meeting updated and email sent',
+        sourceRowId: row.__sourceRowId || undefined,
+        sourceTabId: row.__sourceTabId || undefined,
+        sourceSnapshotId: row.__sourceSnapshotId || undefined,
+        sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || undefined
+      }
+    });
+
     return { state: updatedState, history: updatedHistory };
   });
 }
@@ -612,6 +614,9 @@ export async function closeActiveDemoForRow(
       where: { sessionId: state.activeDemoSessionId }
     });
     if (!history) throw new Error('Active demo history record was not found.');
+    if (history.status !== LEAD_STATUS.DEMO_SCHEDULED) {
+      throw new Error('Active demo history record is not schedulable.');
+    }
     const owningSenderAccountKey = requirePersistedSenderAccountKey(
       state.senderAccountKey || history.senderAccountKey
     );
@@ -657,6 +662,70 @@ export async function closeActiveDemoForRow(
         timezone: null
       }
     });
+
+    await (tx.leadSchedule as any).updateMany({
+      where: {
+        emailBrand,
+        demoSessionId: state.activeDemoSessionId
+      },
+      data: {
+        senderAccountKey: owningSenderAccountKey,
+        automationId: userId,
+        status,
+        remarks: status === LEAD_STATUS.DEMO_DONE ? 'Demo completed.' : 'Not Attended.',
+        meetingLink: null,
+        calendarEventId: null,
+        sourceRowId: row.__sourceRowId || undefined,
+        sourceTabId: row.__sourceTabId || undefined,
+        sourceSnapshotId: row.__sourceSnapshotId || undefined,
+        sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || undefined
+      }
+    });
+
+    if (row.__sourceRowId) {
+      await tx.sourceRow.updateMany({
+        where: { id: row.__sourceRowId },
+        data: {
+          leadStatus: status,
+          meetingLink: null,
+          remarks: status === LEAD_STATUS.DEMO_DONE ? 'Demo completed.' : 'Not Attended.'
+        }
+      });
+    }
+
+    const sheetRowKey = getSheetRowKey(row);
+    if (sheetRowKey) {
+      await tx.sheetLeadState.upsert({
+        where: {
+          emailBrand_sheetRowKey: {
+            emailBrand,
+            sheetRowKey
+          }
+        },
+        create: {
+          emailBrand,
+          sheetRowKey,
+          spreadsheetId: row.__spreadsheetId || '',
+          sheetName: row.__sheetName || '',
+          sheetRowNumber: Number(row.__sheetRowNumber || row.__sourceRowNumber),
+          email: normalizeLeadEmail(row.email) || null,
+          lastLeadStatus: status,
+          lastMeetingDate: normalizeLeadDate(row['Date of Demo']) || null,
+          lastMeetingTime: normalizeLeadTime(row['Time of Demo']) || null,
+          lastMeetingLink: null,
+          lastAction: status === LEAD_STATUS.DEMO_DONE ? 'DEMO_DONE_THANK_YOU' : 'NO_RESPONSE',
+          lastActionStatus: 'success',
+          lastError: null
+        },
+        update: {
+          lastLeadStatus: status,
+          lastMeetingLink: null,
+          lastAction: status === LEAD_STATUS.DEMO_DONE ? 'DEMO_DONE_THANK_YOU' : 'NO_RESPONSE',
+          lastActionStatus: 'success',
+          lastError: null
+        }
+      });
+    }
 
     return { state: updatedState, history: updatedHistory };
   });
@@ -772,6 +841,7 @@ export async function findLeadSchedule(row: ExcelRow, emailBrand: EmailBrandKey)
 async function saveLeadScheduleRow(
   row: ExcelRow,
   data: {
+    demoSessionId?: string | null;
     meetingLink?: string | null;
     calendarEventId?: string | null;
     gmailMessageId?: string | null;
@@ -788,9 +858,17 @@ async function saveLeadScheduleRow(
 
   const emailBrand = options.emailBrand;
   const senderAccountKey = parseSenderAccountKey(options.senderAccountKey);
-  const existing = await findLeadSchedule(row, emailBrand);
+  const active = await getActiveDemoForRow(row, emailBrand).catch(() => null);
+  const demoSessionId = data.demoSessionId || row.__demoSessionId || active?.state.activeDemoSessionId || null;
+  const existing = demoSessionId
+    ? await (prisma.leadSchedule as any).findFirst({
+        where: { emailBrand, demoSessionId },
+        orderBy: { updatedAt: 'desc' }
+      })
+    : await findLeadSchedule(row, emailBrand);
   const writeData = {
     senderAccountKey,
+    demoSessionId,
     automationId: keys.automationId || null,
     fullName: row.full_name || null,
     email: keys.email,
@@ -803,6 +881,9 @@ async function saveLeadScheduleRow(
     remarks: data.remarks || null,
     sourceType: options.sourceType || row.__sourceType || null,
     sourceId: options.sourceId || row.__spreadsheetId || null,
+    sourceRowId: row.__sourceRowId || null,
+    sourceTabId: row.__sourceTabId || null,
+    sourceSnapshotId: row.__sourceSnapshotId || null,
     sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
   };
 
@@ -849,6 +930,7 @@ export async function applyDbTruthToRow(row: ExcelRow, emailBrand: EmailBrandKey
         ...row,
         __emailBrand: coerceStoredEmailBrand(active.state.emailBrand),
         __senderAccountKey: lifecycleOwnerFromActive(active).senderAccountKey,
+        __demoSessionId: active.state.activeDemoSessionId || undefined,
         'Meeting Details': active.state.meetingLink || row['Meeting Details'] || '',
         lead_status: isOutcomeRequest(requestedStatus) ? requestedStatus : LEAD_STATUS.DEMO_SCHEDULED,
         Remarks: isOutcomeRequest(requestedStatus)
@@ -860,20 +942,14 @@ export async function applyDbTruthToRow(row: ExcelRow, emailBrand: EmailBrandKey
     }
 
     if (requestedStatus === LEAD_STATUS.DEMO_SCHEDULED) {
-      if (isPastBlockingWindow(active.state)) {
-        await expireActiveDemoState(
-          active.state,
-          'Previous active demo expired because its active window passed.'
-        );
-      } else {
       return {
         ...row,
         __emailBrand: coerceStoredEmailBrand(active.state.emailBrand),
         __senderAccountKey: lifecycleOwnerFromActive(active).senderAccountKey,
+        __demoSessionId: active.state.activeDemoSessionId || undefined,
         __schedulerStatus: 'Failed',
-        Remarks: 'This customer already has an active demo.'
+        Remarks: 'This customer already has an active demo. Use Reschedule.'
       };
-      }
     }
   }
 
@@ -894,11 +970,12 @@ export async function applyDbTruthToRow(row: ExcelRow, emailBrand: EmailBrandKey
     ...row,
     __emailBrand: coerceStoredEmailBrand(schedule.emailBrand),
     __senderAccountKey: requirePersistedSenderAccountKey(schedule.senderAccountKey),
+    __demoSessionId: schedule.demoSessionId || row.__demoSessionId,
     full_name: row.full_name || schedule.fullName || '',
     email: row.email || schedule.email,
     'Date of Demo': normalizeLeadDate(schedule.dateOfDemo || row['Date of Demo']),
     'Time of Demo': schedule.timeOfDemo || row['Time of Demo'],
-    'Meeting Details': schedule.meetingLink || '',
+    'Meeting Details': terminalStatus ? '' : schedule.meetingLink || '',
     lead_status: shouldUseDbStatus ? dbStatus : requestedStatus,
     automation_id: restoredAutomationId,
     Remarks: schedule.remarks || row.Remarks || '',
@@ -949,6 +1026,7 @@ export async function saveLeadScheduleFailure(
 export async function saveLeadScheduleSuccess(
   row: ExcelRow,
   data: {
+    demoSessionId?: string;
     meetingLink: string;
     calendarEventId?: string;
     gmailMessageId?: string;
@@ -963,6 +1041,7 @@ export async function saveLeadScheduleSuccess(
   return saveLeadScheduleRow(
     row,
     {
+      demoSessionId: data.demoSessionId,
       meetingLink: data.meetingLink,
       calendarEventId: data.calendarEventId || null,
       gmailMessageId: data.gmailMessageId || null,
@@ -983,11 +1062,17 @@ export async function saveLeadStatusUpdate(
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
+  const normalizedStatus = normalizeLeadStatus(data.status);
+  const shouldClearMeetingDetails =
+    normalizedStatus === LEAD_STATUS.DEMO_DONE ||
+    normalizedStatus === LEAD_STATUS.NO_RESPONSE;
 
   return saveLeadScheduleRow(
     row,
     {
-      meetingLink: row['Meeting Details'] || null,
+      demoSessionId: row.__demoSessionId,
+      meetingLink: shouldClearMeetingDetails ? null : row['Meeting Details'] || null,
+      calendarEventId: shouldClearMeetingDetails ? null : undefined,
       status: data.status,
       remarks: data.remarks || null
     },

@@ -1,21 +1,18 @@
 import type { ExcelRow } from '../src/types';
 import { type EmailBrandKey } from '../src/lib/emailBrand';
 import { type SenderAccountKey } from '../src/lib/senderAccount';
-import { createNewAutomationId } from './emailIdentity';
-import { findLeadSchedule } from './scheduleDb';
 import {
   friendlySheetsError,
   googleSheetAccessForWorkspace,
   updateGoogleSheetRowsBatch,
   type GoogleSheetAccessContext
 } from './googleSheets';
+import {
+  MissingPermanentAutomationIdError,
+  resolvePermanentAutomationId
+} from './modules/lead/identity/permanentAutomationId.service';
 
-export class MissingPermanentAutomationIdError extends Error {
-  constructor(message = 'Permanent automation_id is required before processing workflow rows.') {
-    super(message);
-    this.name = 'MissingPermanentAutomationIdError';
-  }
-}
+export { AutomationIdentityConflictError, MissingPermanentAutomationIdError } from './modules/lead/identity/permanentAutomationId.service';
 
 export type WorkflowAutomationIdContext = {
   sourceType: 'excel' | 'google-sheet';
@@ -35,17 +32,6 @@ function currentAutomationId(row: ExcelRow) {
   return String(row.automation_id || row.automationId || '').trim();
 }
 
-async function resolveAutomationId(row: ExcelRow, emailBrand: EmailBrandKey) {
-  const existing = currentAutomationId(row);
-  if (existing) return existing;
-
-  const schedule = await findLeadSchedule(row, emailBrand);
-  const restored = String(schedule?.automationId || '').trim();
-  if (restored) return restored;
-
-  return createNewAutomationId();
-}
-
 export async function ensureWorkflowAutomationIds(
   rows: ExcelRow[],
   context: WorkflowAutomationIdContext
@@ -55,10 +41,17 @@ export async function ensureWorkflowAutomationIds(
 
   for (const row of rows) {
     const existing = currentAutomationId(row);
-    const automationId = existing || await resolveAutomationId(row, context.emailBrand);
+    const identity = await resolvePermanentAutomationId({
+      row,
+      workspaceKey: context.workspaceKey,
+      emailBrand: context.emailBrand
+    });
+    const automationId = identity.automationId;
     const updatedRow: ExcelRow = {
       ...row,
-      automation_id: automationId
+      automation_id: automationId,
+      __canonicalLeadId: identity.canonicalLeadId,
+      __sourceRowId: identity.sourceRowId || row.__sourceRowId
     };
 
     if (!existing && context.sourceType === 'google-sheet') {

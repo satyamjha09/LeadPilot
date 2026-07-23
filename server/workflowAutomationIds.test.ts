@@ -1,12 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ExcelRow } from '../src/types';
 import { ensureWorkflowAutomationIds } from './workflowAutomationIds';
-import { findLeadSchedule } from './scheduleDb';
 import { updateGoogleSheetRowsBatch } from './googleSheets';
+import { resolvePermanentAutomationId } from './modules/lead/identity/permanentAutomationId.service';
 
-vi.mock('./scheduleDb', () => ({
-  findLeadSchedule: vi.fn()
-}));
+vi.mock('./modules/lead/identity/permanentAutomationId.service', () => {
+  class MissingPermanentAutomationIdError extends Error {
+    code = 'MISSING_PERMANENT_AUTOMATION_ID';
+    statusCode = 400;
+  }
+  class AutomationIdentityConflictError extends Error {
+    code = 'AUTOMATION_IDENTITY_CONFLICT';
+    statusCode = 409;
+    automationIds: string[];
+    constructor(automationIds: string[]) {
+      super('Multiple automation_id values match this lead. Manual review is required.');
+      this.automationIds = automationIds;
+    }
+  }
+  return {
+    MissingPermanentAutomationIdError,
+    AutomationIdentityConflictError,
+    resolvePermanentAutomationId: vi.fn()
+  };
+});
 
 vi.mock('./googleSheets', () => ({
   friendlySheetsError: vi.fn((error: any) => ({ status: 500, message: error?.message || 'Sheet write failed' })),
@@ -26,9 +43,13 @@ const baseRow = {
 
 describe('ensureWorkflowAutomationIds', () => {
   beforeEach(() => {
-    vi.mocked(findLeadSchedule).mockReset();
+    vi.mocked(resolvePermanentAutomationId).mockReset();
     vi.mocked(updateGoogleSheetRowsBatch).mockReset();
-    vi.mocked(findLeadSchedule).mockResolvedValue(null);
+    vi.mocked(resolvePermanentAutomationId).mockImplementation(async ({ row }: any) => ({
+      automationId: row.automation_id || 'lead_generated',
+      canonicalLeadId: 'canonical-1',
+      sourceRowId: row.__sourceRowId
+    }));
     vi.mocked(updateGoogleSheetRowsBatch).mockResolvedValue(undefined);
   });
 
@@ -39,12 +60,17 @@ describe('ensureWorkflowAutomationIds', () => {
       emailBrand: 'tallykonnect'
     });
 
-    expect(row.automation_id).toMatch(/^lead_/);
+    expect(row.automation_id).toBe('lead_generated');
+    expect(row.__canonicalLeadId).toBe('canonical-1');
     expect(updateGoogleSheetRowsBatch).not.toHaveBeenCalled();
   });
 
-  it('restores an existing LeadSchedule automation_id before generating a new one', async () => {
-    vi.mocked(findLeadSchedule).mockResolvedValue({ automationId: 'lead_existing' } as any);
+  it('restores the service-resolved permanent automation_id before processing', async () => {
+    vi.mocked(resolvePermanentAutomationId).mockResolvedValue({
+      automationId: 'lead_existing',
+      canonicalLeadId: 'canonical-restored',
+      sourceRowId: 'source-row-1'
+    });
 
     const [row] = await ensureWorkflowAutomationIds([baseRow], {
       sourceType: 'excel',
@@ -53,6 +79,7 @@ describe('ensureWorkflowAutomationIds', () => {
     });
 
     expect(row.automation_id).toBe('lead_existing');
+    expect(row.__canonicalLeadId).toBe('canonical-restored');
   });
 
   it('writes missing Google Sheet automation IDs before processing', async () => {
@@ -66,7 +93,7 @@ describe('ensureWorkflowAutomationIds', () => {
       googleAccountKey: 'tallykonnect-google'
     });
 
-    expect(row.automation_id).toMatch(/^lead_/);
+    expect(row.automation_id).toBe('lead_generated');
     expect(updateGoogleSheetRowsBatch).toHaveBeenCalledWith(
       'sheet-1',
       'Leads',

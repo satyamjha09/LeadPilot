@@ -8,7 +8,8 @@ import type { EmailClaimInput } from './emailDelivery';
 const prismaMock = vi.hoisted(() => ({
   emailDelivery: {
     findUnique: vi.fn(),
-    findMany: vi.fn()
+    findMany: vi.fn(),
+    updateMany: vi.fn()
   },
   $executeRaw: vi.fn()
 }));
@@ -19,6 +20,8 @@ vi.mock('./db', () => ({
 
 const {
   claimEmailDelivery,
+  claimEmailRetryById,
+  createPendingEmailDeliveryIntent,
   findEmailDeliveryByEventKey,
   listEmailDeliveriesForRow
 } = await import('./emailDelivery');
@@ -116,14 +119,50 @@ describe('brand-scoped email delivery idempotency', () => {
       senderAccountKey: 'tallykonnect-google',
       eventKey: 'cross-combo-event',
       automationId: 'lead_456',
+      demoSessionId: 'session_cross',
       emailType: EMAIL_TYPES.DEMO_DONE,
       recipient: 'sai@example.com',
       payloadHash: 'hash-cross'
     });
 
     expect(prismaMock.$executeRaw.mock.calls[0]).toEqual(
-      expect.arrayContaining(['anywheretally', 'tallykonnect-google'])
+      expect.arrayContaining(['anywheretally', 'tallykonnect-google', 'session_cross'])
     );
+  });
+
+  it('creates pending terminal email intents with session ownership before send', async () => {
+    const intent = await createPendingEmailDeliveryIntent({
+      emailBrand: 'anywheretally',
+      senderAccountKey: 'tallykonnect-google',
+      eventKey: 'session-done-event',
+      automationId: 'lead_456',
+      demoSessionId: 'session_done_1',
+      emailType: EMAIL_TYPES.DEMO_DONE,
+      recipient: 'sai@example.com',
+      payloadHash: 'hash-pending',
+      subject: 'Thanks',
+      text: 'Thanks',
+      html: '<p>Thanks</p>'
+    });
+
+    expect(intent).toMatchObject({ created: true, status: 'PENDING' });
+    expect(prismaMock.$executeRaw.mock.calls[0]).toEqual(
+      expect.arrayContaining(['PENDING', 0, 'session_done_1'])
+    );
+  });
+
+  it('lets retry claiming pick up PENDING email intents', async () => {
+    prismaMock.emailDelivery.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(claimEmailRetryById('delivery-pending')).resolves.toBe(true);
+
+    expect(prismaMock.emailDelivery.updateMany).toHaveBeenCalledWith({
+      where: { id: 'delivery-pending', status: { in: ['PENDING', 'RETRY_PENDING'] } },
+      data: expect.objectContaining({
+        status: 'PROCESSING',
+        nextRetryAt: null
+      })
+    });
   });
 
   it('rejects a missing senderAccountKey before database insert', async () => {

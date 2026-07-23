@@ -53,7 +53,9 @@ describe('two-brand workflow regression coverage', () => {
     const workflowControl = readRepoFile('server', 'workflowControl.ts');
     const processLeadQueue = readRepoFile('server', 'processLeadQueue.ts');
 
-    expect(schema).toContain('@@unique([emailBrand, automationId, dateOfDemo, timeOfDemo])');
+    expect(schema).toContain('demoSessionId    String?');
+    expect(schema).toContain('@@unique([emailBrand, demoSessionId])');
+    expect(schema).toContain('@@index([emailBrand, automationId])');
     expect(schema).toContain('@@unique([emailBrand, userId])');
     expect(schema).toContain('@@unique([emailBrand, eventKey])');
     expect(schema).toContain('@@unique([workspaceKey, emailBrand, jobKey])');

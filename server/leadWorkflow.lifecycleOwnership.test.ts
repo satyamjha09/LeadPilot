@@ -29,10 +29,19 @@ describe('lead workflow lifecycle ownership guards', () => {
 
     expect(body).toContain('const ownerBrand = active.emailBrand');
     expect(body).toContain('__senderAccountKey: senderAccountKeyForContext(ownerContext)');
+    expect(body).toContain('__demoSessionId: sessionId');
+    expect(body.indexOf('createPendingEmailDeliveryIntent({')).toBeLessThan(
+      body.indexOf('closeActiveDemoForRow(ownerRow, LEAD_STATUS.DEMO_DONE, ownerBrand')
+    );
+    expect(body.indexOf('closeActiveDemoForRow(ownerRow, LEAD_STATUS.DEMO_DONE, ownerBrand')).toBeLessThan(
+      body.indexOf('sendPendingOutcomeEmail({')
+    );
+    expect(body).toContain('emailType: EMAIL_TYPES.DEMO_DONE');
+    expect(body).toContain('demoSessionId: sessionId');
     expect(body).toContain('sendThankYouEmail({');
     expect(body).toContain('senderAccountKey: senderAccountKeyForContext(ownerContext)');
     expect(body).toContain('emailBrandKey: emailBrandKeyForContext(ownerContext)');
-    expect(body).toContain('closeActiveDemoForRow(ownerRow, LEAD_STATUS.DEMO_DONE, ownerBrand');
+    expect(body).toContain("'Meeting Details': ''");
   });
 
   it('sends Not Attended using the resolved owner brand', () => {
@@ -40,10 +49,41 @@ describe('lead workflow lifecycle ownership guards', () => {
 
     expect(body).toContain('const ownerBrand = active.emailBrand');
     expect(body).toContain('__senderAccountKey: senderAccountKeyForContext(ownerContext)');
+    expect(body).toContain('__demoSessionId: sessionId');
+    expect(body.indexOf('createPendingEmailDeliveryIntent({')).toBeLessThan(
+      body.indexOf('closeActiveDemoForRow(ownerRow, LEAD_STATUS.NO_RESPONSE, ownerBrand')
+    );
+    expect(body.indexOf('closeActiveDemoForRow(ownerRow, LEAD_STATUS.NO_RESPONSE, ownerBrand')).toBeLessThan(
+      body.indexOf('sendPendingOutcomeEmail({')
+    );
+    expect(body).toContain('emailType: EMAIL_TYPES.NO_RESPONSE');
+    expect(body).toContain('demoSessionId: sessionId');
     expect(body).toContain('sendNoResponseEmail({');
     expect(body).toContain('senderAccountKey: senderAccountKeyForContext(ownerContext)');
     expect(body).toContain('emailBrandKey: emailBrandKeyForContext(ownerContext)');
-    expect(body).toContain('closeActiveDemoForRow(ownerRow, LEAD_STATUS.NO_RESPONSE, ownerBrand');
+    expect(body).toContain("'Meeting Details': ''");
+  });
+
+  it('validates Demo Done and Not Attended against DB session time only', () => {
+    const start = source.indexOf('async function assertManualCloseAllowed');
+    const end = source.indexOf('function sheetRowNumber', start + 1);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const body = source.slice(start, end);
+
+    expect(body).toContain('const scheduledStartUtc = active.history?.scheduledStartUtc || active.state.demoStartUtc');
+    expect(body).not.toContain("parseExcelDateTime(row['Date of Demo'], row['Time of Demo'])");
+  });
+
+  it('writes a blank Meeting Details value for Demo Done sheet updates', () => {
+    const start = source.indexOf('for (let index = 0; index < plan.demoDoneRows.length; index++)');
+    const end = source.indexOf('for (const row of plan.statusOnlyRows)', start + 1);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const body = source.slice(start, end);
+
+    expect(body).toContain("'Meeting Details': ''");
+    expect(body).toContain('lastMeetingLink: null');
   });
 
   it('force-close cancels Calendar before clearing database ownership', () => {

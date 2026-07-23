@@ -123,6 +123,54 @@ describe('brand-scoped schedule state', () => {
     expect(tallyKonnectRow.__emailBrand).toBe('tallykonnect');
   });
 
+  it('does not restore meeting links from terminal LeadSchedule rows', async () => {
+    prismaMock.leadSchedule.findFirst.mockResolvedValue({
+      emailBrand: 'anywheretally',
+      senderAccountKey: 'anywheretally-google',
+      demoSessionId: 'session-terminal',
+      automationId: 'lead_123',
+      fullName: 'Moh Agarwal',
+      email: 'moh@example.com',
+      dateOfDemo: '15-06-2026',
+      timeOfDemo: '15:30',
+      meetingLink: 'https://meet.google.com/old-terminal',
+      status: 'Demo Done',
+      remarks: 'Demo completed.'
+    });
+
+    const [row] = await applyDbTruthToRows([baseRow], 'anywheretally');
+
+    expect(row['Meeting Details']).toBe('');
+    expect(row.__dbFinalState).toBe(true);
+    expect(row.__demoSessionId).toBe('session-terminal');
+  });
+
+  it('blocks a new Demo Scheduled slot when an active demo already exists', async () => {
+    prismaMock.customerDemoState.findUnique.mockResolvedValue({
+      emailBrand: 'anywheretally',
+      senderAccountKey: 'anywheretally-google',
+      userId: 'lead_123',
+      email: 'moh@example.com',
+      status: 'Demo Scheduled',
+      activeDemoSessionId: 'session-active',
+      meetingLink: 'https://meet.google.com/active',
+      calendarEventId: 'calendar-active',
+      demoDate: '15-06-2026',
+      demoTime: '16:30',
+      demoStartUtc: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    });
+    prismaMock.demoHistory.findUnique.mockResolvedValue({
+      sessionId: 'session-active',
+      senderAccountKey: 'anywheretally-google',
+      status: 'Demo Scheduled'
+    });
+
+    const [row] = await applyDbTruthToRows([baseRow], 'anywheretally');
+
+    expect(row.__schedulerStatus).toBe('Failed');
+    expect(row.Remarks).toBe('This customer already has an active demo. Use Reschedule.');
+  });
+
   it('throws a brand mismatch when another brand owns the active demo', async () => {
     prismaMock.customerDemoState.findUnique.mockImplementation(async ({ where }: any) => {
       if (where.emailBrand_userId.emailBrand !== 'tallykonnect') return null;

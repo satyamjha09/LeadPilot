@@ -9,12 +9,20 @@ import { sendGmailTemplate } from './googleAuth';
 import { parseEmailBrand } from '../src/lib/emailBrand';
 import { parseSenderAccountKey } from '../src/lib/senderAccount';
 import { WORKFLOW_BUSY_RESET_MESSAGE, withWorkflowActivity } from './workflowActivity';
+import { LEAD_STATUS } from './leadStatus';
+import { markOutcomeEmailSent } from './scheduleDb';
 
 const RETRY_SCAN_INTERVAL_MS = Number(process.env.EMAIL_RETRY_SCAN_INTERVAL_MS || 60_000);
 const RETRY_BATCH_SIZE = Number(process.env.EMAIL_RETRY_BATCH_SIZE || 10);
 
 let retryScannerRunning = false;
 let retryTimer: NodeJS.Timeout | undefined;
+
+function terminalOutcomeStatus(emailType: string) {
+  if (emailType === 'DEMO_DONE') return LEAD_STATUS.DEMO_DONE;
+  if (emailType === 'NO_RESPONSE') return LEAD_STATUS.NO_RESPONSE;
+  return null;
+}
 
 export async function runEmailRetryScanner() {
   if (retryScannerRunning) {
@@ -64,6 +72,10 @@ export async function runEmailRetryScanner() {
             deliveryId: delivery.id,
             providerMessageId: result.messageId
           });
+          const outcomeStatus = terminalOutcomeStatus(delivery.emailType);
+          if (outcomeStatus && delivery.demoSessionId) {
+            await markOutcomeEmailSent(delivery.demoSessionId, outcomeStatus);
+          }
 
           console.log('EMAIL_RETRY_SUCCESS', {
             deliveryId: delivery.id,

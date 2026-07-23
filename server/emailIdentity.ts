@@ -68,33 +68,27 @@ export function createNewAutomationId() {
   return `lead_${randomUUID()}`;
 }
 
+export class MissingPermanentAutomationIdError extends Error {
+  code = 'MISSING_PERMANENT_AUTOMATION_ID';
+  statusCode = 400;
+
+  constructor(message = 'Permanent automation_id is required before workflow email identity can be created.') {
+    super(message);
+    this.name = 'MissingPermanentAutomationIdError';
+  }
+}
+
 export function getAutomationId(row: ExcelRow, context: EmailIdentityContext) {
   const existing = clean((row as ExcelRow & { automation_id?: string }).automation_id);
   if (existing) return existing;
-
-  const fallbackSource =
-    context.sourceType === 'google-sheet'
-      ? [
-          clean(context.spreadsheetId),
-          clean(context.sheetName).toLowerCase(),
-          clean(row.__sheetRowNumber || row.__sourceRowNumber),
-          clean(row.email).toLowerCase(),
-          clean(row.full_name).toLowerCase()
-        ].join('|')
-      : [
-          clean(row.email).toLowerCase(),
-          normalizeIdentityDate(row['Date of Demo']),
-          normalizeIdentityTime(row['Time of Demo']),
-          clean(row.full_name).toLowerCase()
-        ].join('|');
-
-  return `${context.sourceType === 'google-sheet' ? 'sheet' : 'excel'}_${sha256(fallbackSource).slice(0, 24)}`;
+  throw new MissingPermanentAutomationIdError();
 }
 
 export function createEmailEventKey(input: {
   automationId: string;
   recipient?: string;
   emailType: EmailType;
+  sessionId?: unknown;
   date?: unknown;
   time?: unknown;
   reminderWindow?: string;
@@ -103,10 +97,7 @@ export function createEmailEventKey(input: {
   let version: string;
 
   if (input.emailType === EMAIL_TYPES.DEMO_DONE || input.emailType === EMAIL_TYPES.NO_RESPONSE) {
-    version = [
-      normalizeIdentityDate(input.date),
-      normalizeIdentityTime(input.time)
-    ].filter(Boolean).join(':');
+    version = clean(input.sessionId);
   } else {
     version = [
       normalizeIdentityDate(input.date),

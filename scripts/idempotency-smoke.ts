@@ -38,7 +38,7 @@ async function main() {
   try {
     const scheduledKey = eventKey(EMAIL_TYPES.DEMO_SCHEDULED);
     const changedTimeKey = eventKey(EMAIL_TYPES.DEMO_SCHEDULED, '2026-06-21', '11:45');
-    const doneKey = createEmailEventKey({ automationId, recipient, emailType: EMAIL_TYPES.DEMO_DONE });
+    const doneKey = createEmailEventKey({ automationId, recipient, emailType: EMAIL_TYPES.DEMO_DONE, sessionId: 'session_smoke_done' });
     const reminderKey = eventKey(EMAIL_TYPES.REMINDER);
 
     assert.notEqual(scheduledKey, changedTimeKey, 'changed scheduled time creates a new key');

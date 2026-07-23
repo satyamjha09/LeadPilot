@@ -164,7 +164,7 @@ async function prepareProcessRequest(body: any, keys: ReturnType<typeof parsePro
       throw new SourceValidationError('Valid rows list must be supplied.');
     }
     return {
-      rows: await applyDbTruthToRows(body.rows, keys.emailBrandKey),
+      rows: body.rows,
       sourceType: body.sourceType === 'google-sheet' ? 'google-sheet' : 'excel',
       spreadsheetId: body.spreadsheetId,
       sheetName: body.sheetName,
@@ -458,7 +458,14 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         }
 
         console.log(`Received request to schedule ${rows.length} rows...`);
-        const { rows: results, summary } = await processScheduleRows(rows, {
+        const workflowRows = await ensureWorkflowAutomationIds(rows, {
+          sourceType: 'excel',
+          workspaceKey: keys.workspaceKey,
+          emailBrand: keys.emailBrandKey,
+          googleAccountKey: keys.googleAccountKey
+        });
+        const dbRows = await applyDbTruthToRows(workflowRows, keys.emailBrandKey);
+        const { rows: results, summary } = await processScheduleRows(dbRows, {
           sheetContext: {
             sourceType: 'excel',
             workspaceKey: keys.workspaceKey,
@@ -507,8 +514,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           __sheetName: sheetName,
           __originalColumns: headers
         }));
-        const dbRows = await applyDbTruthToRows(preparedRows, keys.emailBrandKey);
-        const workflowRows = await ensureWorkflowAutomationIds(dbRows, {
+        const workflowRows = await ensureWorkflowAutomationIds(preparedRows, {
           sourceType: 'google-sheet',
           spreadsheetId,
           sheetName,
@@ -517,7 +523,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           emailBrand: keys.emailBrandKey,
           googleAccountKey: keys.googleAccountKey
         });
-        const result = await processLeadsByStatus(workflowRows, {
+        const dbRows = await applyDbTruthToRows(workflowRows, keys.emailBrandKey);
+        const result = await processLeadsByStatus(dbRows, {
           sourceType: 'google-sheet',
           spreadsheetId,
           sheetName,
@@ -1052,7 +1059,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
         });
         headers = ensured.headers;
       }
-      const dbRows = await ensurePreparedWorkflowAutomationIds(preparedRequest, keys, headers);
+      const workflowRows = await ensurePreparedWorkflowAutomationIds(preparedRequest, keys, headers);
+      const dbRows = await applyDbTruthToRows(workflowRows, keys.emailBrandKey);
       const ownership = await assertProcessBatchLifecycleOwnership(
         dbRows,
         keys.emailBrandKey,
@@ -1139,7 +1147,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers = ensured.headers;
         }
 
-        const dbRows = await ensurePreparedWorkflowAutomationIds(preparedRequest, keys, headers);
+        const workflowRows = await ensurePreparedWorkflowAutomationIds(preparedRequest, keys, headers);
+        const dbRows = await applyDbTruthToRows(workflowRows, keys.emailBrandKey);
         await assertProcessBatchLifecycleOwnership(dbRows, keys.emailBrandKey, keys.senderAccountKey);
         const job = await createProcessLeadJob({
           sourceType: preparedRequest.sourceType,
@@ -1211,7 +1220,8 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers = ensured.headers;
         }
 
-        const dbRows = await ensurePreparedWorkflowAutomationIds(preparedRequest, keys, headers);
+        const workflowRows = await ensurePreparedWorkflowAutomationIds(preparedRequest, keys, headers);
+        const dbRows = await applyDbTruthToRows(workflowRows, keys.emailBrandKey);
         await assertProcessBatchLifecycleOwnership(dbRows, keys.emailBrandKey, keys.senderAccountKey);
         const result = await processLeadsByStatus(dbRows, {
           sourceType: preparedRequest.sourceType,

@@ -4,7 +4,6 @@ import { getObjectStorage } from '../../../infrastructure/storage/storageFactory
 import { parseEmailBrand } from '../../../../src/lib/emailBrand';
 import { defaultSenderAccountForBrand } from '../../../../src/lib/senderAccount';
 import type { ExcelRow } from '../../../../src/types';
-import { applyDbTruthToRows } from '../../../scheduleDb';
 import { runLeadMatching } from '../../lead/matching/leadMatch.service';
 import { getWorkspaceOrThrow } from '../../workspace/workspace.service';
 import { SourceConfigurationError, SourceConflictError, SourceNotFoundError, SourceValidationError, safeErrorMessage } from '../sourceErrors';
@@ -314,7 +313,7 @@ export async function buildSelectedTabWorkflowRows(input: {
     source,
     tab,
     snapshot,
-    rows: await applyDbTruthToRows(workflowRows, emailBrand)
+    rows: workflowRows.map((row) => ({ ...row, __emailBrand: emailBrand }))
   };
 }
 

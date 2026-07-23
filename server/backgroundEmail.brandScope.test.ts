@@ -13,6 +13,7 @@ fs.writeFileSync(
 
 const sendGmailReminderMock = vi.hoisted(() => vi.fn());
 const sendGmailTemplateMock = vi.hoisted(() => vi.fn());
+const markOutcomeEmailSentMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./googleAuth', () => ({
   sendGmailReminder: sendGmailReminderMock,
@@ -23,6 +24,10 @@ const buildReminderEmailMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./emailTemplates', () => ({
   buildReminderEmail: buildReminderEmailMock
+}));
+
+vi.mock('./scheduleDb', () => ({
+  markOutcomeEmailSent: markOutcomeEmailSentMock
 }));
 
 const emailDeliveryMock = vi.hoisted(() => ({
@@ -78,10 +83,12 @@ describe('brand-scoped background email delivery', () => {
       attemptCount: 1
     });
     emailDeliveryMock.claimEmailRetryById.mockResolvedValue(true);
+    emailDeliveryMock.findEmailDeliveryById.mockResolvedValue({ id: 'delivery-1', status: 'PROCESSING' });
     emailDeliveryMock.markEmailDeliverySent.mockResolvedValue({});
     emailDeliveryMock.markEmailDeliveryFailed.mockResolvedValue('FAILED');
     sendGmailReminderMock.mockResolvedValue({ messageId: 'gmail-reminder-1' });
     sendGmailTemplateMock.mockResolvedValue({ messageId: 'gmail-retry-1' });
+    markOutcomeEmailSentMock.mockResolvedValue({});
     prismaMock.demoHistory.update.mockResolvedValue({});
     prismaMock.demoHistory.findUnique.mockImplementation(async ({ where }: any) => ({
       sessionId: where.sessionId,
@@ -396,6 +403,7 @@ describe('brand-scoped background email delivery', () => {
         id: 'retry-awt',
         eventKey: 'event-1',
         automationId: 'lead_123',
+        demoSessionId: 'session-retry-awt',
         emailBrand: 'anywheretally',
         senderAccountKey: 'anywheretally-google',
         emailType: 'DEMO_DONE',
@@ -428,6 +436,7 @@ describe('brand-scoped background email delivery', () => {
       },
       'anywheretally-google'
     );
+    expect(markOutcomeEmailSentMock).toHaveBeenCalledWith('session-retry-awt', 'Demo Done');
   });
 
   it('does not send automatic retries while the delivery brand is resetting', async () => {
