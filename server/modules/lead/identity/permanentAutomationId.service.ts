@@ -144,57 +144,91 @@ async function automationIdFromSiblingRows(leadId?: string | null) {
   return uniqueAutomationIds(rows.map((row) => row.automationId));
 }
 
+async function lockCanonicalLeadIdentity(tx: Prisma.TransactionClient, workspaceId: string, leadId: string) {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`automation-id:${workspaceId}:${leadId}`}, 0))`;
+}
+
 async function persistIdentity(input: {
   row: ExcelRow;
   workspaceId: string;
-  automationId: string;
+  candidateAutomationIds: unknown[];
   sourceRow?: { id: string; canonicalLeadId?: string | null } | null;
   leadId: string;
 }) {
   return prisma.$transaction(async (tx) => {
-    const existingIdentity = await tx.leadIdentity.findUnique({
+    await lockCanonicalLeadIdentity(tx, input.workspaceId, input.leadId);
+
+    const leadIdentities = await tx.leadIdentity.findMany({
+      where: {
+        leadId: input.leadId,
+        type: 'AUTOMATION_ID',
+        scopeKey: AUTOMATION_ID_SCOPE
+      },
+      select: { id: true, leadId: true, value: true }
+    });
+    const automationId = chooseUnambiguous([
+      ...input.candidateAutomationIds,
+      ...leadIdentities.map((identity) => identity.value)
+    ]) || createNewAutomationId();
+
+    const existingIdentityForValue = await tx.leadIdentity.findUnique({
       where: {
         workspaceId_type_scopeKey_value: {
           workspaceId: input.workspaceId,
           type: 'AUTOMATION_ID',
           scopeKey: AUTOMATION_ID_SCOPE,
-          value: input.automationId
+          value: automationId
         }
       }
     });
 
-    if (existingIdentity && existingIdentity.leadId !== input.leadId) {
+    if (existingIdentityForValue && existingIdentityForValue.leadId !== input.leadId) {
       throw new AutomationIdentityConflictError(
-        [input.automationId],
+        [automationId],
         'automation_id is already assigned to another lead. Manual review is required.'
       );
     }
+    if (leadIdentities.length > 1) {
+      throw new AutomationIdentityConflictError(
+        leadIdentities.map((identity) => identity.value),
+        'Multiple permanent automation_id values are assigned to this lead. Manual review is required.'
+      );
+    }
+    if (
+      leadIdentities.length === 1 &&
+      leadIdentities[0].value !== automationId
+    ) {
+      throw new AutomationIdentityConflictError(
+        [leadIdentities[0].value, automationId],
+        'Multiple automation_id values match this lead. Manual review is required.'
+      );
+    }
 
-    const identity = existingIdentity
+    const identity = existingIdentityForValue
       ? await tx.leadIdentity.update({
-          where: { id: existingIdentity.id },
+          where: { id: existingIdentityForValue.id },
           data: {
             source: 'AUTO',
             isVerified: true
           }
         })
       : await tx.leadIdentity.create({
-        data: {
-        workspaceId: input.workspaceId,
-        leadId: input.leadId,
-        type: 'AUTOMATION_ID',
-        scopeKey: AUTOMATION_ID_SCOPE,
-        value: input.automationId,
-        source: 'AUTO',
-        isVerified: true
-      }
-    });
+          data: {
+            workspaceId: input.workspaceId,
+            leadId: input.leadId,
+            type: 'AUTOMATION_ID',
+            scopeKey: AUTOMATION_ID_SCOPE,
+            value: automationId,
+            source: 'AUTO',
+            isVerified: true
+          }
+        });
 
     if (input.sourceRow?.id) {
       await tx.sourceRow.update({
         where: { id: input.sourceRow.id },
         data: {
-          automationId: input.automationId,
+          automationId,
           canonicalLeadId: input.leadId,
           leadMatchStatus: 'MATCHED',
           leadMatchedAt: new Date()
@@ -225,12 +259,12 @@ async function persistIdentity(input: {
           canonicalLeadId: input.leadId,
           automationId: null
         },
-        data: { automationId: input.automationId }
+        data: { automationId }
       });
     }
 
-    return identity;
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+    return { identity, automationId };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export async function resolvePermanentAutomationId(input: {
@@ -264,18 +298,16 @@ export async function resolvePermanentAutomationId(input: {
     ...(await automationIdFromSiblingRows(lead.id)),
     ...(await legacyAutomationIdByBrandEmail(input.emailBrand, email))
   ];
-  const resolved = chooseUnambiguous(candidates) || createNewAutomationId();
-
-  await persistIdentity({
+  const persisted = await persistIdentity({
     row: input.row,
     workspaceId: workspace.id,
-    automationId: resolved,
+    candidateAutomationIds: candidates,
     sourceRow,
     leadId: lead.id
   });
 
   return {
-    automationId: resolved,
+    automationId: persisted.automationId,
     canonicalLeadId: lead.id,
     sourceRowId: sourceRow?.id || sourceId || undefined
   };

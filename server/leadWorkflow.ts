@@ -1,6 +1,7 @@
 import { ExcelRow, ScheduleSummary } from '../src/types';
 import {
   parseExcelDateTime,
+  cancelCalendarMeeting,
   scheduleMeeting,
   sendGmailInvite,
   sendGmailRescheduleInvite,
@@ -19,7 +20,7 @@ import { EMAIL_LOG_TYPES } from './emailLog';
 import { LEAD_STATUS, isDemoScheduledStatus, normalizeLeadStatus } from './leadStatus';
 import {
   findScheduledMeetLinkFromDb,
-  assertCanCreateOrReuseActiveDemo,
+  clearDemoSchedulingReservation,
   assertDemoLifecycleOwnership,
   commitDemoOutcomeAndEmailIntent,
   ensureScheduledDemoHistory,
@@ -28,6 +29,7 @@ import {
   markOutcomeEmailSent,
   normalizeLeadDate,
   normalizeLeadTime,
+  reserveDemoScheduling,
   rescheduleActiveDemoForRow,
   saveLeadScheduleFailure,
   saveLeadScheduleSuccess,
@@ -584,6 +586,16 @@ function terminalEmailMessage(status: typeof LEAD_STATUS.DEMO_DONE | typeof LEAD
     return `${lifecycle}. ${emailName} queued for retry.`;
   }
   return `${lifecycle}. ${emailName} requires manual review.`;
+}
+
+function terminalPostCommitErrorMessage(
+  status: typeof LEAD_STATUS.DEMO_DONE | typeof LEAD_STATUS.NO_RESPONSE,
+  error: unknown
+) {
+  const lifecycle = status === LEAD_STATUS.DEMO_DONE ? 'Demo completed' : 'Not Attended recorded';
+  const emailName = status === LEAD_STATUS.DEMO_DONE ? 'Thank-you email' : 'Not Attended email';
+  const detail = error instanceof Error ? error.message : String(error || 'Unknown error');
+  return `${lifecycle}. ${emailName} requires retry or manual review: ${detail}`;
 }
 
 async function sendPendingOutcomeEmail(input: {
@@ -1274,19 +1286,33 @@ export async function sendThankYouForRow(
     html: template.html
   });
 
-  const emailResult = await sendPendingOutcomeEmail({
-    context: ownerContext,
-    deliveryId: commit.delivery.deliveryId,
-    sessionId,
-    recipient,
-    status: LEAD_STATUS.DEMO_DONE,
-    send: () =>
-      sendThankYouEmail({
-        row: ownerRow,
-        senderAccountKey: senderAccountKeyForContext(ownerContext),
-        emailBrandKey: emailBrandKeyForContext(ownerContext)
-      })
-  });
+  let emailResult: Awaited<ReturnType<typeof sendPendingOutcomeEmail>>;
+  try {
+    emailResult = await sendPendingOutcomeEmail({
+      context: ownerContext,
+      deliveryId: commit.delivery.deliveryId,
+      sessionId,
+      recipient,
+      status: LEAD_STATUS.DEMO_DONE,
+      send: () =>
+        sendThankYouEmail({
+          row: ownerRow,
+          senderAccountKey: senderAccountKeyForContext(ownerContext),
+          emailBrandKey: emailBrandKeyForContext(ownerContext)
+        })
+    });
+  } catch (error) {
+    console.error('TERMINAL_OUTCOME_EMAIL_POST_COMMIT_FAILED', {
+      deliveryId: commit.delivery.deliveryId,
+      sessionId,
+      status: LEAD_STATUS.DEMO_DONE,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    emailResult = {
+      sent: false,
+      message: terminalPostCommitErrorMessage(LEAD_STATUS.DEMO_DONE, error)
+    };
+  }
 
   const updatedRow: ExcelRow = {
     ...ownerRow,
@@ -1300,14 +1326,24 @@ export async function sendThankYouForRow(
   };
 
   if (!options.skipSheetSync) {
-    await syncSheetRow(updatedRow, ownerContext, {
-      'Meeting Details': '',
-      lead_status: LEAD_STATUS.DEMO_DONE,
-      Remarks: updatedRow.Remarks || ''
-    }, true);
+    try {
+      await syncSheetRow(updatedRow, ownerContext, {
+        'Meeting Details': '',
+        lead_status: LEAD_STATUS.DEMO_DONE,
+        Remarks: updatedRow.Remarks || ''
+      }, true);
+    } catch (error) {
+      console.error('TERMINAL_OUTCOME_SHEET_SYNC_POST_COMMIT_FAILED', {
+        deliveryId: commit.delivery.deliveryId,
+        sessionId,
+        status: LEAD_STATUS.DEMO_DONE,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      updatedRow.Remarks = `${updatedRow.Remarks || 'Demo completed.'} Sheet update requires retry.`;
+    }
   }
 
-  return { row: updatedRow, skipped: false, message: emailResult.message };
+  return { row: updatedRow, skipped: false, message: updatedRow.Remarks || emailResult.message };
 }
 
 export async function sendNoResponseForRow(
@@ -1368,19 +1404,33 @@ export async function sendNoResponseForRow(
     html: template.html
   });
 
-  const emailResult = await sendPendingOutcomeEmail({
-    context: ownerContext,
-    deliveryId: commit.delivery.deliveryId,
-    sessionId,
-    recipient,
-    status: LEAD_STATUS.NO_RESPONSE,
-    send: () =>
-      sendNoResponseEmail({
-        row: ownerRow,
-        senderAccountKey: senderAccountKeyForContext(ownerContext),
-        emailBrandKey: emailBrandKeyForContext(ownerContext)
-      })
-  });
+  let emailResult: Awaited<ReturnType<typeof sendPendingOutcomeEmail>>;
+  try {
+    emailResult = await sendPendingOutcomeEmail({
+      context: ownerContext,
+      deliveryId: commit.delivery.deliveryId,
+      sessionId,
+      recipient,
+      status: LEAD_STATUS.NO_RESPONSE,
+      send: () =>
+        sendNoResponseEmail({
+          row: ownerRow,
+          senderAccountKey: senderAccountKeyForContext(ownerContext),
+          emailBrandKey: emailBrandKeyForContext(ownerContext)
+        })
+    });
+  } catch (error) {
+    console.error('TERMINAL_OUTCOME_EMAIL_POST_COMMIT_FAILED', {
+      deliveryId: commit.delivery.deliveryId,
+      sessionId,
+      status: LEAD_STATUS.NO_RESPONSE,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    emailResult = {
+      sent: false,
+      message: terminalPostCommitErrorMessage(LEAD_STATUS.NO_RESPONSE, error)
+    };
+  }
 
   const updatedRow: ExcelRow = {
     ...ownerRow,
@@ -1394,14 +1444,24 @@ export async function sendNoResponseForRow(
   };
 
   if (!options.skipSheetSync) {
-    await syncSheetRow(updatedRow, ownerContext, {
-      'Meeting Details': '',
-      lead_status: LEAD_STATUS.NO_RESPONSE,
-      Remarks: updatedRow.Remarks || ''
-    }, true);
+    try {
+      await syncSheetRow(updatedRow, ownerContext, {
+        'Meeting Details': '',
+        lead_status: LEAD_STATUS.NO_RESPONSE,
+        Remarks: updatedRow.Remarks || ''
+      }, true);
+    } catch (error) {
+      console.error('TERMINAL_OUTCOME_SHEET_SYNC_POST_COMMIT_FAILED', {
+        deliveryId: commit.delivery.deliveryId,
+        sessionId,
+        status: LEAD_STATUS.NO_RESPONSE,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      updatedRow.Remarks = `${updatedRow.Remarks || 'Not Attended recorded.'} Sheet update requires retry.`;
+    }
   }
 
-  return { row: updatedRow, skipped: false, message: emailResult.message };
+  return { row: updatedRow, skipped: false, message: updatedRow.Remarks || emailResult.message };
 }
 
 export async function rescheduleDemoForRow(
@@ -1788,16 +1848,22 @@ export async function processScheduleRows(
 
     try {
       await assertStillCurrent();
-      const activeDemo = await assertCanCreateOrReuseActiveDemo(row, sheetContext.emailBrand);
+      const reservation = await reserveDemoScheduling(row, {
+        sourceType: options?.sheetContext?.sourceType || row.__sourceType,
+        sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
+        emailBrand: sheetContext.emailBrand,
+        senderAccountKey: senderAccountKeyForContext(sheetContext)
+      });
       let meetLink = existingMeetLink;
-      let calendarEventId = activeDemo?.state.calendarEventId || '';
+      let calendarEventId = reservation.calendarEventId || '';
       let startTime = parseExcelDateTime(row['Date of Demo'], row['Time of Demo']).getTime();
+      let createdCalendarEventId = '';
 
-      if (activeDemo?.state.meetingLink && activeDemo.state.calendarEventId) {
-        meetLink = activeDemo.state.meetingLink;
-        calendarEventId = activeDemo.state.calendarEventId;
-        if (activeDemo.state.demoStartUtc) {
-          const parsedStart = Date.parse(activeDemo.state.demoStartUtc);
+      if (reservation.meetLink && reservation.calendarEventId) {
+        meetLink = reservation.meetLink;
+        calendarEventId = reservation.calendarEventId;
+        if (reservation.state.demoStartUtc) {
+          const parsedStart = Date.parse(reservation.state.demoStartUtc);
           if (Number.isFinite(parsedStart)) startTime = parsedStart;
         }
         console.log('CALENDAR_EVENT_SKIPPED_ACTIVE_DEMO', {
@@ -1830,39 +1896,41 @@ export async function processScheduleRows(
           );
           meetLink = scheduleResult.meetLink;
           calendarEventId = scheduleResult.eventId;
+          createdCalendarEventId = scheduleResult.eventId;
           startTime = scheduleResult.startTime;
 
-          await assertStillCurrent();
-          await saveLeadScheduleSuccess(
-            { ...row, 'Meeting Details': meetLink },
-            {
-              meetingLink: meetLink,
-              calendarEventId,
-              remarks: 'Meeting link created; email pending',
-              status: 'Email Pending'
-            },
-            {
-              sourceType: options?.sheetContext?.sourceType || row.__sourceType,
-              sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-              emailBrand: sheetContext.emailBrand,
-              senderAccountKey: senderAccountKeyForContext(sheetContext)
+          try {
+            await assertStillCurrent();
+            await ensureScheduledDemoHistory(
+              { ...row, __demoSessionId: reservation.sessionId, 'Meeting Details': meetLink },
+              {
+                meetingLink: meetLink,
+                calendarEventId
+              },
+              {
+                sourceType: options?.sheetContext?.sourceType || row.__sourceType,
+                sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
+                emailBrand: sheetContext.emailBrand,
+                senderAccountKey: senderAccountKeyForContext(sheetContext)
+              }
+            );
+          } catch (finalizeError) {
+            try {
+              await cancelCalendarMeeting(createdCalendarEventId, senderAccountKeyForContext(sheetContext));
+            } catch (cancelError) {
+              console.error('CALENDAR_ORPHAN_CANCEL_FAILED', {
+                calendarEventId: createdCalendarEventId,
+                error: cancelError instanceof Error ? cancelError.message : String(cancelError)
+              });
             }
-          );
-
-          await assertStillCurrent();
-          await ensureScheduledDemoHistory(
-            { ...row, 'Meeting Details': meetLink },
-            {
-              meetingLink: meetLink,
-              calendarEventId
-            },
-            {
-              sourceType: options?.sheetContext?.sourceType || row.__sourceType,
-              sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-              emailBrand: sheetContext.emailBrand,
-              senderAccountKey: senderAccountKeyForContext(sheetContext)
-            }
-          );
+            await clearDemoSchedulingReservation(
+              row,
+              sheetContext.emailBrand,
+              reservation.sessionId,
+              finalizeError instanceof Error ? finalizeError.message : 'Calendar finalization failed.'
+            );
+            throw finalizeError;
+          }
         }
       }
 
@@ -1939,8 +2007,9 @@ export async function processScheduleRows(
 
       await assertStillCurrent();
       await saveLeadScheduleSuccess(
-        updatedRow,
+        { ...updatedRow, __demoSessionId: reservation.sessionId },
         {
+          demoSessionId: reservation.sessionId,
           meetingLink: meetLink,
           calendarEventId: calendarEventId || undefined,
           gmailMessageId,
@@ -1957,7 +2026,7 @@ export async function processScheduleRows(
 
       await assertStillCurrent();
       await ensureScheduledDemoHistory(
-        updatedRow,
+        { ...updatedRow, __demoSessionId: reservation.sessionId },
         {
           meetingLink: meetLink,
           calendarEventId,

@@ -57,24 +57,30 @@ async function main() {
     )
   );
 
-  findings.push(
-    await countAndSample('ACTIVE_STATE_WITHOUT_HISTORY',
-      () => prisma.customerDemoState.count({
-        where: {
-          activeDemoSessionId: { not: null },
-          demoHistory: { none: { status: LEAD_STATUS.DEMO_SCHEDULED } }
-        }
-      }),
-      () =>
-      prisma.customerDemoState.findMany({
-        where: {
-          activeDemoSessionId: { not: null },
-          demoHistory: { none: { status: LEAD_STATUS.DEMO_SCHEDULED } }
-        },
-        take: 10
-      })
-    )
-  );
+  const activeStateWithoutHistoryCount = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(*) AS count
+    FROM "CustomerDemoState" c
+    LEFT JOIN "DemoHistory" h
+      ON h."emailBrand" = c."emailBrand"
+     AND h."sessionId" = c."activeDemoSessionId"
+    WHERE c."activeDemoSessionId" IS NOT NULL
+      AND h."id" IS NULL
+  `;
+  const activeStateWithoutHistory = await prisma.$queryRaw<Array<{ activeDemoSessionId: string; emailBrand: string; userId: string }>>`
+    SELECT c."activeDemoSessionId", c."emailBrand", c."userId"
+    FROM "CustomerDemoState" c
+    LEFT JOIN "DemoHistory" h
+      ON h."emailBrand" = c."emailBrand"
+     AND h."sessionId" = c."activeDemoSessionId"
+    WHERE c."activeDemoSessionId" IS NOT NULL
+      AND h."id" IS NULL
+    LIMIT 10
+  `;
+  findings.push({
+    code: 'ACTIVE_STATE_WITHOUT_HISTORY',
+    count: Number(activeStateWithoutHistoryCount[0]?.count || 0),
+    samples: activeStateWithoutHistory
+  });
 
   findings.push(
     await countAndSample('TERMINAL_SCHEDULE_RETAINING_MEETING_LINK',
@@ -95,24 +101,30 @@ async function main() {
     )
   );
 
-  findings.push(
-    await countAndSample('ACTIVE_STATE_WITH_TERMINAL_HISTORY',
-      () => prisma.customerDemoState.count({
-        where: {
-          activeDemoSessionId: { not: null },
-          demoHistory: { some: { status: { in: [LEAD_STATUS.DEMO_DONE, LEAD_STATUS.NO_RESPONSE] } } }
-        }
-      }),
-      () =>
-      prisma.customerDemoState.findMany({
-        where: {
-          activeDemoSessionId: { not: null },
-          demoHistory: { some: { status: { in: [LEAD_STATUS.DEMO_DONE, LEAD_STATUS.NO_RESPONSE] } } }
-        },
-        take: 10
-      })
-    )
-  );
+  const activeStateWithTerminalHistoryCount = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(*) AS count
+    FROM "CustomerDemoState" c
+    JOIN "DemoHistory" h
+      ON h."emailBrand" = c."emailBrand"
+     AND h."sessionId" = c."activeDemoSessionId"
+    WHERE c."activeDemoSessionId" IS NOT NULL
+      AND h."status" IN (${LEAD_STATUS.DEMO_DONE}, ${LEAD_STATUS.NO_RESPONSE})
+  `;
+  const activeStateWithTerminalHistory = await prisma.$queryRaw<Array<{ activeDemoSessionId: string; emailBrand: string; userId: string; status: string }>>`
+    SELECT c."activeDemoSessionId", c."emailBrand", c."userId", h."status"
+    FROM "CustomerDemoState" c
+    JOIN "DemoHistory" h
+      ON h."emailBrand" = c."emailBrand"
+     AND h."sessionId" = c."activeDemoSessionId"
+    WHERE c."activeDemoSessionId" IS NOT NULL
+      AND h."status" IN (${LEAD_STATUS.DEMO_DONE}, ${LEAD_STATUS.NO_RESPONSE})
+    LIMIT 10
+  `;
+  findings.push({
+    code: 'ACTIVE_STATE_WITH_TERMINAL_HISTORY',
+    count: Number(activeStateWithTerminalHistoryCount[0]?.count || 0),
+    samples: activeStateWithTerminalHistory
+  });
 
   const duplicateAutomationByEmailCount = await prisma.$queryRaw<Array<{ count: bigint }>>`
     SELECT COUNT(*) AS count
@@ -198,6 +210,65 @@ async function main() {
   console.log(JSON.stringify({ mode: apply ? 'apply' : 'audit', findings }, null, 2));
 
   if (apply) {
+    const legacyStateAdoptions = await prisma.$executeRaw`
+      WITH unambiguous_email_automation AS (
+        SELECT
+          "emailBrand",
+          LOWER("email") AS "email",
+          MIN("automationId") AS "automationId"
+        FROM "LeadSchedule"
+        WHERE "automationId" IS NOT NULL
+          AND "automationId" <> ''
+          AND "email" IS NOT NULL
+          AND "email" <> ''
+        GROUP BY "emailBrand", LOWER("email")
+        HAVING COUNT(DISTINCT "automationId") = 1
+      ),
+      adoptable_state AS (
+        SELECT
+          c."id",
+          c."emailBrand",
+          c."userId" AS "legacyUserId",
+          u."automationId"
+        FROM "CustomerDemoState" c
+        JOIN unambiguous_email_automation u
+          ON u."emailBrand" = c."emailBrand"
+         AND u."email" = LOWER(c."email")
+        WHERE c."userId" LIKE '%@%'
+          AND LOWER(c."userId") = LOWER(c."email")
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "CustomerDemoState" existing
+            WHERE existing."emailBrand" = c."emailBrand"
+              AND existing."userId" = u."automationId"
+          )
+      )
+      UPDATE "CustomerDemoState" c
+      SET "userId" = a."automationId"
+      FROM adoptable_state a
+      WHERE c."id" = a."id"
+    `;
+    const legacyScheduleAutomationBackfill = await prisma.$executeRaw`
+      WITH unambiguous_email_automation AS (
+        SELECT
+          "emailBrand",
+          LOWER("email") AS "email",
+          MIN("automationId") AS "automationId"
+        FROM "LeadSchedule"
+        WHERE "automationId" IS NOT NULL
+          AND "automationId" <> ''
+          AND "email" IS NOT NULL
+          AND "email" <> ''
+        GROUP BY "emailBrand", LOWER("email")
+        HAVING COUNT(DISTINCT "automationId") = 1
+      )
+      UPDATE "LeadSchedule" s
+      SET "automationId" = u."automationId"
+      FROM unambiguous_email_automation u
+      WHERE s."emailBrand" = u."emailBrand"
+        AND LOWER(s."email") = u."email"
+        AND (s."automationId" IS NULL OR s."automationId" = '' OR s."automationId" LIKE '%@%')
+    `;
     const backfilled = await prisma.$executeRaw`
       WITH candidate_matches AS (
         SELECT
@@ -266,6 +337,8 @@ async function main() {
     });
     console.log(JSON.stringify({
       applied: {
+        legacyEmailStatesAdopted: Number(legacyStateAdoptions),
+        legacyScheduleAutomationIdsBackfilled: Number(legacyScheduleAutomationBackfill),
         legacyScheduleSessionIdsBackfilled: Number(backfilled),
         terminalScheduleMeetingLinksCleared: terminalCleanup.count
       }

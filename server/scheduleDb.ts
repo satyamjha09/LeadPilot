@@ -12,6 +12,9 @@ import type { EmailType } from './emailIdentity';
 
 const DEFAULT_TIMEZONE = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'Asia/Kolkata';
 const FORCE_CLOSED_STATUS = 'Force Closed';
+const SCHEDULING_RESERVED_STATUS = 'Scheduling Reserved';
+
+type PrismaTransaction = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 export function normalizeLeadEmail(email: unknown) {
   return String(email || '').trim().toLowerCase();
@@ -79,6 +82,94 @@ function isActiveDemo(state: {
     !!state.demoDate &&
     !!state.demoTime
   );
+}
+
+function isSchedulingReserved(state: {
+  status?: string | null;
+  activeDemoSessionId?: string | null;
+  meetingLink?: string | null;
+  calendarEventId?: string | null;
+}) {
+  return (
+    state.status === SCHEDULING_RESERVED_STATUS &&
+    !!state.activeDemoSessionId &&
+    !state.meetingLink &&
+    !state.calendarEventId
+  );
+}
+
+function assertHistoryMeetingStarted(history: { scheduledStartUtc?: string | null }, state: { demoStartUtc?: string | null }) {
+  const scheduledStartUtc = history.scheduledStartUtc || state.demoStartUtc;
+  const startMs = Date.parse(String(scheduledStartUtc || ''));
+  if (!Number.isFinite(startMs) || startMs > Date.now()) {
+    throw new Error('The scheduled meeting start time has not arrived yet.');
+  }
+}
+
+async function lockWorkflowSubject(tx: PrismaTransaction, emailBrand: string, userId: string) {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`demo-lifecycle:${emailBrand}:${userId}`}, 0))`;
+}
+
+async function loadCustomerDemoState(tx: PrismaTransaction, emailBrand: EmailBrandKey, userId: string) {
+  return tx.customerDemoState.findUnique({
+    where: {
+      emailBrand_userId: {
+        emailBrand,
+        userId
+      }
+    },
+    include: { demoHistory: { orderBy: { createdAt: 'desc' } } }
+  });
+}
+
+async function adoptLegacyCustomerDemoStateForRow(row: ExcelRow, emailBrand: EmailBrandKey) {
+  const userId = getLeadUserId(row);
+  const email = normalizeLeadEmail(row.email);
+  if (!userId || !email || userId.includes('@')) return null;
+
+  return prisma.$transaction(async (tx) => {
+    await lockWorkflowSubject(tx, emailBrand, userId);
+
+    const current = await loadCustomerDemoState(tx, emailBrand, userId);
+    if (current) return current;
+
+    const legacyMatches = await tx.customerDemoState.findMany({
+      where: {
+        emailBrand,
+        userId: { equals: email, mode: 'insensitive' },
+        email: { equals: email, mode: 'insensitive' }
+      },
+      include: { demoHistory: { orderBy: { createdAt: 'desc' } } },
+      take: 2
+    });
+
+    if (!legacyMatches.length) return null;
+    if (legacyMatches.length > 1) {
+      throw new Error('Multiple legacy active demo states match this customer. Manual review is required before continuing.');
+    }
+
+    const legacy = legacyMatches[0];
+    await tx.customerDemoState.update({
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId: legacy.userId
+        }
+      },
+      data: { userId }
+    });
+
+    await tx.leadSchedule.updateMany({
+      where: {
+        emailBrand,
+        email: { equals: email, mode: 'insensitive' },
+        OR: [{ automationId: null }, { automationId: '' }, { automationId: legacy.userId }]
+      },
+      data: { automationId: userId }
+    });
+
+    return loadCustomerDemoState(tx, emailBrand, userId);
+  });
 }
 
 async function forceCloseActiveDemoState(
@@ -157,7 +248,7 @@ async function forceCloseActiveDemoState(
 export async function getCustomerDemoState(row: ExcelRow, emailBrand: EmailBrandKey) {
   const userId = getLeadUserId(row);
   if (!userId) return null;
-  return prisma.customerDemoState.findUnique({
+  const state = await prisma.customerDemoState.findUnique({
     where: {
       emailBrand_userId: {
         emailBrand,
@@ -166,6 +257,8 @@ export async function getCustomerDemoState(row: ExcelRow, emailBrand: EmailBrand
     },
     include: { demoHistory: { orderBy: { createdAt: 'desc' } } }
   });
+  if (state) return state;
+  return adoptLegacyCustomerDemoStateForRow(row, emailBrand);
 }
 
 function requirePersistedSenderAccountKey(value: unknown): SenderAccountKey {
@@ -243,6 +336,174 @@ export async function assertCanCreateOrReuseActiveDemo(row: ExcelRow, emailBrand
   return active;
 }
 
+export async function reserveDemoScheduling(
+  row: ExcelRow,
+  options: { sourceType?: string; sourceId?: string; emailBrand: EmailBrandKey; senderAccountKey: SenderAccountKey }
+) {
+  const userId = getLeadUserId(row);
+  if (!userId) throw new Error('Permanent automation_id must be assigned before scheduling.');
+
+  const emailBrand = options.emailBrand;
+  const senderAccountKey = parseSenderAccountKey(options.senderAccountKey);
+  const displayDate = normalizeLeadDate(row['Date of Demo']);
+  const displayTime = normalizeLeadTime(row['Time of Demo']);
+  const email = normalizeLeadEmail(row.email);
+  const { scheduledStartUtc, scheduledEndUtc } = getScheduledWindow(row);
+
+  return prisma.$transaction(async (tx) => {
+    await lockWorkflowSubject(tx, emailBrand, userId);
+    const existingState = await tx.customerDemoState.findUnique({
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId
+        }
+      }
+    });
+
+    if (existingState && isActiveDemo(existingState)) {
+      const sameSlot =
+        normalizeLeadDate(existingState.demoDate) === displayDate &&
+        existingState.demoTime === displayTime;
+      if (!sameSlot) {
+        throw new Error('This customer already has an active demo. Use Reschedule.');
+      }
+      const history = existingState.activeDemoSessionId
+        ? await tx.demoHistory.findUnique({ where: { sessionId: existingState.activeDemoSessionId } })
+        : null;
+      return {
+        reserved: false as const,
+        sessionId: existingState.activeDemoSessionId || '',
+        state: existingState,
+        history,
+        meetLink: existingState.meetingLink || '',
+        calendarEventId: existingState.calendarEventId || ''
+      };
+    }
+
+    if (existingState && isSchedulingReserved(existingState)) {
+      const sameSlot =
+        normalizeLeadDate(existingState.demoDate) === displayDate &&
+        existingState.demoTime === displayTime;
+      if (sameSlot) {
+        throw new Error('Demo scheduling is already in progress for this customer.');
+      }
+      throw new Error('This customer already has an active demo reservation. Use Reschedule after it finishes.');
+    }
+
+    const sessionId = `demo_${randomUUID()}`;
+    const state = await tx.customerDemoState.upsert({
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId
+        }
+      },
+      create: {
+        emailBrand,
+        senderAccountKey,
+        userId,
+        fullName: row.full_name || null,
+        email,
+        status: SCHEDULING_RESERVED_STATUS,
+        activeDemoSessionId: sessionId,
+        meetingLink: null,
+        calendarEventId: null,
+        demoStartUtc: scheduledStartUtc,
+        demoEndUtc: scheduledEndUtc,
+        demoDate: displayDate,
+        demoTime: displayTime,
+        timezone: DEFAULT_TIMEZONE,
+        sourceType: options.sourceType || row.__sourceType || null,
+        sourceId: options.sourceId || row.__spreadsheetId || null,
+        sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
+      },
+      update: {
+        senderAccountKey,
+        fullName: row.full_name || null,
+        email,
+        status: SCHEDULING_RESERVED_STATUS,
+        activeDemoSessionId: sessionId,
+        meetingLink: null,
+        calendarEventId: null,
+        demoStartUtc: scheduledStartUtc,
+        demoEndUtc: scheduledEndUtc,
+        demoDate: displayDate,
+        demoTime: displayTime,
+        timezone: DEFAULT_TIMEZONE,
+        sourceType: options.sourceType || row.__sourceType || null,
+        sourceId: options.sourceId || row.__spreadsheetId || null,
+        sheetRowNumber: row.__sheetRowNumber || row.__sourceRowNumber || null
+      }
+    });
+
+    return {
+      reserved: true as const,
+      sessionId,
+      state,
+      history: null,
+      meetLink: '',
+      calendarEventId: ''
+    };
+  });
+}
+
+export async function clearDemoSchedulingReservation(
+  row: ExcelRow,
+  emailBrand: EmailBrandKey,
+  demoSessionId: string,
+  remarks = 'Scheduling failed before Calendar finalization.'
+) {
+  const userId = getLeadUserId(row);
+  if (!userId || !demoSessionId) return null;
+
+  return prisma.$transaction(async (tx) => {
+    await lockWorkflowSubject(tx, emailBrand, userId);
+    const state = await tx.customerDemoState.findUnique({
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId
+        }
+      }
+    });
+    if (!state || state.activeDemoSessionId !== demoSessionId || !isSchedulingReserved(state)) return null;
+    const updated = await tx.customerDemoState.update({
+      where: {
+        emailBrand_userId: {
+          emailBrand,
+          userId
+        }
+      },
+      data: {
+        status: 'Failed',
+        activeDemoSessionId: null,
+        meetingLink: null,
+        calendarEventId: null,
+        demoStartUtc: null,
+        demoEndUtc: null,
+        demoDate: null,
+        demoTime: null,
+        timezone: null,
+        sourceType: row.__sourceType || state.sourceType || null,
+        sourceId: row.__spreadsheetId || state.sourceId || null
+      }
+    });
+    await tx.leadSchedule.updateMany({
+      where: {
+        emailBrand,
+        demoSessionId,
+        status: SCHEDULING_RESERVED_STATUS
+      },
+      data: {
+        status: 'Failed',
+        remarks
+      }
+    });
+    return updated;
+  });
+}
+
 export async function ensureScheduledDemoHistory(
   row: ExcelRow,
   data: {
@@ -264,6 +525,7 @@ export async function ensureScheduledDemoHistory(
   const senderAccountKey = parseSenderAccountKey(options.senderAccountKey);
 
   return prisma.$transaction(async (tx) => {
+    await lockWorkflowSubject(tx, emailBrand, userId);
     const existingState = await tx.customerDemoState.findUnique({
       where: {
         emailBrand_userId: {
@@ -272,22 +534,27 @@ export async function ensureScheduledDemoHistory(
         }
       }
     });
-    let canReuseExistingActiveDemo = !!existingState && isActiveDemo(existingState);
+    const sameExistingSlot =
+      !!existingState &&
+      normalizeLeadDate(existingState.demoDate) === displayDate &&
+      existingState.demoTime === displayTime;
+    const canReuseExistingActiveDemo = !!existingState && isActiveDemo(existingState);
+    const canFinalizeReservation = !!existingState && isSchedulingReserved(existingState) && sameExistingSlot;
     if (existingState && canReuseExistingActiveDemo) {
-      const sameSlot =
-        normalizeLeadDate(existingState.demoDate) === displayDate &&
-        existingState.demoTime === displayTime;
       const sameMeeting =
         existingState.meetingLink === data.meetingLink &&
         existingState.calendarEventId === data.calendarEventId;
 
-      if (!sameSlot && !sameMeeting) {
+      if (!sameExistingSlot && !sameMeeting) {
         throw new Error('This customer already has an active demo. Use Reschedule.');
       }
     }
+    if (existingState && isSchedulingReserved(existingState) && !sameExistingSlot) {
+      throw new Error('This customer already has an active demo reservation. Use Reschedule after it finishes.');
+    }
 
     const sessionId =
-      existingState?.activeDemoSessionId && canReuseExistingActiveDemo
+      existingState?.activeDemoSessionId && (canReuseExistingActiveDemo || canFinalizeReservation)
         ? existingState.activeDemoSessionId
         : `demo_${randomUUID()}`;
 
@@ -394,8 +661,6 @@ export async function ensureScheduledDemoHistory(
     return { state, history };
   });
 }
-
-type PrismaTransaction = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 function sourceScheduleFields(row: ExcelRow) {
   return {
@@ -570,6 +835,7 @@ export async function rescheduleActiveDemoForRow(
   const { scheduledStartUtc, scheduledEndUtc } = getScheduledWindow(row);
 
   return prisma.$transaction(async (tx) => {
+    await lockWorkflowSubject(tx, emailBrand, userId);
     const state = await tx.customerDemoState.findUnique({
       where: {
         emailBrand_userId: {
@@ -670,6 +936,7 @@ export async function closeActiveDemoForRow(
   const timestamp = nowIso();
 
   return prisma.$transaction(async (tx) => {
+    await lockWorkflowSubject(tx, emailBrand, userId);
     const state = await tx.customerDemoState.findUnique({
       where: {
         emailBrand_userId: {
@@ -692,6 +959,7 @@ export async function closeActiveDemoForRow(
     if (history.status !== LEAD_STATUS.DEMO_SCHEDULED) {
       throw new Error('Active demo history record is not schedulable.');
     }
+    assertHistoryMeetingStarted(history, state);
     const owningSenderAccountKey = requirePersistedSenderAccountKey(
       state.senderAccountKey || history.senderAccountKey
     );
@@ -831,6 +1099,7 @@ export async function commitDemoOutcomeAndEmailIntent(
   const selectedSenderAccountKey = parseSenderAccountKey(input.senderAccountKey);
 
   return prisma.$transaction(async (tx) => {
+    await lockWorkflowSubject(tx, emailBrand, userId);
     const state = await tx.customerDemoState.findUnique({
       where: {
         emailBrand_userId: {
@@ -856,6 +1125,7 @@ export async function commitDemoOutcomeAndEmailIntent(
     if (history.status !== LEAD_STATUS.DEMO_SCHEDULED) {
       throw new Error('Active demo history record is not schedulable.');
     }
+    assertHistoryMeetingStarted(history, state);
     const owningSenderAccountKey = requirePersistedSenderAccountKey(
       state.senderAccountKey || history.senderAccountKey
     );
