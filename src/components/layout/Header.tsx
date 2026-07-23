@@ -291,7 +291,13 @@ export default function Header({
               )}
             </div>
 
-            <div className="hidden min-w-0 max-w-[290px] items-center gap-2 rounded-xl border bg-card px-3 py-2 text-sm shadow-sm md:flex">
+            <Button
+              type="button"
+              variant="outline"
+              className="hidden h-auto min-w-0 max-w-[290px] items-center gap-2 rounded-xl bg-card px-3 py-2 text-left text-sm shadow-sm md:flex"
+              onClick={() => onNavigate('import')}
+              aria-label="Open import leads"
+            >
               <FileSpreadsheet className="h-4 w-4 shrink-0 text-sky-600" />
               <div className="min-w-0">
                 <p className="truncate text-xs text-muted-foreground">Source</p>
@@ -300,7 +306,7 @@ export default function Header({
                 </p>
               </div>
               <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            </div>
+            </Button>
 
             {source.type === 'google-sheet' && onSyncNow && (
               <Button type="button" variant="outline" size="sm" onClick={onSyncNow} disabled={isSyncing}>
