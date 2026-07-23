@@ -73,6 +73,15 @@ function oauthCallbackErrorMessage(error: any) {
   return 'Google authentication could not be completed. Please try connecting again.';
 }
 
+function safeOAuthCallbackLog(error: any) {
+  return {
+    code: error?.code || 'UNKNOWN_GOOGLE_ERROR',
+    statusCode: error?.statusCode || error?.response?.status || 500,
+    senderAccountKey: error?.senderAccountKey || null,
+    name: error?.name || 'OAuthCallbackError'
+  };
+}
+
 export function registerAuthRoutes(app: Express) {
   app.get('/api/google-senders', async (_req, res) => {
     try {
@@ -228,7 +237,7 @@ export function registerAuthRoutes(app: Express) {
 
       return sendOAuthCallbackHtml(res, { senderAccountKey });
     } catch (err: any) {
-      console.error('Google callback error:', err);
+      console.error('Google callback error:', safeOAuthCallbackLog(err));
       const statusCode = err?.statusCode || 500;
       return sendOAuthCallbackHtml(res, {
         errorTitle: 'Authentication Exchange Failed',

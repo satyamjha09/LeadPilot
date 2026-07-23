@@ -68,6 +68,7 @@ describe('OAuth callback route hardening', () => {
   });
 
   it('renders controlled escaped errors without leaking callback secrets', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     googleAuthMock.exchangeCodeAndSaveFromState.mockRejectedValue(
       new Error('<script>alert(1)</script> code=SECRET_CODE state=SECRET_STATE refresh-token')
     );
@@ -84,6 +85,15 @@ describe('OAuth callback route hardening', () => {
     expect(response.text).not.toContain('SECRET_CODE');
     expect(response.text).not.toContain('SECRET_STATE');
     expect(response.text).not.toContain('refresh-token');
+    expect(consoleSpy).toHaveBeenCalledWith('Google callback error:', {
+      code: 'UNKNOWN_GOOGLE_ERROR',
+      statusCode: 500,
+      senderAccountKey: null,
+      name: 'Error'
+    });
+    expect(JSON.stringify(consoleSpy.mock.calls)).not.toContain('SECRET_CODE');
+    expect(JSON.stringify(consoleSpy.mock.calls)).not.toContain('refresh-token');
+    consoleSpy.mockRestore();
   });
 
   it('starts OAuth for the exact sender account with reconnect mode', async () => {
