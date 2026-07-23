@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Bell, CheckCircle2, ChevronDown, FileSpreadsheet, Key, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Sun, UserCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -81,12 +82,27 @@ export default function Header({
   sidebarCollapsed,
   onToggleSidebar
 }: HeaderProps) {
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const manualReviewCount = notificationCounts.manualReview;
   const emailLogsCount = notificationCounts.emailLogs;
   const notificationBadge = manualReviewCount > 99 ? '99+' : String(manualReviewCount);
   const profileInitials = getEmailInitials(operator.email);
   const activeAccount = activeAccounts.find((account) => account.key === activeAccountKey) || activeAccounts[0];
   const activeGoogleStatus = googleSenderStatuses[activeAccount.senderAccountKey] || authStatus;
+
+  useEffect(() => {
+    if (!accountMenuOpen) return undefined;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (accountMenuRef.current && !accountMenuRef.current.contains(event.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [accountMenuOpen]);
 
   const handleNotificationsClick = () => {
     if (manualReviewCount > 0) {
@@ -158,20 +174,28 @@ export default function Header({
               <Badge variant="destructive" className="hidden sm:inline-flex">Configure .env</Badge>
             ) : null}
 
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button type="button" variant="outline" size="sm" className="hidden h-11 min-w-[190px] justify-between rounded-xl md:inline-flex" />
-                }
+            <div ref={accountMenuRef} className="relative hidden md:block">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-11 min-w-[190px] justify-between rounded-xl"
+                aria-expanded={accountMenuOpen}
+                aria-haspopup="menu"
+                onClick={() => setAccountMenuOpen((open) => !open)}
               >
                 <span className="min-w-0 text-left">
                   <span className="block truncate text-xs text-muted-foreground">Active Account</span>
                   <span className="block truncate font-semibold">{activeAccount.label}</span>
                 </span>
                 <ChevronDown className="h-4 w-4 text-muted-foreground" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-80">
-                <DropdownMenuLabel>Business account</DropdownMenuLabel>
+              </Button>
+              {accountMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-50 mt-2 w-80 rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl"
+                >
+                  <div className="px-2 py-1 text-xs font-medium text-muted-foreground">Business account</div>
                 {activeAccounts.map((account) => {
                   const status = googleSenderStatuses[account.senderAccountKey];
                   const connected = !!status?.authenticated;
@@ -189,10 +213,22 @@ export default function Header({
                         ? 'Google not configured'
                         : 'Not connected';
                   return (
-                    <DropdownMenuItem
+                    <div
                       key={account.key}
-                      className="flex-col items-stretch gap-2 p-3"
-                      onClick={() => onSelectActiveAccount(account.key)}
+                      role="menuitem"
+                      tabIndex={0}
+                      className="cursor-pointer rounded-lg p-3 outline-none transition-colors hover:bg-accent focus:bg-accent"
+                      onClick={() => {
+                        onSelectActiveAccount(account.key);
+                        setAccountMenuOpen(false);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          onSelectActiveAccount(account.key);
+                          setAccountMenuOpen(false);
+                        }
+                      }}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -214,6 +250,7 @@ export default function Header({
                               variant="default"
                               onClick={(event) => {
                                 event.stopPropagation();
+                                setAccountMenuOpen(false);
                                 onConnectGoogle(account.senderAccountKey);
                               }}
                             >
@@ -227,6 +264,7 @@ export default function Header({
                               variant="outline"
                               onClick={(event) => {
                                 event.stopPropagation();
+                                setAccountMenuOpen(false);
                                 onVerifyGoogle(account.senderAccountKey);
                               }}
                             >
@@ -240,6 +278,7 @@ export default function Header({
                               variant="ghost"
                               onClick={(event) => {
                                 event.stopPropagation();
+                                setAccountMenuOpen(false);
                                 onDisconnectGoogle(account.senderAccountKey);
                               }}
                             >
@@ -248,11 +287,12 @@ export default function Header({
                           )}
                         </div>
                       </div>
-                    </DropdownMenuItem>
+                    </div>
                   );
                 })}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </div>
+              )}
+            </div>
 
             <div className="hidden min-w-0 max-w-[290px] items-center gap-2 rounded-xl border bg-card px-3 py-2 text-sm shadow-sm md:flex">
               <FileSpreadsheet className="h-4 w-4 shrink-0 text-sky-600" />
