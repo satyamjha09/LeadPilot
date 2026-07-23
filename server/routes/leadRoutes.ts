@@ -73,6 +73,7 @@ import {
   beginWorkflowResetWindow,
   finishWorkflowResetWindow
 } from '../workflowControl';
+import { ensureWorkflowAutomationIds } from '../workflowAutomationIds';
 import { buildSelectedTabWorkflowRows } from '../modules/source/ingestion/sourceIngestion.service';
 import { SourceValidationError } from '../modules/source/sourceErrors';
 
@@ -213,6 +214,22 @@ async function prepareProcessRequest(body: any, keys: ReturnType<typeof parsePro
       googleAccountKey
     }
   };
+}
+
+async function ensurePreparedWorkflowAutomationIds(
+  preparedRequest: PreparedProcessRequest,
+  keys: ReturnType<typeof parseProcessingKeys>,
+  headers: string[]
+) {
+  return ensureWorkflowAutomationIds(preparedRequest.rows, {
+    sourceType: preparedRequest.sourceType,
+    spreadsheetId: preparedRequest.spreadsheetId,
+    sheetName: preparedRequest.sheetName,
+    headers,
+    workspaceKey: keys.workspaceKey,
+    emailBrand: keys.emailBrandKey,
+    googleAccountKey: preparedRequest.googleAccountKey || keys.googleAccountKey
+  });
 }
 
 function getProvidedAdminResetToken(req: Request) {
@@ -491,7 +508,16 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           __originalColumns: headers
         }));
         const dbRows = await applyDbTruthToRows(preparedRows, keys.emailBrandKey);
-        const result = await processLeadsByStatus(dbRows, {
+        const workflowRows = await ensureWorkflowAutomationIds(dbRows, {
+          sourceType: 'google-sheet',
+          spreadsheetId,
+          sheetName,
+          headers,
+          workspaceKey: keys.workspaceKey,
+          emailBrand: keys.emailBrandKey,
+          googleAccountKey: keys.googleAccountKey
+        });
+        const result = await processLeadsByStatus(workflowRows, {
           sourceType: 'google-sheet',
           spreadsheetId,
           sheetName,
@@ -1012,7 +1038,21 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
     try {
       const keys = parseProcessingKeys(req.body as any);
       const preparedRequest = await prepareProcessRequest(req.body, keys);
-      const dbRows = preparedRequest.rows;
+      let headers = preparedRequest.headers || [];
+      if (preparedRequest.sourceType === 'google-sheet') {
+        if (!preparedRequest.spreadsheetId || !preparedRequest.sheetName) {
+          return res.status(400).json({ error: 'spreadsheetId and sheetName are required.' });
+        }
+        if (!headers.length) {
+          return res.status(400).json({ error: 'Google Sheet headers are required.' });
+        }
+        const ensured = await ensureRequiredColumns(preparedRequest.spreadsheetId, preparedRequest.sheetName, headers, {
+          workspaceKey: keys.workspaceKey,
+          googleAccountKey: preparedRequest.googleAccountKey || keys.googleAccountKey
+        });
+        headers = ensured.headers;
+      }
+      const dbRows = await ensurePreparedWorkflowAutomationIds(preparedRequest, keys, headers);
       const ownership = await assertProcessBatchLifecycleOwnership(
         dbRows,
         keys.emailBrandKey,
@@ -1099,7 +1139,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers = ensured.headers;
         }
 
-        const dbRows = preparedRequest.rows;
+        const dbRows = await ensurePreparedWorkflowAutomationIds(preparedRequest, keys, headers);
         await assertProcessBatchLifecycleOwnership(dbRows, keys.emailBrandKey, keys.senderAccountKey);
         const job = await createProcessLeadJob({
           sourceType: preparedRequest.sourceType,
@@ -1114,7 +1154,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           sourceId: preparedRequest.sourceId,
           sourceTabId: preparedRequest.sourceTabId,
           sourceSnapshotId: preparedRequest.sourceSnapshotId,
-          sourceRowIds: preparedRequest.rows.map((row) => row.__sourceRowId || row.id).filter(Boolean),
+          sourceRowIds: dbRows.map((row) => row.__sourceRowId || row.id).filter(Boolean),
           rows: dbRows
         });
         await enqueueProcessLeadJob(job.id, job.generation, keys.emailBrandKey);
@@ -1171,7 +1211,7 @@ export function registerLeadRoutes(app: Express, options: { runSheetSync: SheetS
           headers = ensured.headers;
         }
 
-        const dbRows = preparedRequest.rows;
+        const dbRows = await ensurePreparedWorkflowAutomationIds(preparedRequest, keys, headers);
         await assertProcessBatchLifecycleOwnership(dbRows, keys.emailBrandKey, keys.senderAccountKey);
         const result = await processLeadsByStatus(dbRows, {
           sourceType: preparedRequest.sourceType,

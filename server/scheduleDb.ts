@@ -782,6 +782,9 @@ async function saveLeadScheduleRow(
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
+  if (!keys.automationId) {
+    throw new Error('Permanent automation_id must be assigned before saving workflow data.');
+  }
 
   const emailBrand = options.emailBrand;
   const senderAccountKey = parseSenderAccountKey(options.senderAccountKey);

@@ -21,6 +21,7 @@ import { applyDbTruthToRows } from '../scheduleDb';
 import { withWorkflowActivity } from '../workflowActivity';
 import { assertWorkflowGenerationCurrent, isStaleWorkflowGenerationError } from '../workflowControl';
 import { coerceStoredEmailBrand } from '../../src/lib/emailBrand';
+import { assertWorkflowAutomationIds } from '../workflowAutomationIds';
 
 dotenv.config();
 
@@ -71,6 +72,7 @@ async function processLeadJob(jobId: string, queuedGeneration?: number) {
   await assertCurrentGeneration();
   await markProcessLeadJobRunning(jobId, input.rows.length);
   const dbRows = await applyDbTruthToRows(input.rows, input.emailBrand);
+  assertWorkflowAutomationIds(dbRows);
 
   const result = await withWorkflowActivity('lead-processing', input.emailBrand, async () =>
     processLeadsByStatus(dbRows, {
