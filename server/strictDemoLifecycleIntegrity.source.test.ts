@@ -134,4 +134,24 @@ describe('strict demo lifecycle integrity source guards', () => {
     expect(permanentAutomationId).toContain('pg_advisory_xact_lock(hashtextextended');
     expect(permanentAutomationId).toContain('))::text');
   });
+
+  it('recovers selected source rows after source row identity or snapshot version changes', () => {
+    const source = readRepoFile('server', 'modules', 'source', 'ingestion', 'sourceIngestion.repository.ts');
+
+    expect(source).toContain('const directlySelectedRows = await prisma.sourceRow.findMany({');
+    expect(source).toContain('const historicalRows = await prisma.sourceRow.findMany({');
+    expect(source).toContain('const recoveredByRowNumber = new Map(');
+    expect(source).toContain('if (resolved.size !== selectedIds.length)');
+    expect(source).toContain('One or more selected source rows were not found in this tab.');
+  });
+
+  it('keeps UI lifecycle status choices when rebuilding selected-tab workflow rows', () => {
+    const source = readRepoFile('server', 'routes', 'leadRoutes.ts');
+
+    expect(source).toContain('function mergeClientSelectedRows(serverRows: ExcelRow[], bodyRows: unknown)');
+    expect(source).toContain('lead_status');
+    expect(source).toContain('rows: mergeClientSelectedRows(prepared.rows, body?.rows)');
+    expect(source).toContain('__sourceRowId: serverRow.__sourceRowId');
+    expect(source).toContain('__sourceSnapshotId: serverRow.__sourceSnapshotId');
+  });
 });

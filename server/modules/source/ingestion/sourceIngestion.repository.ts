@@ -371,10 +371,87 @@ export async function listAllActiveSourceRowsForTab(input: {
   batchSize?: number;
 }) {
   const take = input.batchSize && input.batchSize > 0 ? Math.min(input.batchSize, 500) : 250;
-  const selectedIds = input.selectedSourceRowIds?.filter(Boolean);
+  const selectedIds = Array.from(new Set(input.selectedSourceRowIds?.filter(Boolean) || []));
   const snapshot = input.sourceSnapshotId
     ? await getSourceSnapshotForTab(input.sourceId, input.sourceTabId, input.sourceSnapshotId)
     : null;
+
+  if (selectedIds.length > 0) {
+    const directlySelectedRows = await prisma.sourceRow.findMany({
+      where: {
+        dataSourceId: input.sourceId,
+        sourceTabId: input.sourceTabId,
+        isActive: true,
+        id: { in: selectedIds }
+      },
+      orderBy: [{ rowNumber: 'asc' }, { id: 'asc' }]
+    });
+
+    if (directlySelectedRows.length === selectedIds.length) return directlySelectedRows;
+
+    const historicalRows = await prisma.sourceRow.findMany({
+      where: {
+        dataSourceId: input.sourceId,
+        sourceTabId: input.sourceTabId,
+        id: { in: selectedIds }
+      },
+      select: { id: true, externalRowId: true, rowNumber: true }
+    });
+    const historicalById = new Map(historicalRows.map((row) => [row.id, row]));
+    const rowNumbers = Array.from(
+      new Set(
+        historicalRows
+          .map((row) => row.rowNumber)
+          .filter((rowNumber): rowNumber is number => typeof rowNumber === 'number')
+      )
+    );
+    const externalRowIds = Array.from(new Set(historicalRows.map((row) => row.externalRowId).filter(Boolean)));
+    const recoveredRows =
+      rowNumbers.length || externalRowIds.length
+        ? await prisma.sourceRow.findMany({
+            where: {
+              dataSourceId: input.sourceId,
+              sourceTabId: input.sourceTabId,
+              isActive: true,
+              OR: [
+                ...(externalRowIds.length ? [{ externalRowId: { in: externalRowIds } }] : []),
+                ...(rowNumbers.length ? [{ rowNumber: { in: rowNumbers } }] : [])
+              ]
+            },
+            orderBy: [{ rowNumber: 'asc' }, { id: 'asc' }]
+          })
+        : [];
+
+    const directById = new Map(directlySelectedRows.map((row) => [row.id, row]));
+    const recoveredByExternalId = new Map(recoveredRows.map((row) => [row.externalRowId, row]));
+    const recoveredByRowNumber = new Map(
+      recoveredRows
+        .filter((row) => typeof row.rowNumber === 'number')
+        .map((row) => [row.rowNumber as number, row])
+    );
+    const resolved = new Map<string, SourceRow>();
+
+    for (const selectedId of selectedIds) {
+      const direct = directById.get(selectedId);
+      if (direct) {
+        resolved.set(direct.id, direct);
+        continue;
+      }
+
+      const historical = historicalById.get(selectedId);
+      const current =
+        (historical?.externalRowId ? recoveredByExternalId.get(historical.externalRowId) : undefined) ||
+        (typeof historical?.rowNumber === 'number' ? recoveredByRowNumber.get(historical.rowNumber) : undefined);
+      if (current) resolved.set(current.id, current);
+    }
+
+    if (resolved.size !== selectedIds.length) {
+      throw new SourceNotFoundError('One or more selected source rows were not found in this tab.', 'SOURCE_ROW_NOT_FOUND');
+    }
+
+    return Array.from(resolved.values()).sort((a, b) => (a.rowNumber || 0) - (b.rowNumber || 0) || a.id.localeCompare(b.id));
+  }
+
   const rows: SourceRow[] = [];
   let cursor: string | undefined;
 
@@ -394,10 +471,6 @@ export async function listAllActiveSourceRowsForTab(input: {
     rows.push(...batch);
     if (batch.length < take) break;
     cursor = batch[batch.length - 1].id;
-  }
-
-  if (selectedIds?.length && rows.length !== new Set(selectedIds).size) {
-    throw new SourceNotFoundError('One or more selected source rows were not found in this tab.', 'SOURCE_ROW_NOT_FOUND');
   }
 
   return rows;

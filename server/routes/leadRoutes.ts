@@ -155,6 +155,59 @@ function selectedSourceIdsFromBody(body: any) {
   return { sourceId, sourceTabId, sourceSnapshotId, selectedSourceRowIds };
 }
 
+function rowNumberKeys(row: ExcelRow) {
+  return [row.__sourceRowNumber, row.__sheetRowNumber]
+    .map((value) => Number(value || 0))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .map((value) => `row-number:${value}`);
+}
+
+function selectedRowKeys(row: ExcelRow) {
+  return [row.__sourceRowId, row.id, ...rowNumberKeys(row)]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+}
+
+function mergeClientSelectedRows(serverRows: ExcelRow[], bodyRows: unknown): ExcelRow[] {
+  if (!Array.isArray(bodyRows) || bodyRows.length === 0) return serverRows;
+
+  const clientRowsByKey = new Map<string, ExcelRow>();
+  for (const row of bodyRows) {
+    if (!row || typeof row !== 'object') continue;
+    const clientRow = row as ExcelRow;
+    for (const key of selectedRowKeys(clientRow)) {
+      if (!clientRowsByKey.has(key)) clientRowsByKey.set(key, clientRow);
+    }
+  }
+
+  return serverRows.map((serverRow) => {
+    const clientRow = selectedRowKeys(serverRow)
+      .map((key) => clientRowsByKey.get(key))
+      .find(Boolean);
+    if (!clientRow) return serverRow;
+
+    return {
+      ...serverRow,
+      ...clientRow,
+      id: serverRow.id,
+      __originalColumns: serverRow.__originalColumns,
+      __sourceType: serverRow.__sourceType,
+      __workspaceKey: serverRow.__workspaceKey,
+      __sourceId: serverRow.__sourceId,
+      __sourceTabId: serverRow.__sourceTabId,
+      __sourceRowId: serverRow.__sourceRowId,
+      __sourceSnapshotId: serverRow.__sourceSnapshotId,
+      __sourceRowNumber: serverRow.__sourceRowNumber,
+      __sheetRowNumber: serverRow.__sheetRowNumber,
+      __spreadsheetId: serverRow.__spreadsheetId,
+      __sheetName: serverRow.__sheetName,
+      __externalTabId: serverRow.__externalTabId,
+      __emailBrand: serverRow.__emailBrand,
+      automation_id: String(clientRow.automation_id || serverRow.automation_id || '')
+    };
+  });
+}
+
 async function prepareProcessRequest(body: any, keys: ReturnType<typeof parseProcessingKeys>): Promise<PreparedProcessRequest> {
   const selected = selectedSourceIdsFromBody(body);
   const isSelectedSourceFlow = Boolean(selected.sourceId || selected.sourceTabId || selected.sourceSnapshotId);
@@ -193,7 +246,7 @@ async function prepareProcessRequest(body: any, keys: ReturnType<typeof parsePro
       : keys.googleAccountKey;
 
   return {
-    rows: prepared.rows,
+    rows: mergeClientSelectedRows(prepared.rows, body?.rows),
     sourceType,
     spreadsheetId: sourceType === 'google-sheet' ? prepared.source.externalFileId || undefined : undefined,
     sheetName: sourceType === 'google-sheet' ? prepared.tab.name : undefined,
