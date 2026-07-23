@@ -613,14 +613,11 @@ export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLea
         row: failureRow(row, TIME_CONFLICT_REMARK),
         reason: TIME_CONFLICT_REMARK
       }));
-    plan.invalidRows.push(...plan.timeConflictRows);
     plan.summary.timeConflicts = plan.timeConflictRows.length;
   }
 
   for (const row of rows) {
     const normalized = normalizeLeadStatus(row.lead_status);
-
-    if (conflictRowIds.has(row.id)) continue;
 
     if (row.__dbFinalState) {
       const reason = `${normalized || 'Lead'} already finalized in database.`;
@@ -1587,7 +1584,7 @@ export async function processScheduleRows(
   }
 
   const timeConflictGroups = findTimeConflictGroups(rows);
-  const conflictRowIds = new Set(timeConflictGroups.flatMap((group) => group.rowIds));
+  summary.timeConflicts = timeConflictGroups.reduce((total, group) => total + group.count, 0);
   const assertStillCurrent = () => assertWorkflowStillValid(options?.sheetContext);
   const notifyScheduleRowProcessed = async (row: ExcelRow, index: number) => {
     await assertStillCurrent();
@@ -1613,24 +1610,6 @@ export async function processScheduleRows(
     };
 
     const forceNewSchedule = !!options?.forceNewSchedule;
-    if (conflictRowIds.has(row.id)) {
-      const updatedRow = failureRow(row, TIME_CONFLICT_REMARK);
-      await assertStillCurrent();
-      await saveLeadScheduleFailure(updatedRow, TIME_CONFLICT_REMARK, {
-        sourceType: options?.sheetContext?.sourceType || row.__sourceType,
-        sourceId: options?.sheetContext?.spreadsheetId || row.__spreadsheetId,
-        emailBrand: requiredEmailBrand,
-        senderAccountKey: requiredSenderAccountKey
-      });
-      results.push(updatedRow);
-      summary.failed++;
-      summary.timeConflicts = (summary.timeConflicts || 0) + 1;
-      logResult('Failed');
-      await notifyScheduleRowProcessed(updatedRow, index);
-      if (index < rows.length - 1) await delay(1000);
-      continue;
-    }
-
     const existingMeetLink = !forceNewSchedule && hasGoogleMeetLink(row['Meeting Details'])
       ? String(row['Meeting Details'])
       : '';

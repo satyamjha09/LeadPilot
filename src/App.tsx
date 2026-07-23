@@ -1516,7 +1516,7 @@ export default function App() {
 
   const isAuthActive = authMatchesSelection;
   const showLeadsSection = rows.length > 0 && activeView === 'leads';
-  const showImport = activeView === 'leads' || activeView === 'import';
+  const showImport = activeView === 'import' || (activeView === 'leads' && rows.length === 0);
   const viewCopy = getViewCopy(activeView);
 
   if (isOperatorChecking) {

@@ -154,18 +154,9 @@ function selectedSourceIdsFromBody(body: any) {
   return { sourceId, sourceTabId, sourceSnapshotId, selectedSourceRowIds };
 }
 
-function hasMultiSourceRows(rows: unknown) {
-  return Array.isArray(rows)
-    ? rows.some((row: any) => row?.__sourceId || row?.__sourceTabId || row?.__sourceRowId || row?.__sourceSnapshotId)
-    : false;
-}
-
 async function prepareProcessRequest(body: any, keys: ReturnType<typeof parseProcessingKeys>): Promise<PreparedProcessRequest> {
   const selected = selectedSourceIdsFromBody(body);
   const isSelectedSourceFlow = Boolean(selected.sourceId || selected.sourceTabId || selected.sourceSnapshotId);
-  if (hasMultiSourceRows(body?.rows) && !isSelectedSourceFlow) {
-    throw new SourceValidationError('sourceId, sourceTabId and sourceSnapshotId are required for multi-source rows.', 'MIXED_SOURCE_TAB_BATCH');
-  }
 
   if (!isSelectedSourceFlow) {
     if (!Array.isArray(body?.rows)) {
