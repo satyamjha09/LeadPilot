@@ -41,19 +41,20 @@ describe('GoogleSheetsSourceAdapter', () => {
     ).rejects.toThrow('Invalid Google Sheets URL');
   });
 
-  it('discovers tabs, reads row 1 only, and uses the workspace brand client', async () => {
+  it('discovers tabs, reads row 1 only, and uses the selected Google account client', async () => {
     const mockSheets = createMockSheetsClient();
     const sheetsFactory = vi.fn(async () => mockSheets as any);
     const adapter = new GoogleSheetsSourceAdapter({ sheetsFactory });
 
     const inspected = await adapter.inspect(
       {
-        sheetUrl: 'https://docs.google.com/spreadsheets/d/sheet123/edit#gid=12345'
+        sheetUrl: 'https://docs.google.com/spreadsheets/d/sheet123/edit#gid=12345',
+        googleAccountKey: 'tallykonnect-google'
       },
       { workspaceId: 'w1', workspaceKey: 'anywheretally' }
     );
 
-    expect(sheetsFactory).toHaveBeenCalledWith('anywheretally');
+    expect(sheetsFactory).toHaveBeenCalledWith('tallykonnect-google');
     expect(inspected).toMatchObject({
       type: 'GOOGLE_SHEETS',
       externalFileId: 'sheet123',

@@ -3,7 +3,7 @@ import type { DataSource, DataSourceTab } from '@prisma/client';
 
 import { getVerifiedOAuthClient } from '../../../googleAuth';
 import { parseEmailBrand } from '../../../../src/lib/emailBrand';
-import { defaultSenderAccountForBrand } from '../../../../src/lib/senderAccount';
+import { defaultSenderAccountForBrand, parseSenderAccountKey, type SenderAccountKey } from '../../../../src/lib/senderAccount';
 import { createHeaderHash, normalizeSourceHeaders } from '../sourceHeaders';
 import type { SourceReader } from './sourceReader';
 import type { ReadSourceTabResult } from './sourceIngestion.types';
@@ -11,15 +11,15 @@ import type { ReadSourceTabResult } from './sourceIngestion.types';
 type SheetsClient = ReturnType<typeof google.sheets>;
 
 export type GoogleSheetsSourceReaderOptions = {
-  sheetsFactory?: (brand: ReturnType<typeof parseEmailBrand>) => Promise<SheetsClient>;
+  sheetsFactory?: (googleAccountKey: SenderAccountKey) => Promise<SheetsClient>;
 };
 
 function quoteSheetName(sheetName: string) {
   return `'${sheetName.replace(/'/g, "''")}'`;
 }
 
-async function defaultSheetsFactory(brand: ReturnType<typeof parseEmailBrand>) {
-  const oauth2Client = await getVerifiedOAuthClient(defaultSenderAccountForBrand(brand));
+async function defaultSheetsFactory(googleAccountKey: SenderAccountKey) {
+  const oauth2Client = await getVerifiedOAuthClient(googleAccountKey);
   return google.sheets({ version: 'v4', auth: oauth2Client });
 }
 
@@ -44,7 +44,10 @@ export class GoogleSheetsSourceReader implements SourceReader {
     }
 
     const brand = parseEmailBrand(input.workspaceKey);
-    const sheets = await this.sheetsFactory(brand);
+    const googleAccountKey = input.source.googleAccountKey
+      ? parseSenderAccountKey(input.source.googleAccountKey)
+      : defaultSenderAccountForBrand(brand);
+    const sheets = await this.sheetsFactory(googleAccountKey);
     const metadata = await sheets.spreadsheets.get({ spreadsheetId: input.source.externalFileId });
     const currentTabs = new Map(
       (metadata.data.sheets || []).map((sheet) => [String(sheet.properties?.sheetId), sheet.properties?.title || ''])

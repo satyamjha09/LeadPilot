@@ -81,6 +81,7 @@ vi.mock('./db', () => ({
 const {
   consumeGoogleOAuthState,
   createGoogleOAuthState,
+  createSenderAuthUrlForOperator,
   exchangeCodeAndSave,
   exchangeCodeAndSaveFromState,
   getAuthStatus,
@@ -106,11 +107,15 @@ describe('Google OAuth account verification', () => {
     vi.clearAllMocks();
     process.env.GOOGLE_CLIENT_ID = 'tally-client';
     process.env.GOOGLE_CLIENT_SECRET = 'tally-secret';
+    process.env.GOOGLE_TALLYKONNECT_CLIENT_ID = 'tally-client';
+    process.env.GOOGLE_TALLYKONNECT_CLIENT_SECRET = 'tally-secret';
+    process.env.GOOGLE_TALLYKONNECT_REDIRECT_URI = 'http://localhost:3000/api/auth/callback/google';
     process.env.GOOGLE_AUTH_EMAIL = 'demo.tallykonnect@gmail.com';
     process.env.GOOGLE_TALLYKONNECT_AUTH_EMAIL = 'demo.tallykonnect@gmail.com';
     process.env.GMAIL_FROM_EMAIL = 'demo.tallykonnect@gmail.com';
     process.env.GOOGLE_ANYWHERETALLY_CLIENT_ID = 'awt-client';
     process.env.GOOGLE_ANYWHERETALLY_CLIENT_SECRET = 'awt-secret';
+    process.env.GOOGLE_ANYWHERETALLY_REDIRECT_URI = 'http://localhost:3000/api/auth/callback/google';
     process.env.GOOGLE_ANYWHERETALLY_AUTH_EMAIL = 'info.anywheretally@gmail.com';
     process.env.GMAIL_ANYWHERETALLY_FROM_EMAIL = 'info.anywheretally@gmail.com';
     delete process.env.GOOGLE_REFRESH_TOKEN;
@@ -294,8 +299,14 @@ describe('Google OAuth account verification', () => {
     });
   });
 
-  it('includes Google identity scopes in generated auth URLs', async () => {
+  it('keeps status read-only and includes Google identity scopes in explicit connect URLs', async () => {
     await getAuthStatus('tallykonnect');
+    expect(googleMock.generateAuthUrl).not.toHaveBeenCalled();
+
+    await createSenderAuthUrlForOperator('tallykonnect-google', {
+      operatorId: 'operator-1',
+      operatorSessionId: 'session-1'
+    });
 
     expect(googleMock.generateAuthUrl).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -304,9 +315,60 @@ describe('Google OAuth account verification', () => {
           'https://www.googleapis.com/auth/userinfo.email'
         ]),
         state: expect.any(String),
-        login_hint: 'demo.tallykonnect@gmail.com'
+        login_hint: 'demo.tallykonnect@gmail.com',
+        prompt: 'select_account'
       })
     );
+  });
+
+  it('uses consent prompt for deliberate reconnect mode', async () => {
+    await createSenderAuthUrlForOperator(
+      'anywheretally-google',
+      { operatorId: 'operator-1', operatorSessionId: 'session-1' },
+      { mode: 'RECONNECT' }
+    );
+
+    expect(googleMock.generateAuthUrl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        login_hint: 'info.anywheretally@gmail.com',
+        prompt: 'consent select_account'
+      })
+    );
+  });
+
+  it('rejects missing refresh token on a new connection before persistence', async () => {
+    googleMock.getToken.mockResolvedValue({
+      tokens: {
+        access_token: 'access-only',
+        expiry_date: Date.now() + 60_000
+      }
+    });
+
+    await expect(exchangeCodeAndSave('code-no-refresh', 'tallykonnect')).rejects.toMatchObject({
+      code: 'REFRESH_TOKEN_MISSING'
+    });
+
+    expect(prismaMock.googleAuth.upsert).not.toHaveBeenCalled();
+  });
+
+  it('reports sender-specific production configuration without generic fallback', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    delete process.env.GOOGLE_TALLYKONNECT_CLIENT_ID;
+    delete process.env.GOOGLE_TALLYKONNECT_CLIENT_SECRET;
+    process.env.GOOGLE_CLIENT_ID = 'legacy-client';
+    process.env.GOOGLE_CLIENT_SECRET = 'legacy-secret';
+
+    const status = await getAuthStatus('tallykonnect-google');
+
+    expect(status).toMatchObject({
+      configured: false,
+      clientIdConfigured: false,
+      clientSecretConfigured: false,
+      statusCode: 'CLIENT_ID_MISSING'
+    });
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
   });
 
   it('stores only a hashed high-entropy OAuth state', async () => {
@@ -329,7 +391,7 @@ describe('Google OAuth account verification', () => {
     });
 
     await expect(exchangeCodeAndSaveFromState('secret-code', 'expired-state')).rejects.toMatchObject({
-      code: 'INVALID_OAUTH_STATE'
+      code: 'OAUTH_STATE_EXPIRED'
     });
 
     expect(prismaMock.googleOAuthState.updateMany).not.toHaveBeenCalled();
@@ -346,7 +408,7 @@ describe('Google OAuth account verification', () => {
     prismaMock.googleOAuthState.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(consumeGoogleOAuthState('already-used-state')).rejects.toMatchObject({
-      code: 'INVALID_OAUTH_STATE'
+      code: 'OAUTH_STATE_ALREADY_USED'
     });
 
     prismaMock.googleOAuthState.updateMany

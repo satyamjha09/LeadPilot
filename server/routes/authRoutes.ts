@@ -3,6 +3,8 @@ import {
   clearSenderCredentials,
   createSenderAuthUrlForOperator,
   exchangeCodeAndSaveFromState,
+  getGoogleAccountDiagnostics,
+  GOOGLE_OAUTH_MESSAGE_TYPE,
   getSenderAuthStatus,
   listGoogleSenderAccounts
 } from '../googleAuth';
@@ -21,10 +23,18 @@ function escapeHtml(value: unknown) {
 
 function sendOAuthCallbackHtml(
   res: Response,
-  input: { senderAccountKey?: string; errorTitle?: string; message?: string; statusCode?: number }
+  input: { senderAccountKey?: string; errorTitle?: string; message?: string; statusCode?: number; code?: string }
 ) {
   const success = !!input.senderAccountKey && !input.errorTitle;
   const statusCode = input.statusCode || (success ? 200 : 400);
+  const targetOrigin = process.env.APP_ORIGIN || 'http://localhost:3000';
+  const message = {
+    type: GOOGLE_OAUTH_MESSAGE_TYPE,
+    status: success ? 'success' : 'error',
+    senderAccountKey: input.senderAccountKey || null,
+    code: input.code || (success ? 'CONNECTED' : 'UNKNOWN_GOOGLE_ERROR'),
+    message: input.message || (success ? 'LeadPilot has been linked with your Google account.' : 'Google authentication could not be completed.')
+  };
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   res.setHeader('Pragma', 'no-cache');
   return res.status(statusCode).send(`
@@ -35,14 +45,14 @@ function sendOAuthCallbackHtml(
           <p style="color: #4b5563; margin-bottom: 1.5rem;">${escapeHtml(input.message || (success ? 'LeadPilot has been linked with your Google account.' : 'Google authentication could not be completed.'))}</p>
           <p style="color: #9ca3af; font-size: 0.875rem;">${success ? 'This window will close automatically...' : 'You can close this window and try again.'}</p>
         </div>
-        ${success ? `<script>
+        <script>
           if (window.opener) {
-            window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', senderAccountKey: ${JSON.stringify(input.senderAccountKey)} }, window.location.origin);
-            setTimeout(function() { window.close(); }, 2000);
+            window.opener.postMessage(${JSON.stringify(message)}, ${JSON.stringify(targetOrigin)});
+            ${success ? 'setTimeout(function() { window.close(); }, 1200);' : ''}
           } else {
-            window.location.href = '/';
+            ${success ? "window.location.href = '/';" : ''}
           }
-        </script>` : ''}
+        </script>
       </body>
     </html>
   `);
@@ -54,9 +64,12 @@ function oauthCallbackErrorMessage(error: any) {
     const connected = error.connectedEmail || 'a different Google account';
     return `Connected account ${connected} does not match expected account ${expected}.`;
   }
-  if (error?.code === 'INVALID_OAUTH_STATE') {
+  if (error?.code === 'OAUTH_STATE_EXPIRED') {
     return 'This Google authorization session expired or was already used.';
   }
+  if (error?.code === 'OAUTH_STATE_ALREADY_USED') return 'This Google authorization link was already used.';
+  if (error?.code === 'OAUTH_SESSION_MISMATCH') return 'This Google authorization was started from a different LeadPilot login session.';
+  if (error?.code === 'REFRESH_TOKEN_MISSING') return 'Google did not return offline access. Start Reconnect and approve all requested permissions.';
   return 'Google authentication could not be completed. Please try connecting again.';
 }
 
@@ -73,6 +86,17 @@ export function registerAuthRoutes(app: Express) {
     }
   });
 
+  app.get('/api/google/accounts/status', async (_req, res) => {
+    try {
+      const accounts = await listGoogleSenderAccounts();
+      return res.json({
+        accounts: Object.fromEntries(accounts.map((account) => [account.key, account]))
+      });
+    } catch (err: any) {
+      return sendRouteError(res, err, 'Google sender status failed');
+    }
+  });
+
   app.get('/api/google-senders/:senderAccountKey/status', async (req, res) => {
     try {
       const context = req.operator && req.operatorSession
@@ -85,30 +109,58 @@ export function registerAuthRoutes(app: Express) {
     }
   });
 
-  app.get('/api/google-senders/:senderAccountKey/connect', async (req, res) => {
+  app.post('/api/google-senders/:senderAccountKey/connect', async (req, res) => {
     try {
       const senderAccountKey = parseSenderAccountKey(req.params.senderAccountKey);
       if (!req.operator || !req.operatorSession) {
         return res.status(401).json({ error: 'Operator login required.' });
       }
+      const mode: 'CONNECT' | 'RECONNECT' =
+        String((req.body as any)?.mode || 'CONNECT').toUpperCase() === 'RECONNECT' ? 'RECONNECT' : 'CONNECT';
       const authUrl = await createSenderAuthUrlForOperator(senderAccountKey, {
         operatorId: req.operator.id,
         operatorSessionId: req.operatorSession.id
-      });
-      if (!authUrl) return res.status(503).json({ error: 'Google sender account is not configured.' });
-      if (req.query.redirect === 'false') return res.json({ authUrl, senderAccountKey });
-      return res.redirect(authUrl);
+      }, { mode });
+      if (!authUrl) {
+        return res.status(503).json({
+          error: 'Google sender account is not configured.',
+          code: 'NOT_CONFIGURED',
+          status: await getGoogleAccountDiagnostics(senderAccountKey)
+        });
+      }
+      return res.json({ authUrl, senderAccountKey, mode });
     } catch (err: any) {
       return sendRouteError(res, err, 'Google sender connect failed');
+    }
+  });
+
+  app.get('/api/google-senders/:senderAccountKey/connect', async (_req, res) => {
+    return res.status(405).json({ error: 'Use POST to start Google OAuth.', code: 'METHOD_NOT_ALLOWED' });
+  });
+
+  app.post('/api/google-senders/:senderAccountKey/verify', async (req, res) => {
+    try {
+      const senderAccountKey = parseSenderAccountKey(req.params.senderAccountKey);
+      const status = await getGoogleAccountDiagnostics(senderAccountKey, { verify: true });
+      return res.json({ success: status.authenticated, status });
+    } catch (err: any) {
+      return sendRouteError(res, err, 'Google sender verification failed');
     }
   });
 
   app.post('/api/google-senders/:senderAccountKey/disconnect', async (req, res) => {
     try {
       const senderAccountKey = parseSenderAccountKey(req.params.senderAccountKey);
-      await clearSenderCredentials(senderAccountKey);
+      const disconnect = await clearSenderCredentials(senderAccountKey);
       const status = await getSenderAuthStatus(senderAccountKey);
-      return res.json({ success: true, message: 'Google sender account disconnected.', status });
+      return res.json({
+        success: true,
+        message: disconnect.revokeFailed
+          ? 'Google sender account disconnected locally. Google token revocation could not be confirmed.'
+          : 'Google sender account disconnected.',
+        revokeFailed: disconnect.revokeFailed,
+        status
+      });
     } catch (err: any) {
       return sendRouteError(res, err, 'Google sender disconnect failed');
     }
@@ -146,6 +198,7 @@ export function registerAuthRoutes(app: Express) {
           message: String(error) === 'access_denied'
             ? 'Google access was not approved.'
             : 'Google returned an OAuth error before authorization completed.',
+          code: 'GOOGLE_PERMISSION_DENIED',
           statusCode: 400
         });
       }
@@ -153,6 +206,7 @@ export function registerAuthRoutes(app: Express) {
         return sendOAuthCallbackHtml(res, {
           errorTitle: 'Missing Authorization Code',
           message: 'Google did not return the required authorization data.',
+          code: 'UNKNOWN_GOOGLE_ERROR',
           statusCode: 400
         });
       }
@@ -162,6 +216,7 @@ export function registerAuthRoutes(app: Express) {
         return sendOAuthCallbackHtml(res, {
           errorTitle: 'Operator Session Required',
           message: 'Your LeadPilot login session expired. Sign in again, then reconnect Google.',
+          code: 'OAUTH_SESSION_MISMATCH',
           statusCode: 401
         });
       }
@@ -178,6 +233,7 @@ export function registerAuthRoutes(app: Express) {
       return sendOAuthCallbackHtml(res, {
         errorTitle: 'Authentication Exchange Failed',
         message: oauthCallbackErrorMessage(err),
+        code: err?.code || 'UNKNOWN_GOOGLE_ERROR',
         statusCode
       });
     }

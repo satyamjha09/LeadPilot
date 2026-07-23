@@ -136,7 +136,13 @@ export interface AuthStatus {
   email?: string;
   connectedEmail?: string;
   authenticated: boolean;
+  connected?: boolean;
   configured: boolean;
+  clientIdConfigured?: boolean;
+  clientSecretConfigured?: boolean;
+  redirectUriConfigured?: boolean;
+  redirectUriIsHttps?: boolean;
+  refreshTokenSource?: 'database' | 'environment' | 'none';
   clientId?: string;
   redirectUri?: string;
   authUrl?: string;
@@ -144,6 +150,16 @@ export interface AuthStatus {
   envTokenSuppressed?: boolean;
   requiresReconnect?: boolean;
   authError?: string;
+  statusCode?: string;
+  message?: string;
+  verifiedAt?: string;
+  capabilities?: {
+    identity: 'verified' | 'not-ready';
+    gmail: 'ready' | 'not-ready';
+    calendar: 'ready' | 'not-ready';
+    sheets: 'ready' | 'not-ready';
+  };
+  checkedAt?: string;
 }
 
 export interface DashboardTrendPoint {

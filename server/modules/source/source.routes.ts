@@ -202,7 +202,8 @@ export function registerSourceRoutes(app: express.Express) {
     try {
       const result = await registerGoogleSheetsSource(req.params.workspaceKey, {
         sheetUrl: req.body?.sheetUrl,
-        displayName: req.body?.displayName
+        displayName: req.body?.displayName,
+        googleAccountKey: req.body?.googleAccountKey
       });
       res.status(result.created ? 201 : 200).json({
         created: result.created,

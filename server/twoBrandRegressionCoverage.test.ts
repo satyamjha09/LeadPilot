@@ -82,7 +82,8 @@ describe('two-brand workflow regression coverage', () => {
     expect(googleAuth).toContain('createGoogleOAuthState(senderAccountKey)');
     expect(authRoutes).toContain("'/api/google-senders/:senderAccountKey/status'");
     expect(authRoutes).toContain('exchangeCodeAndSaveFromState');
-    expect(authRoutes).toContain('window.location.origin');
+    expect(authRoutes).toContain('process.env.APP_ORIGIN');
+    expect(authRoutes).toContain('GOOGLE_OAUTH_MESSAGE_TYPE');
     expect(app).toContain('event.origin !== window.location.origin');
     expect(app).toContain('parseSenderAccountKey(event.data?.senderAccountKey)');
   });

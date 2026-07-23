@@ -22,11 +22,12 @@ describe('GoogleSheetsSourceReader', () => {
         }
       }
     };
-    const reader = new GoogleSheetsSourceReader({ sheetsFactory: vi.fn(async () => sheets as any) });
+    const sheetsFactory = vi.fn(async () => sheets as any);
+    const reader = new GoogleSheetsSourceReader({ sheetsFactory });
 
     const results = await reader.readEnabledTabs({
       workspaceKey: 'anywheretally',
-      source: { externalFileId: 'sheet-1' } as any,
+      source: { externalFileId: 'sheet-1', googleAccountKey: 'tallykonnect-google' } as any,
       tabs: [
         { id: 'tab-1', externalTabId: '0', name: 'Leads', isEnabled: true } as any,
         { id: 'tab-2', externalTabId: '1', name: 'Disabled', isEnabled: false } as any
@@ -34,6 +35,7 @@ describe('GoogleSheetsSourceReader', () => {
     });
 
     expect(results).toHaveLength(1);
+    expect(sheetsFactory).toHaveBeenCalledWith('tallykonnect-google');
     expect(results[0].rows.map((row) => row.rowNumber)).toEqual([2, 4]);
     expect(sheets.spreadsheets.values.get).toHaveBeenCalledWith({ spreadsheetId: 'sheet-1', range: "'Leads'!A:ZZ" });
     expect(valuesUpdate).not.toHaveBeenCalled();

@@ -737,17 +737,22 @@ export default function App() {
     fetchProcessQueueConfig();
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
-      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        let senderAccountKey = selectedSenderAccountKeyRef.current;
-        try {
-          senderAccountKey = parseSenderAccountKey(event.data?.senderAccountKey);
-        } catch {
-          // Older callback payloads did not include a canonical sender key.
-        }
-        fetchAuthStatus(senderAccountKey);
+      if (event.data?.type !== 'leadpilot-google-oauth') return;
+      let senderAccountKey: SenderAccountKey;
+      try {
+        senderAccountKey = parseSenderAccountKey(event.data?.senderAccountKey);
+      } catch {
+        return;
+      }
+      fetchAuthStatus(senderAccountKey);
+      if (event.data?.status === 'success') {
         if (senderAccountKey === selectedSenderAccountKeyRef.current) {
           toast.success('Google account linked successfully.');
         }
+        return;
+      }
+      if (senderAccountKey === selectedSenderAccountKeyRef.current) {
+        toast.error(event.data?.message || 'Google OAuth failed.');
       }
     };
     window.addEventListener('message', handleMessage);
@@ -1346,22 +1351,103 @@ export default function App() {
 
   const handleClearAuth = async () => {
     setConfirmClearAuthOpen(false);
+    await disconnectGoogleSender(selectedSenderAccountKey);
+  };
+
+  const disconnectGoogleSender = async (senderAccountKey: SenderAccountKey) => {
+    const status = googleSenderStatuses[senderAccountKey];
+    const expectedEmail = status?.expectedEmail || senderAccountEmail(senderAccountKey);
+    const connectedEmail = status?.connectedEmail || expectedEmail;
+    const confirmed = window.confirm(
+      `Disconnect Google account?\n\nExpected: ${expectedEmail}\nConnected: ${connectedEmail}\n\nThis will not delete leads, sources, workflow history, sent emails, or jobs.`
+    );
+    if (!confirmed) return;
     try {
-      const res = await apiFetch(`/api/google-senders/${encodeURIComponent(selectedSenderAccountKey)}/disconnect`, {
+      const res = await apiFetch(`/api/google-senders/${encodeURIComponent(senderAccountKey)}/disconnect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
       if (!res.ok) throw new Error('Server failure rejecting disconnect command.');
       const data = await res.json();
       if (data.status) {
-        setAuthStatus(data.status);
+        setGoogleSenderStatuses((current) => ({ ...current, [senderAccountKey]: data.status }));
+        if (senderAccountKey === selectedSenderAccountKeyRef.current) setAuthStatus(data.status);
         setIsAuthStatusLoading(false);
       } else {
-        await fetchAuthStatus(selectedSenderAccountKey);
+        await fetchAuthStatus(senderAccountKey);
       }
       toast.success('Google session cleared. Connect again to continue.');
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Clear session failed');
+    }
+  };
+
+  const verifyGoogleSender = async (senderAccountKey: SenderAccountKey) => {
+    try {
+      const res = await apiFetch(`/api/google-senders/${encodeURIComponent(senderAccountKey)}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await readJsonOrThrow<{ status: AuthStatus }>(res, 'Google verification failed');
+      if (data.status) {
+        setGoogleSenderStatuses((current) => ({ ...current, [senderAccountKey]: data.status }));
+        if (senderAccountKey === selectedSenderAccountKeyRef.current) setAuthStatus(data.status);
+      }
+      toast.success(data.status?.authenticated ? 'Google account verified.' : data.status?.message || 'Google account needs attention.');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Google verification failed');
+      await fetchAuthStatus(senderAccountKey);
+    }
+  };
+
+  const openGoogleConnect = async (senderAccountKey: SenderAccountKey, mode: 'CONNECT' | 'RECONNECT' = 'CONNECT') => {
+    const account = ACTIVE_ACCOUNT_LIST.find((entry) => entry.senderAccountKey === senderAccountKey);
+    const expectedEmail = account?.expectedGoogleEmail || senderAccountEmail(senderAccountKey);
+    const label = account?.label || senderAccountLabel(senderAccountKey);
+    const confirmed = window.confirm(
+      `Connecting:\n\n${label} Google account\n\nPlease select:\n${expectedEmail}\n\nContinue to Google?`
+    );
+    if (!confirmed) return;
+
+    const width = 600;
+    const height = 700;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+    const authWindow = window.open(
+      'about:blank',
+      'google_oauth_popup',
+      `width=${width},height=${height},top=${top},left=${left},resizable=yes,scrollbars=yes`
+    );
+    if (!authWindow) {
+      toast.error('Pop-up blocked. Please allow pop-ups to connect Google.');
+      return;
+    }
+    authWindow.document.write('<p style="font-family: sans-serif; padding: 16px;">Opening Google...</p>');
+
+    try {
+      const res = await apiFetch(`/api/google-senders/${encodeURIComponent(senderAccountKey)}/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode })
+      });
+      const data = await readJsonOrThrow<{ authUrl: string }>(res, 'Google connect failed');
+      if (!data.authUrl) throw new Error('Google authorization URL was not returned.');
+      authWindow.location.href = data.authUrl;
+
+      const startedAt = Date.now();
+      const poll = window.setInterval(() => {
+        if (authWindow.closed) {
+          window.clearInterval(poll);
+          void fetchAuthStatus(senderAccountKey);
+        } else if (Date.now() - startedAt > 5 * 60 * 1000) {
+          window.clearInterval(poll);
+          toast.error('Google OAuth timed out. Close the popup and try again.');
+        }
+      }, 1000);
+    } catch (err: unknown) {
+      authWindow.close();
+      toast.error(err instanceof Error ? err.message : 'Google connect failed');
+      await fetchAuthStatus(senderAccountKey);
     }
   };
 
@@ -1455,16 +1541,14 @@ export default function App() {
           activeAccounts={ACTIVE_ACCOUNT_LIST}
           onSelectActiveAccount={selectActiveAccount}
           onConnectGoogle={(senderAccountKey) => {
-            const width = 600;
-            const height = 700;
-            const left = window.screen.width / 2 - width / 2;
-            const top = window.screen.height / 2 - height / 2;
-            const authWindow = window.open(
-              `/api/google-senders/${encodeURIComponent(senderAccountKey)}/connect`,
-              'google_oauth_popup',
-              `width=${width},height=${height},top=${top},left=${left},resizable=yes,scrollbars=yes`
-            );
-            if (!authWindow) toast.error('Pop-up blocked. Please allow pop-ups to connect Google.');
+            const status = googleSenderStatuses[senderAccountKey];
+            void openGoogleConnect(senderAccountKey, status?.authenticated ? 'RECONNECT' : 'CONNECT');
+          }}
+          onVerifyGoogle={(senderAccountKey) => {
+            void verifyGoogleSender(senderAccountKey);
+          }}
+          onDisconnectGoogle={(senderAccountKey) => {
+            void disconnectGoogleSender(senderAccountKey);
           }}
           onLogout={handleOperatorLogout}
           pageTitle={viewCopy.title}

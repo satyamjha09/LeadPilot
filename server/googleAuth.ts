@@ -37,6 +37,38 @@ const GOOGLE_OAUTH_SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets'
 ];
 export const GOOGLE_RECONNECT_MESSAGE = 'Google authorization expired or was revoked. Reconnect this Google account.';
+export const GOOGLE_OAUTH_MESSAGE_TYPE = 'leadpilot-google-oauth';
+
+export type GoogleAccountStatusCode =
+  | 'CONNECTED'
+  | 'NOT_CONNECTED'
+  | 'NOT_CONFIGURED'
+  | 'CLIENT_ID_MISSING'
+  | 'CLIENT_SECRET_MISSING'
+  | 'REDIRECT_URI_MISSING'
+  | 'REDIRECT_URI_INVALID'
+  | 'EXPECTED_EMAIL_MISSING'
+  | 'REFRESH_TOKEN_MISSING'
+  | 'TOKEN_EXPIRED'
+  | 'TOKEN_REVOKED'
+  | 'INVALID_GRANT'
+  | 'ACCOUNT_MISMATCH'
+  | 'VERIFICATION_FAILED'
+  | 'GOOGLE_PERMISSION_DENIED'
+  | 'OAUTH_STATE_EXPIRED'
+  | 'OAUTH_STATE_ALREADY_USED'
+  | 'OAUTH_SESSION_MISMATCH'
+  | 'RECONNECT_REQUIRED'
+  | 'UNKNOWN_GOOGLE_ERROR';
+
+export type GoogleConnectionMode = 'CONNECT' | 'RECONNECT';
+
+export type GoogleAccountCapabilities = {
+  identity: 'verified' | 'not-ready';
+  gmail: 'ready' | 'not-ready';
+  calendar: 'ready' | 'not-ready';
+  sheets: 'ready' | 'not-ready';
+};
 
 export class GoogleAccountMismatchError extends Error {
   code = 'GOOGLE_ACCOUNT_MISMATCH';
@@ -93,23 +125,27 @@ function authStatePathForSender(senderAccountKey: SenderAccountKey) {
     : path.join(dataDir, `auth_state_${senderAccountKey}.json`);
 }
 
-export function getGoogleSenderEmail(senderAccountKey?: SenderAccountKey) {
-  const normalized = coerceStoredSenderAccountKey(senderAccountKey);
-  if (normalized === 'anywheretally-google') {
-    return (
-      process.env.GOOGLE_ANYWHERETALLY_AUTH_EMAIL ||
-      process.env.GMAIL_ANYWHERETALLY_FROM_EMAIL ||
-      senderAccountEmail('anywheretally-google')
-    ).trim().toLowerCase();
-  }
+function isProductionRuntime() {
+  return process.env.NODE_ENV === 'production' || /^https:\/\//i.test(process.env.APP_ORIGIN || '');
+}
 
-  return (
-    process.env.GOOGLE_TALLYKONNECT_AUTH_EMAIL ||
-    process.env.GOOGLE_AUTH_EMAIL ||
-    process.env.GMAIL_TALLYKONNECT_FROM_EMAIL ||
-    process.env.GMAIL_FROM_EMAIL ||
-    senderAccountEmail('tallykonnect-google')
-  ).trim().toLowerCase();
+function legacyGoogleEnvAllowed() {
+  return process.env.ALLOW_LEGACY_GOOGLE_ENV === 'true' || !isProductionRuntime();
+}
+
+function normalizeGoogleEmail(email: unknown) {
+  return String(email || '').trim().toLowerCase();
+}
+
+export function getGoogleSenderEmail(senderAccountKey?: SenderAccountKey) {
+  const normalized = parseSenderAccountKey(senderAccountKey);
+  const account = GOOGLE_SENDER_ACCOUNTS[normalized];
+  const configured = process.env[account.expectedEmailEnv]?.trim();
+  const legacy =
+    legacyGoogleEnvAllowed() && normalized === 'tallykonnect-google'
+      ? process.env.GOOGLE_AUTH_EMAIL || process.env.GMAIL_TALLYKONNECT_FROM_EMAIL || process.env.GMAIL_FROM_EMAIL
+      : '';
+  return normalizeGoogleEmail(configured || legacy || account.expectedEmail);
 }
 
 export const getGoogleAuthEmail = getGoogleSenderEmail;
@@ -198,20 +234,46 @@ async function readSavedTokens(senderAccountKey?: SenderAccountKey): Promise<Sto
 
   return null;
 }
-// Get credentials from env or fallback configuration
-export function getCredentials(senderAccountKey?: SenderAccountKey) {
-  const normalized = coerceStoredSenderAccountKey(senderAccountKey);
-  const isAnyWhereTally = normalized === 'anywheretally-google';
-  const account = GOOGLE_SENDER_ACCOUNTS[normalized];
-  const configuredRedirectUri = (
-    process.env[account.redirectUriEnv] ||
-    process.env.GOOGLE_REDIRECT_URI ||
-    ''
-  ).trim();
-  let baseUri = process.env.APP_URL && process.env.APP_URL !== 'MY_APP_URL' ? process.env.APP_URL : '';
-  let redirectUri = configuredRedirectUri;
+function validateRedirectUriValue(value: string) {
+  if (!value) return { valid: false, code: 'REDIRECT_URI_MISSING' as GoogleAccountStatusCode };
+  try {
+    const parsed = new URL(value);
+    if (isProductionRuntime() && parsed.hostname === 'localhost') {
+      return { valid: false, code: 'REDIRECT_URI_INVALID' as GoogleAccountStatusCode };
+    }
+    if (isProductionRuntime() && parsed.protocol !== 'https:') {
+      return { valid: false, code: 'REDIRECT_URI_INVALID' as GoogleAccountStatusCode };
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return { valid: false, code: 'REDIRECT_URI_INVALID' as GoogleAccountStatusCode };
+    }
+    return { valid: true, code: undefined };
+  } catch {
+    return { valid: false, code: 'REDIRECT_URI_INVALID' as GoogleAccountStatusCode };
+  }
+}
 
-  if (!redirectUri) {
+function firstEnvValue(...names: string[]) {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  return '';
+}
+
+// Get sender-specific credentials from env. Production intentionally avoids generic Google fallbacks.
+export function getCredentials(senderAccountKey?: SenderAccountKey) {
+  const normalized = parseSenderAccountKey(senderAccountKey);
+  const account = GOOGLE_SENDER_ACCOUNTS[normalized];
+  const allowLegacy = legacyGoogleEnvAllowed();
+  const legacyClientId = allowLegacy && normalized === 'tallykonnect-google' ? process.env.GOOGLE_CLIENT_ID : '';
+  const legacyClientSecret = allowLegacy && normalized === 'tallykonnect-google' ? process.env.GOOGLE_CLIENT_SECRET : '';
+  const legacyRefreshToken = allowLegacy && normalized === 'tallykonnect-google' ? process.env.GOOGLE_REFRESH_TOKEN : '';
+  const legacyRedirectUri = allowLegacy && normalized === 'tallykonnect-google' ? process.env.GOOGLE_REDIRECT_URI : '';
+  let redirectUri = firstEnvValue(account.redirectUriEnv, ...(legacyRedirectUri ? ['GOOGLE_REDIRECT_URI'] : []));
+
+  if (!redirectUri && !isProductionRuntime()) {
+    let baseUri = process.env.APP_URL && process.env.APP_URL !== 'MY_APP_URL' ? process.env.APP_URL : '';
     if (!baseUri) {
       baseUri = 'http://localhost:3000';
     }
@@ -224,22 +286,10 @@ export function getCredentials(senderAccountKey?: SenderAccountKey) {
   return {
     senderAccountKey: normalized,
     authEmail: getGoogleSenderEmail(normalized),
-    clientId: (
-      process.env[account.clientIdEnv] ||
-      (isAnyWhereTally ? '' : process.env.GOOGLE_CLIENT_ID) ||
-      ''
-    ).trim(),
-    clientSecret: (
-      process.env[account.clientSecretEnv] ||
-      (isAnyWhereTally ? '' : process.env.GOOGLE_CLIENT_SECRET) ||
-      ''
-    ).trim().split(/\s+/)[0] || '',
+    clientId: (process.env[account.clientIdEnv] || legacyClientId || '').trim(),
+    clientSecret: (process.env[account.clientSecretEnv] || legacyClientSecret || '').trim().split(/\s+/)[0] || '',
     redirectUri: redirectUri,
-    envRefreshToken: (
-      process.env[account.refreshTokenEnv] ||
-      (isAnyWhereTally ? '' : process.env.GOOGLE_REFRESH_TOKEN) ||
-      ''
-    )
+    envRefreshToken: (process.env[account.refreshTokenEnv] || legacyRefreshToken || '').trim()
   };
 }
 
@@ -272,10 +322,6 @@ function setEnvTokenSuppressed(suppressed: boolean, senderAccountKey?: SenderAcc
   if (fs.existsSync(statePath)) {
     fs.unlinkSync(statePath);
   }
-}
-
-function normalizeGoogleEmail(email: unknown) {
-  return String(email || '').trim().toLowerCase();
 }
 
 async function getAuthenticatedGoogleEmail(oauth2Client: any) {
@@ -623,10 +669,22 @@ export async function consumeGoogleOAuthState(
 ) {
   const stateHash = hashOAuthState(state);
   const record = await prisma.googleOAuthState.findUnique({ where: { stateHash } });
-  if (!record || record.consumedAt || record.expiresAt.getTime() < Date.now()) {
+  if (!record) {
     const error = new Error('OAuth state expired or invalid.');
     (error as any).statusCode = 400;
-    (error as any).code = 'INVALID_OAUTH_STATE';
+    (error as any).code = 'OAUTH_STATE_EXPIRED';
+    throw error;
+  }
+  if (record.consumedAt) {
+    const error = new Error('OAuth state has already been used.');
+    (error as any).statusCode = 400;
+    (error as any).code = 'OAUTH_STATE_ALREADY_USED';
+    throw error;
+  }
+  if (record.expiresAt.getTime() < Date.now()) {
+    const error = new Error('OAuth state expired.');
+    (error as any).statusCode = 400;
+    (error as any).code = 'OAUTH_STATE_EXPIRED';
     throw error;
   }
 
@@ -636,7 +694,7 @@ export async function consumeGoogleOAuthState(
   ) {
     const error = new Error('OAuth state does not match the initiating operator session.');
     (error as any).statusCode = 400;
-    (error as any).code = 'INVALID_OAUTH_STATE';
+    (error as any).code = 'OAUTH_SESSION_MISMATCH';
     throw error;
   }
 
@@ -652,7 +710,7 @@ export async function consumeGoogleOAuthState(
   if (consumed.count !== 1) {
     const error = new Error('OAuth state has already been used.');
     (error as any).statusCode = 400;
-    (error as any).code = 'INVALID_OAUTH_STATE';
+    (error as any).code = 'OAUTH_STATE_ALREADY_USED';
     throw error;
   }
 
@@ -1105,82 +1163,176 @@ export async function sendGmailReminder(
   }
 }
 
-// Check tokens save status to determine authorization validity
-export async function getSenderAuthStatus(
-  senderAccountKey: unknown,
-  context?: { operatorId: string; operatorSessionId: string }
-) {
+function emptyCapabilities(): GoogleAccountCapabilities {
+  return {
+    identity: 'not-ready',
+    gmail: 'not-ready',
+    calendar: 'not-ready',
+    sheets: 'not-ready'
+  };
+}
+
+function readyCapabilities(): GoogleAccountCapabilities {
+  return {
+    identity: 'verified',
+    gmail: 'ready',
+    calendar: 'ready',
+    sheets: 'ready'
+  };
+}
+
+function configurationStatusCode(input: {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  authEmail: string;
+}): GoogleAccountStatusCode | null {
+  if (!input.authEmail) return 'EXPECTED_EMAIL_MISSING';
+  if (!input.clientId) return 'CLIENT_ID_MISSING';
+  if (!input.clientSecret) return 'CLIENT_SECRET_MISSING';
+  if (!input.redirectUri) return 'REDIRECT_URI_MISSING';
+  const redirectValidation = validateRedirectUriValue(input.redirectUri);
+  if (!redirectValidation.valid) return redirectValidation.code || 'REDIRECT_URI_INVALID';
+  return null;
+}
+
+function statusMessage(code: GoogleAccountStatusCode, accountName: string, expectedEmail: string) {
+  switch (code) {
+    case 'CONNECTED':
+      return `${accountName} is connected and verified.`;
+    case 'CLIENT_ID_MISSING':
+      return `${accountName} Google client ID is missing from server configuration.`;
+    case 'CLIENT_SECRET_MISSING':
+      return `${accountName} Google client secret is missing from server configuration.`;
+    case 'REDIRECT_URI_MISSING':
+      return `${accountName} Google redirect URI is missing from server configuration.`;
+    case 'REDIRECT_URI_INVALID':
+      return `${accountName} Google redirect URI is invalid for this environment.`;
+    case 'EXPECTED_EMAIL_MISSING':
+      return `${accountName} expected Gmail address is missing from server configuration.`;
+    case 'REFRESH_TOKEN_MISSING':
+      return `${accountName} needs Google consent before it can be used.`;
+    case 'INVALID_GRANT':
+    case 'TOKEN_REVOKED':
+    case 'RECONNECT_REQUIRED':
+      return `${accountName} authorization expired or was revoked. Reconnect ${expectedEmail}.`;
+    case 'ACCOUNT_MISMATCH':
+      return `${accountName} is connected to the wrong Google account. Reconnect using ${expectedEmail}.`;
+    case 'GOOGLE_PERMISSION_DENIED':
+      return `${accountName} is missing required Google permissions. Reconnect using ${expectedEmail}.`;
+    case 'NOT_CONNECTED':
+      return `${accountName} is not connected. Connect ${expectedEmail}.`;
+    default:
+      return `${accountName} Google connection could not be verified.`;
+  }
+}
+
+function isGooglePermissionDenied(error: any) {
+  const status = error?.code || error?.response?.status;
+  return status === 401 || status === 403 || isInsufficientScopeError(error);
+}
+
+export async function getGoogleAccountDiagnostics(senderAccountKey: unknown, options: { verify?: boolean } = {}) {
   const normalizedSender = parseSenderAccountKey(senderAccountKey);
   const { clientId, clientSecret, redirectUri, envRefreshToken, authEmail } = getCredentials(normalizedSender);
-  const configured = !!(clientId && clientSecret);
+  const account = GOOGLE_SENDER_ACCOUNTS[normalizedSender];
+  const configCode = configurationStatusCode({ clientId, clientSecret, redirectUri, authEmail });
+  const configured = !configCode;
   let envTokenSuppressed = isEnvTokenSuppressed(normalizedSender);
-  
+  const savedTokens = await readSavedTokens(normalizedSender);
+  const authRecord = await findGoogleAuthRecord(normalizedSender);
+  const hasSavedToken = !!savedTokens?.refresh_token;
+  const hasEnvToken = !!(envRefreshToken && !envTokenSuppressed);
+  const refreshTokenSource = hasSavedToken ? 'database' : hasEnvToken ? 'environment' : 'none';
+
   let authenticated = false;
   let isUsingEnvToken = false;
   let requiresReconnect = false;
   let authError: string | undefined;
   let connectedEmail: string | undefined;
-
-  const savedTokens = await readSavedTokens(normalizedSender);
-  const hasSavedToken = !!savedTokens?.refresh_token;
-  const hasEnvToken = !!(envRefreshToken && !envTokenSuppressed);
+  let statusCode: GoogleAccountStatusCode = configCode || 'NOT_CONNECTED';
+  let capabilities = emptyCapabilities();
 
   if (configured && (hasSavedToken || hasEnvToken)) {
     try {
       await getVerifiedOAuthClient(normalizedSender);
-      connectedEmail = verifiedClientCache.get(normalizedSender)?.connectedEmail || authEmail;
+      connectedEmail = verifiedClientCache.get(normalizedSender)?.connectedEmail || authRecord?.connectedEmail || authEmail;
       authenticated = true;
       isUsingEnvToken = !hasSavedToken && hasEnvToken;
+      statusCode = 'CONNECTED';
+      capabilities = readyCapabilities();
     } catch (error: any) {
       if (isInvalidGrantError(error)) {
         envTokenSuppressed = true;
         requiresReconnect = true;
+        statusCode = 'INVALID_GRANT';
         authError = GOOGLE_RECONNECT_MESSAGE;
       } else if (isInsufficientScopeError(error)) {
         envTokenSuppressed = true;
         requiresReconnect = true;
+        statusCode = 'GOOGLE_PERMISSION_DENIED';
         authError = 'Google account identity permission missing. Reconnect this Google account.';
       } else if (error?.code === 'GOOGLE_ACCOUNT_MISMATCH') {
         envTokenSuppressed = true;
         requiresReconnect = true;
         connectedEmail = error.connectedEmail;
+        statusCode = 'ACCOUNT_MISMATCH';
         authError = error.message;
       } else {
+        statusCode = isGooglePermissionDenied(error) ? 'GOOGLE_PERMISSION_DENIED' : 'VERIFICATION_FAILED';
         authError = error?.message || 'Google authentication check failed.';
       }
     }
+  } else if (configured && !hasSavedToken && !hasEnvToken) {
+    statusCode = 'NOT_CONNECTED';
   }
-
-  const authUrl = configured
-    ? context
-      ? await createSenderAuthUrlForOperator(normalizedSender, context)
-      : await createSenderAuthUrl(normalizedSender)
-    : '';
 
   return {
     key: normalizedSender,
     senderAccountKey: normalizedSender,
     brand: defaultEmailBrandForSenderAccount(normalizedSender),
-    displayName: GOOGLE_SENDER_ACCOUNTS[normalizedSender].displayName,
+    displayName: account.displayName,
     email: authEmail,
     expectedEmail: authEmail,
+    clientIdConfigured: !!clientId,
+    clientSecretConfigured: !!clientSecret,
+    redirectUriConfigured: !!redirectUri,
+    redirectUriIsHttps: validateRedirectUriValue(redirectUri).valid && redirectUri.startsWith('https://'),
+    refreshTokenSource,
     configured,
+    connected: authenticated,
     authenticated,
     clientId: clientId ? `${clientId.slice(0, 10)}...` : undefined,
     redirectUri,
-    authUrl,
     connectedEmail,
+    verifiedAt: authRecord?.verifiedAt?.toISOString?.() || undefined,
     isUsingEnvToken,
     envTokenSuppressed,
     requiresReconnect,
-    authError
+    authError,
+    statusCode,
+    message: statusMessage(statusCode, account.displayName, authEmail),
+    capabilities,
+    checkedAt: options.verify ? new Date().toISOString() : undefined
   };
 }
 
+// Check tokens save status to determine authorization validity. Operator context is accepted
+// for route compatibility, but status reads must not create OAuth state.
+export async function getSenderAuthStatus(
+  senderAccountKey: unknown,
+  _context?: { operatorId: string; operatorSessionId: string }
+) {
+  return getGoogleAccountDiagnostics(senderAccountKey);
+}
 export const getAuthStatus = getSenderAuthStatus;
 
-// Exchange callback authorization code for tokens and save
-export async function exchangeCodeAndSave(code: string, senderAccountKey: unknown) {
+// Exchange callback authorization code for tokens and save after identity verification.
+export async function exchangeCodeAndSave(
+  code: string,
+  senderAccountKey: unknown,
+  options: { mode?: GoogleConnectionMode } = {}
+) {
   const normalizedSender = parseSenderAccountKey(senderAccountKey);
   const { clientId, clientSecret, redirectUri, authEmail } = getCredentials(normalizedSender);
   const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
@@ -1195,6 +1347,13 @@ export async function exchangeCodeAndSave(code: string, senderAccountKey: unknow
   }
   
   const existing = await readSavedTokens(normalizedSender);
+  const isNewConnection = !existing?.refresh_token;
+  if (isNewConnection && !tokens.refresh_token) {
+    const error = new Error('Google did not return a refresh token. Start reconnect and approve offline access.');
+    (error as any).statusCode = 400;
+    (error as any).code = 'REFRESH_TOKEN_MISSING';
+    throw error;
+  }
   const updated: StoredGoogleTokens = {
     ...existing,
     ...tokens,
@@ -1210,17 +1369,19 @@ export async function exchangeCodeAndSave(code: string, senderAccountKey: unknow
 
 export async function createSenderAuthUrlForOperator(
   senderAccountKey: SenderAccountKey,
-  context: { operatorId: string; operatorSessionId: string }
+  context: { operatorId: string; operatorSessionId: string },
+  options: { mode?: GoogleConnectionMode } = {}
 ) {
   const { clientId, clientSecret, redirectUri, authEmail } = getCredentials(senderAccountKey);
   if (!clientId || !clientSecret) return '';
   const state = await createGoogleOAuthState(senderAccountKey, context);
   const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+  const prompt = options.mode === 'RECONNECT' ? 'consent select_account' : 'select_account';
   return oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: GOOGLE_OAUTH_SCOPES,
     state,
-    prompt: 'consent',
+    prompt,
     login_hint: authEmail
   });
 }
@@ -1237,6 +1398,20 @@ export async function exchangeCodeAndSaveFromState(
 
 export async function clearSenderCredentials(senderAccountKey: unknown) {
   const normalizedSender = parseSenderAccountKey(senderAccountKey);
+  let revokeFailed = false;
+  try {
+    const oauth2Client = await getOAuthClient(normalizedSender);
+    const tokens = await readSavedTokens(normalizedSender);
+    if (tokens?.refresh_token || tokens?.access_token) {
+      await revokeReceivedCredentials(oauth2Client, tokens);
+    }
+  } catch (error) {
+    revokeFailed = true;
+    console.warn('GOOGLE_CREDENTIAL_REVOKE_FAILED', {
+      senderAccountKey: normalizedSender,
+      message: error instanceof Error ? error.message : 'Google revoke failed'
+    });
+  }
   await prisma.googleAuth.deleteMany({
     where: { senderAccountKey: normalizedSender }
   });
@@ -1247,6 +1422,7 @@ export async function clearSenderCredentials(senderAccountKey: unknown) {
   console.log('Google Auth tokens cleared.');
   setEnvTokenSuppressed(true, normalizedSender);
   console.log('Environment refresh token disabled for this local session.');
+  return { localDeleted: true, revokeFailed };
 }
 
 export const clearCredentials = clearSenderCredentials;
@@ -1265,7 +1441,17 @@ export async function listGoogleSenderAccounts(context?: { operatorId: string; o
         connected: status.authenticated,
         connectedEmail: status.connectedEmail,
         requiresReconnect: status.requiresReconnect,
-        authError: status.authError
+        authError: status.authError,
+        statusCode: status.statusCode,
+        message: status.message,
+        clientIdConfigured: status.clientIdConfigured,
+        clientSecretConfigured: status.clientSecretConfigured,
+        redirectUriConfigured: status.redirectUriConfigured,
+        redirectUri: status.redirectUri,
+        redirectUriIsHttps: status.redirectUriIsHttps,
+        refreshTokenSource: status.refreshTokenSource,
+        verifiedAt: status.verifiedAt,
+        capabilities: status.capabilities
       };
     })
   );

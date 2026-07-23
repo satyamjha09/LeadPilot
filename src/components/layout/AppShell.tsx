@@ -16,6 +16,8 @@ interface AppShellProps {
   activeAccounts: ActiveAccountDefinition[];
   onSelectActiveAccount: (key: ActiveAccountKey) => void;
   onConnectGoogle: (senderAccountKey: SenderAccountKey) => void;
+  onVerifyGoogle: (senderAccountKey: SenderAccountKey) => void;
+  onDisconnectGoogle: (senderAccountKey: SenderAccountKey) => void;
   onLogout: () => void | Promise<void>;
   pageTitle: string;
   pageDescription: string;
@@ -40,6 +42,8 @@ export default function AppShell({
   activeAccounts,
   onSelectActiveAccount,
   onConnectGoogle,
+  onVerifyGoogle,
+  onDisconnectGoogle,
   onLogout,
   pageTitle,
   pageDescription,
@@ -81,6 +85,8 @@ export default function AppShell({
           activeAccounts={activeAccounts}
           onSelectActiveAccount={onSelectActiveAccount}
           onConnectGoogle={onConnectGoogle}
+          onVerifyGoogle={onVerifyGoogle}
+          onDisconnectGoogle={onDisconnectGoogle}
           onLogout={onLogout}
           pageTitle={pageTitle}
           pageDescription={pageDescription}

@@ -24,6 +24,7 @@ export type InspectedSource = {
 export type SourceAdapterContext = {
   workspaceId: string;
   workspaceKey: string;
+  googleAccountKey?: string | null;
 };
 
 export interface SourceAdapter<TInput> {

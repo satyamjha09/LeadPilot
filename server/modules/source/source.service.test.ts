@@ -74,9 +74,14 @@ describe('source service', () => {
         workspaceId: workspace.id,
         type: 'GOOGLE_SHEETS',
         externalFileId: 'sheet-1',
+        googleAccountKey: 'anywheretally-google',
         preferredTabId: '0',
         tabs: [expect.objectContaining({ externalTabId: '0', headersJson: ['email'] })]
       })
+    );
+    expect(googleAdapter.inspect).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ googleAccountKey: 'anywheretally-google' })
     );
   });
 

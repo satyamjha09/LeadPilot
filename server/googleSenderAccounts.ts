@@ -10,6 +10,7 @@ export type GoogleSenderAccountConfig = {
   key: SenderAccountKey;
   displayName: string;
   expectedEmail: string;
+  expectedEmailEnv: string;
   clientIdEnv: string;
   clientSecretEnv: string;
   refreshTokenEnv: string;
@@ -21,6 +22,7 @@ export const GOOGLE_SENDER_ACCOUNTS: Record<SenderAccountKey, GoogleSenderAccoun
     key: 'tallykonnect-google',
     displayName: senderAccountLabel('tallykonnect-google'),
     expectedEmail: senderAccountEmail('tallykonnect-google'),
+    expectedEmailEnv: 'GOOGLE_TALLYKONNECT_AUTH_EMAIL',
     clientIdEnv: 'GOOGLE_TALLYKONNECT_CLIENT_ID',
     clientSecretEnv: 'GOOGLE_TALLYKONNECT_CLIENT_SECRET',
     refreshTokenEnv: 'GOOGLE_TALLYKONNECT_REFRESH_TOKEN',
@@ -30,6 +32,7 @@ export const GOOGLE_SENDER_ACCOUNTS: Record<SenderAccountKey, GoogleSenderAccoun
     key: 'anywheretally-google',
     displayName: senderAccountLabel('anywheretally-google'),
     expectedEmail: senderAccountEmail('anywheretally-google'),
+    expectedEmailEnv: 'GOOGLE_ANYWHERETALLY_AUTH_EMAIL',
     clientIdEnv: 'GOOGLE_ANYWHERETALLY_CLIENT_ID',
     clientSecretEnv: 'GOOGLE_ANYWHERETALLY_CLIENT_SECRET',
     refreshTokenEnv: 'GOOGLE_ANYWHERETALLY_REFRESH_TOKEN',

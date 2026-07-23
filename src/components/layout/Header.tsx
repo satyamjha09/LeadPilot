@@ -25,6 +25,8 @@ interface HeaderProps {
   activeAccounts: ActiveAccountDefinition[];
   onSelectActiveAccount: (key: ActiveAccountKey) => void;
   onConnectGoogle: (senderAccountKey: SenderAccountKey) => void;
+  onVerifyGoogle: (senderAccountKey: SenderAccountKey) => void;
+  onDisconnectGoogle: (senderAccountKey: SenderAccountKey) => void;
   onLogout: () => void | Promise<void>;
   pageTitle: string;
   pageDescription: string;
@@ -61,6 +63,8 @@ export default function Header({
   activeAccounts,
   onSelectActiveAccount,
   onConnectGoogle,
+  onVerifyGoogle,
+  onDisconnectGoogle,
   onLogout,
   pageTitle,
   pageDescription,
@@ -198,18 +202,51 @@ export default function Header({
                           </div>
                           <p className="truncate text-xs text-muted-foreground">{account.expectedGoogleEmail}</p>
                           <p className="truncate text-xs text-muted-foreground">{statusLabel}</p>
+                          {connected && status?.connectedEmail && (
+                            <p className="truncate text-xs text-muted-foreground">Connected as: {status.connectedEmail}</p>
+                          )}
                         </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={connected && !reconnect ? 'outline' : 'default'}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onConnectGoogle(account.senderAccountKey);
-                          }}
-                        >
-                          {connected && !reconnect ? 'Reconnect' : 'Connect'}
-                        </Button>
+                        <div className="flex shrink-0 flex-col gap-1">
+                          {(!connected || reconnect) && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="default"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onConnectGoogle(account.senderAccountKey);
+                              }}
+                            >
+                              {reconnect ? 'Reconnect' : 'Connect'}
+                            </Button>
+                          )}
+                          {connected && !reconnect && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onVerifyGoogle(account.senderAccountKey);
+                              }}
+                            >
+                              Verify
+                            </Button>
+                          )}
+                          {connected && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onDisconnectGoogle(account.senderAccountKey);
+                              }}
+                            >
+                              Disconnect
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     </DropdownMenuItem>
                   );

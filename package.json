@@ -24,7 +24,10 @@
     "operator:create": "tsx scripts/operator-admin.ts create",
     "operator:reset-password": "tsx scripts/operator-admin.ts reset-password",
     "operator:list": "tsx scripts/operator-admin.ts list",
-    "operator:revoke-sessions": "tsx scripts/operator-admin.ts revoke-sessions"
+    "operator:revoke-sessions": "tsx scripts/operator-admin.ts revoke-sessions",
+    "google:doctor": "tsx scripts/google-doctor.ts",
+    "google:doctor:tallykonnect": "tsx scripts/google-doctor.ts tallykonnect-google",
+    "google:doctor:anywheretally": "tsx scripts/google-doctor.ts anywheretally-google"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

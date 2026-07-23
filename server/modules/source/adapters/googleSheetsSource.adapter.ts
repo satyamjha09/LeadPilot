@@ -3,27 +3,28 @@ import { google } from 'googleapis';
 import { getVerifiedOAuthClient } from '../../../googleAuth';
 import { extractSheetInfo } from '../../../googleSheets';
 import { parseEmailBrand } from '../../../../src/lib/emailBrand';
-import { defaultSenderAccountForBrand } from '../../../../src/lib/senderAccount';
+import { defaultSenderAccountForBrand, parseSenderAccountKey, type SenderAccountKey } from '../../../../src/lib/senderAccount';
 import { createHeaderHash, normalizeSourceHeaders } from '../sourceHeaders';
 import type { InspectedSource, SourceAdapter, SourceAdapterContext } from './sourceAdapter';
 
 export type RegisterGoogleSheetsInput = {
   sheetUrl: string;
   displayName?: string;
+  googleAccountKey?: unknown;
 };
 
 type SheetsClient = ReturnType<typeof google.sheets>;
 
 export type GoogleSheetsSourceAdapterOptions = {
-  sheetsFactory?: (brand: ReturnType<typeof parseEmailBrand>) => Promise<SheetsClient>;
+  sheetsFactory?: (googleAccountKey: SenderAccountKey) => Promise<SheetsClient>;
 };
 
 function quoteSheetName(sheetName: string) {
   return `'${sheetName.replace(/'/g, "''")}'`;
 }
 
-async function defaultSheetsFactory(brand: ReturnType<typeof parseEmailBrand>) {
-  const oauth2Client = await getVerifiedOAuthClient(defaultSenderAccountForBrand(brand));
+async function defaultSheetsFactory(googleAccountKey: SenderAccountKey) {
+  const oauth2Client = await getVerifiedOAuthClient(googleAccountKey);
   return google.sheets({ version: 'v4', auth: oauth2Client });
 }
 
@@ -37,7 +38,10 @@ export class GoogleSheetsSourceAdapter implements SourceAdapter<RegisterGoogleSh
   async inspect(input: RegisterGoogleSheetsInput, context: SourceAdapterContext): Promise<InspectedSource> {
     const { spreadsheetId, gid } = extractSheetInfo(input.sheetUrl);
     const brand = parseEmailBrand(context.workspaceKey);
-    const sheets = await this.sheetsFactory(brand);
+    const googleAccountKey = input.googleAccountKey || context.googleAccountKey
+      ? parseSenderAccountKey(input.googleAccountKey || context.googleAccountKey)
+      : defaultSenderAccountForBrand(brand);
+    const sheets = await this.sheetsFactory(googleAccountKey);
     const metadata = await sheets.spreadsheets.get({ spreadsheetId });
     const sheetTabs = metadata.data.sheets || [];
 
