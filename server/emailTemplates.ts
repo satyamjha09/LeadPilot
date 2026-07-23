@@ -675,7 +675,7 @@ function buildAnyWhereTallyScheduledHtml(input: DemoEmailInput, brand: EmailBran
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light">
-    <title>AnyWhereTally Demo Confirmed</title>
+    <title>AnyWhereTally Demo Confirmation</title>
     <style>
       @media only screen and (max-width: 640px) {
         .awt-wrapper { width:100% !important; }
@@ -1293,7 +1293,7 @@ function buildAnyWhereTallyRescheduleHtml(input: RescheduleEmailInput, brand: Em
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light">
-    <title>Demo Rescheduled - AnyWhereTally</title>
+    <title>AnyWhereTally Demo Rescheduled</title>
     <style>
       @media only screen and (max-width: 640px) {
         .awt-wrapper { width:100% !important; }
@@ -1482,7 +1482,7 @@ function buildAnyWhereTallyThankYouHtml(input: ThankYouEmailInput, brand: EmailB
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light">
-    <title>Thank You - AnyWhereTally Demo</title>
+    <title>AnyWhereTally Demo Thank You</title>
     <style>
       @media only screen and (max-width: 680px) {
         .awt-wrapper { width:100% !important; }
@@ -1844,51 +1844,24 @@ export function buildThankYouEmail(input: ThankYouEmailInput) {
 export function buildNoResponseEmail(input: NoResponseEmailInput) {
   const brand = getEmailBrand(input.brand);
   const greeting = emailGreeting(input.fullName);
-
-  if (brand.key === 'anywheretally') {
-    const subject = 'We missed you at the Tally Mobile App demo';
-    const text = [
-      greeting,
-      '',
-      'We noticed that you were unable to attend the scheduled Tally Mobile App demo.',
-      '',
-      'No worries. Whenever you are ready, you can contact our team and we will help you arrange another AnyWhereTally demo at a time that works best for you.',
-      '',
-      `Contact: ${brand.contactEmail}`,
-      `Website: ${brand.websiteUrl}`,
-      `Unsubscribe: ${brand.unsubscribeUrl}`,
-      '',
-      'Regards,',
-      brand.signatureName
-    ].join('\r\n');
-
-    const html = applyEmailBrand(emailShell({
-      eyebrow: 'We missed you',
-      title: 'Sorry we could not connect this time',
-      intro: `${htmlGreeting(input.fullName)}<br>We noticed that you were unable to attend the scheduled Tally Mobile App demo.`,
-      details: detailRow('Next step', 'Contact us to reschedule'),
-      ctaLabel: 'Contact AnyWhereTally',
-      ctaUrl: `mailto:${brand.contactEmail}`,
-      closing: 'Whenever you are ready, our team will help you arrange another AnyWhereTally demo at a time that works best for you.'
-    }), brand);
-
-    return {
-      fromName: brand.name,
-      subject,
-      text,
-      html
-    };
-  }
-
   const customerName = escapeHtml(String(input.fullName || '').trim() || 'there');
   const logoUrl = escapeHtml(brandLogoUrl(brand));
+  const brandName = escapeHtml(brand.name);
+  const logoAlt = escapeHtml(`${brand.name} logo`);
+  const signatureName = escapeHtml(brand.signatureName);
+  const tagline = escapeHtml(brand.tagline || 'Business Automation Made Simple');
+  const websiteUrl = escapeHtml(brand.websiteUrl);
+  const contactEmail = escapeHtml(brand.contactEmail);
+  const unsubscribeUrl = escapeHtml(brand.unsubscribeUrl);
+  const demoProduct = brand.key === 'anywheretally' ? 'Tally Mobile App' : 'Smart TDS';
+  const escapedDemoProduct = escapeHtml(demoProduct);
   const currentYear = new Date().getFullYear();
-  const subject = 'We missed you at the Smart TDS demo';
+  const subject = `We missed you at the ${demoProduct} demo`;
 
   const text = [
     greeting,
     '',
-    'We noticed that you were unable to attend the scheduled Smart TDS demo.',
+    `We noticed that you were unable to attend the scheduled ${demoProduct} demo.`,
     '',
     'No worries. Whenever you are ready, you can contact our team and we will help you arrange another demo at a time that works best for you.',
     '',
@@ -1900,14 +1873,14 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
     brand.signatureName
   ].join('\r\n');
 
-  const html = applyEmailBrand(`<!doctype html>
+  const html = `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light">
-    <title>Missed Demo - TallyKonnect</title>
+    <title>Missed Demo - ${brandName}</title>
     <style>
       @media only screen and (max-width: 600px) {
         .email-container { width:100% !important; }
@@ -1930,10 +1903,10 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                   <tr>
                     <td width="65" valign="middle" style="width:65px;">
-                      <img src="${logoUrl}" alt="TallyKonnect logo" width="50" style="display:block; width:50px; height:auto; border:0; outline:none;">
+                      <img src="${logoUrl}" alt="${logoAlt}" width="50" style="display:block; width:50px; height:auto; border:0; outline:none;">
                     </td>
                     <td valign="middle" style="font-size:18px; line-height:24px; font-weight:700; color:#004aad; letter-spacing:-0.5px;">
-                      TallyKonnect
+                      ${brandName}
                     </td>
                   </tr>
                 </table>
@@ -1950,7 +1923,7 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
                   Sorry We Couldn't<br>Connect This Time
                 </div>
                 <div style="font-size:14px; line-height:22px; color:#edf4ff;">
-                  We're here whenever you're ready for your Smart TDS demo
+                  We're here whenever you're ready for your ${escapedDemoProduct} demo
                 </div>
               </td>
             </tr>
@@ -1966,7 +1939,7 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
  
                 <!-- Intro text -->
                 <p style="margin:0 0 24px; font-size:15px; line-height:27px; color:#6b7280;">
-                  We noticed that you were unable to attend the scheduled Smart TDS demo. We completely understand that things come up!
+                  We noticed that you were unable to attend the scheduled ${escapedDemoProduct} demo. We completely understand that things come up!
                 </p>
  
                 <!-- Info box -->
@@ -2019,7 +1992,7 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
                           <td style="padding:18px 14px; text-align:center;">
                             <div style="font-size:26px; line-height:1; margin-bottom:10px;">&#x1F680;</div>
                             <div style="font-size:13px; line-height:19px; font-weight:700; color:#1a1a1a; margin-bottom:6px;">Get Started</div>
-                            <div style="font-size:11.5px; line-height:18px; color:#6b7280;">We will walk you through Smart TDS live</div>
+                            <div style="font-size:11.5px; line-height:18px; color:#6b7280;">We will walk you through ${escapedDemoProduct} live</div>
                           </td>
                         </tr>
                       </table>
@@ -2031,7 +2004,7 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin-bottom:28px;">
                   <tr>
                     <td align="center" style="background:#004aad; background-image:linear-gradient(135deg,#004aad 0%,#0066ff 100%); border-radius:4px;">
-                      <a href="mailto:${CONTACT_EMAIL}" style="display:block; padding:13px 20px; color:#ffffff; text-decoration:none; text-align:center; font-size:14px; line-height:20px; font-weight:700;">
+                      <a href="mailto:${contactEmail}" style="display:block; padding:13px 20px; color:#ffffff; text-decoration:none; text-align:center; font-size:14px; line-height:20px; font-weight:700;">
                         &#x1F4EC;&nbsp;&nbsp;Contact Our Team
                       </a>
                     </td>
@@ -2047,7 +2020,7 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
  
                 <!-- Regards -->
                 <div style="font-size:14px; line-height:25px; color:#6b7280;">Regards,</div>
-                <div style="font-size:14px; line-height:25px; font-weight:700; color:#004aad; margin-top:4px;">Team TallyKonnect</div>
+                <div style="font-size:14px; line-height:25px; font-weight:700; color:#004aad; margin-top:4px;">${signatureName}</div>
  
               </td>
             </tr>
@@ -2058,21 +2031,21 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                   <tr>
                     <td class="footer-column" valign="top">
-                      <div style="font-size:16px; line-height:22px; font-weight:700; color:#1a1a1a; margin-bottom:4px;">TallyKonnect</div>
-                      <div style="font-size:13px; line-height:19px; color:#999999;">Business Automation Made Simple</div>
+                      <div style="font-size:16px; line-height:22px; font-weight:700; color:#1a1a1a; margin-bottom:4px;">${brandName}</div>
+                      <div style="font-size:13px; line-height:19px; color:#999999;">${tagline}</div>
                     </td>
                     <td class="footer-column" align="right" valign="top" style="font-size:13px; line-height:20px;">
-                      <a href="${WEBSITE_URL}" style="color:#999999; text-decoration:none;">Website</a>
+                      <a href="${websiteUrl}" style="color:#999999; text-decoration:none;">Website</a>
                       <span style="color:#d0d0d0;">&nbsp;&nbsp;&nbsp;</span>
-                      <a href="mailto:${CONTACT_EMAIL}" style="color:#999999; text-decoration:none;">Contact</a>
+                      <a href="mailto:${contactEmail}" style="color:#999999; text-decoration:none;">Contact</a>
                       <span style="color:#d0d0d0;">&nbsp;&nbsp;&nbsp;</span>
-                      <a href="${UNSUBSCRIBE_URL}" style="color:#999999; text-decoration:none;">Unsubscribe</a>
+                      <a href="${unsubscribeUrl}" style="color:#999999; text-decoration:none;">Unsubscribe</a>
                     </td>
                   </tr>
                 </table>
  
                 <div style="margin-top:20px; padding-top:20px; border-top:1px solid #f0f0f0; text-align:center; font-size:11px; line-height:17px; color:#cccccc;">
-                  &copy; ${currentYear} TallyKonnect. All rights reserved.
+                  &copy; ${currentYear} ${brandName}. All rights reserved.
                 </div>
               </td>
             </tr>
@@ -2082,7 +2055,7 @@ export function buildNoResponseEmail(input: NoResponseEmailInput) {
       </tr>
     </table>
   </body>
-</html>`, brand);
+</html>`;
 
   return {
     fromName: brand.name,
