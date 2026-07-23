@@ -104,7 +104,7 @@ async function findOrCreateCanonicalLead(input: {
 }
 
 async function legacyAutomationIdByBrandEmail(emailBrand: EmailBrandKey, email: string) {
-  if (!email) return '';
+  if (!email) return [];
   const rows = await prisma.leadSchedule.findMany({
     where: {
       emailBrand,
@@ -114,11 +114,11 @@ async function legacyAutomationIdByBrandEmail(emailBrand: EmailBrandKey, email: 
     select: { automationId: true },
     distinct: ['automationId']
   });
-  return chooseUnambiguous(rows.map((row) => row.automationId));
+  return uniqueAutomationIds(rows.map((row) => row.automationId));
 }
 
 async function automationIdFromCanonicalLead(leadId?: string | null) {
-  if (!leadId) return '';
+  if (!leadId) return [];
   const identities = await prisma.leadIdentity.findMany({
     where: {
       leadId,
@@ -127,11 +127,11 @@ async function automationIdFromCanonicalLead(leadId?: string | null) {
     },
     select: { value: true }
   });
-  return chooseUnambiguous(identities.map((identity) => identity.value));
+  return uniqueAutomationIds(identities.map((identity) => identity.value));
 }
 
 async function automationIdFromSiblingRows(leadId?: string | null) {
-  if (!leadId) return '';
+  if (!leadId) return [];
   const rows = await prisma.sourceRow.findMany({
     where: {
       canonicalLeadId: leadId,
@@ -141,7 +141,7 @@ async function automationIdFromSiblingRows(leadId?: string | null) {
     select: { automationId: true },
     distinct: ['automationId']
   });
-  return chooseUnambiguous(rows.map((row) => row.automationId));
+  return uniqueAutomationIds(rows.map((row) => row.automationId));
 }
 
 async function persistIdentity(input: {
@@ -152,7 +152,7 @@ async function persistIdentity(input: {
   leadId: string;
 }) {
   return prisma.$transaction(async (tx) => {
-    const identity = await tx.leadIdentity.upsert({
+    const existingIdentity = await tx.leadIdentity.findUnique({
       where: {
         workspaceId_type_scopeKey_value: {
           workspaceId: input.workspaceId,
@@ -160,13 +160,26 @@ async function persistIdentity(input: {
           scopeKey: AUTOMATION_ID_SCOPE,
           value: input.automationId
         }
-      },
-      update: {
-        leadId: input.leadId,
-        source: 'AUTO',
-        isVerified: true
-      },
-      create: {
+      }
+    });
+
+    if (existingIdentity && existingIdentity.leadId !== input.leadId) {
+      throw new AutomationIdentityConflictError(
+        [input.automationId],
+        'automation_id is already assigned to another lead. Manual review is required.'
+      );
+    }
+
+    const identity = existingIdentity
+      ? await tx.leadIdentity.update({
+          where: { id: existingIdentity.id },
+          data: {
+            source: 'AUTO',
+            isVerified: true
+          }
+        })
+      : await tx.leadIdentity.create({
+        data: {
         workspaceId: input.workspaceId,
         leadId: input.leadId,
         type: 'AUTOMATION_ID',
@@ -244,13 +257,14 @@ export async function resolvePermanentAutomationId(input: {
     sourceRow
   });
 
-  const resolved =
-    existing ||
-    sourceAutomationId ||
-    await automationIdFromCanonicalLead(lead.id) ||
-    await automationIdFromSiblingRows(lead.id) ||
-    await legacyAutomationIdByBrandEmail(input.emailBrand, email) ||
-    createNewAutomationId();
+  const candidates = [
+    existing,
+    sourceAutomationId,
+    ...(await automationIdFromCanonicalLead(lead.id)),
+    ...(await automationIdFromSiblingRows(lead.id)),
+    ...(await legacyAutomationIdByBrandEmail(input.emailBrand, email))
+  ];
+  const resolved = chooseUnambiguous(candidates) || createNewAutomationId();
 
   await persistIdentity({
     row: input.row,

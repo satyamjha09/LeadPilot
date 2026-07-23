@@ -36,7 +36,8 @@ const emailDeliveryMock = vi.hoisted(() => ({
   findEmailDeliveryById: vi.fn(),
   listDueEmailRetries: vi.fn(),
   markEmailDeliveryFailed: vi.fn(),
-  markEmailDeliverySent: vi.fn()
+  markEmailDeliverySent: vi.fn(),
+  reconcileOutcomeEmailMetadata: vi.fn()
 }));
 
 vi.mock('./emailDelivery', () => emailDeliveryMock);
@@ -86,6 +87,7 @@ describe('brand-scoped background email delivery', () => {
     emailDeliveryMock.findEmailDeliveryById.mockResolvedValue({ id: 'delivery-1', status: 'PROCESSING' });
     emailDeliveryMock.markEmailDeliverySent.mockResolvedValue({});
     emailDeliveryMock.markEmailDeliveryFailed.mockResolvedValue('FAILED');
+    emailDeliveryMock.reconcileOutcomeEmailMetadata.mockResolvedValue({});
     sendGmailReminderMock.mockResolvedValue({ messageId: 'gmail-reminder-1' });
     sendGmailTemplateMock.mockResolvedValue({ messageId: 'gmail-retry-1' });
     markOutcomeEmailSentMock.mockResolvedValue({});
@@ -437,6 +439,47 @@ describe('brand-scoped background email delivery', () => {
       'anywheretally-google'
     );
     expect(markOutcomeEmailSentMock).toHaveBeenCalledWith('session-retry-awt', 'Demo Done');
+  });
+
+  it('does not mark a provider-sent retry failed when outcome metadata update fails', async () => {
+    emailDeliveryMock.listDueEmailRetries.mockResolvedValue([
+      {
+        id: 'retry-metadata',
+        eventKey: 'event-metadata',
+        automationId: 'lead_123',
+        demoSessionId: 'session-retry-metadata',
+        emailBrand: 'anywheretally',
+        senderAccountKey: 'anywheretally-google',
+        emailType: 'DEMO_DONE',
+        recipient: 'moh@example.com',
+        payloadHash: 'payload',
+        subject: 'Retry',
+        textBody: 'Retry text',
+        htmlBody: '<p>Retry</p>',
+        attemptCount: 1,
+        retryCount: 1,
+        maxRetries: 3,
+        nextRetryAt: new Date()
+      }
+    ]);
+    markOutcomeEmailSentMock.mockRejectedValueOnce(new Error('history timestamp failed'));
+
+    await runEmailRetryScanner();
+
+    expect(sendGmailTemplateMock).toHaveBeenCalled();
+    expect(emailDeliveryMock.markEmailDeliverySent).toHaveBeenCalledWith({
+      deliveryId: 'retry-metadata',
+      providerMessageId: 'gmail-retry-1'
+    });
+    expect(emailDeliveryMock.reconcileOutcomeEmailMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryId: 'retry-metadata',
+        demoSessionId: 'session-retry-metadata'
+      })
+    );
+    expect(emailDeliveryMock.markEmailDeliveryFailed).not.toHaveBeenCalledWith(
+      expect.objectContaining({ deliveryId: 'retry-metadata' })
+    );
   });
 
   it('does not send automatic retries while the delivery brand is resetting', async () => {

@@ -7,15 +7,15 @@ const audit = process.argv.includes('--audit') || !apply;
 type Finding = {
   code: string;
   count: number;
-  sample?: unknown;
+  samples?: unknown[];
 };
 
-async function countAndSample<T>(code: string, query: () => Promise<T[]>) {
-  const rows = await query();
+async function countAndSample<T>(code: string, count: () => Promise<number>, sample: () => Promise<T[]>) {
+  const [total, samples] = await Promise.all([count(), sample()]);
   return {
     code,
-    count: rows.length,
-    sample: rows[0] || undefined
+    count: total,
+    samples
   } satisfies Finding;
 }
 
@@ -23,7 +23,11 @@ async function main() {
   const findings: Finding[] = [];
 
   findings.push(
-    await countAndSample('LEAD_SCHEDULE_NULL_AUTOMATION_ID', () =>
+    await countAndSample('LEAD_SCHEDULE_NULL_AUTOMATION_ID',
+      () => prisma.leadSchedule.count({
+        where: { OR: [{ automationId: null }, { automationId: '' }] }
+      }),
+      () =>
       prisma.leadSchedule.findMany({
         where: { OR: [{ automationId: null }, { automationId: '' }] },
         take: 10
@@ -32,7 +36,9 @@ async function main() {
   );
 
   findings.push(
-    await countAndSample('CUSTOMER_DEMO_STATE_EMAIL_USER_ID', () =>
+    await countAndSample('CUSTOMER_DEMO_STATE_EMAIL_USER_ID',
+      () => prisma.customerDemoState.count({ where: { userId: { contains: '@' } } }),
+      () =>
       prisma.customerDemoState.findMany({
         where: { userId: { contains: '@' } },
         take: 10
@@ -41,7 +47,9 @@ async function main() {
   );
 
   findings.push(
-    await countAndSample('DEMO_HISTORY_EMAIL_USER_ID', () =>
+    await countAndSample('DEMO_HISTORY_EMAIL_USER_ID',
+      () => prisma.demoHistory.count({ where: { userId: { contains: '@' } } }),
+      () =>
       prisma.demoHistory.findMany({
         where: { userId: { contains: '@' } },
         take: 10
@@ -50,7 +58,14 @@ async function main() {
   );
 
   findings.push(
-    await countAndSample('ACTIVE_STATE_WITHOUT_HISTORY', () =>
+    await countAndSample('ACTIVE_STATE_WITHOUT_HISTORY',
+      () => prisma.customerDemoState.count({
+        where: {
+          activeDemoSessionId: { not: null },
+          demoHistory: { none: { status: LEAD_STATUS.DEMO_SCHEDULED } }
+        }
+      }),
+      () =>
       prisma.customerDemoState.findMany({
         where: {
           activeDemoSessionId: { not: null },
@@ -62,7 +77,14 @@ async function main() {
   );
 
   findings.push(
-    await countAndSample('TERMINAL_SCHEDULE_RETAINING_MEETING_LINK', () =>
+    await countAndSample('TERMINAL_SCHEDULE_RETAINING_MEETING_LINK',
+      () => prisma.leadSchedule.count({
+        where: {
+          status: { in: [LEAD_STATUS.DEMO_DONE, LEAD_STATUS.NO_RESPONSE] },
+          meetingLink: { not: null }
+        }
+      }),
+      () =>
       prisma.leadSchedule.findMany({
         where: {
           status: { in: [LEAD_STATUS.DEMO_DONE, LEAD_STATUS.NO_RESPONSE] },
@@ -74,7 +96,14 @@ async function main() {
   );
 
   findings.push(
-    await countAndSample('ACTIVE_STATE_WITH_TERMINAL_HISTORY', () =>
+    await countAndSample('ACTIVE_STATE_WITH_TERMINAL_HISTORY',
+      () => prisma.customerDemoState.count({
+        where: {
+          activeDemoSessionId: { not: null },
+          demoHistory: { some: { status: { in: [LEAD_STATUS.DEMO_DONE, LEAD_STATUS.NO_RESPONSE] } } }
+        }
+      }),
+      () =>
       prisma.customerDemoState.findMany({
         where: {
           activeDemoSessionId: { not: null },
@@ -85,6 +114,17 @@ async function main() {
     )
   );
 
+  const duplicateAutomationByEmailCount = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(*) AS count
+    FROM (
+      SELECT "emailBrand", LOWER("email") AS email
+      FROM "LeadSchedule"
+      WHERE "automationId" IS NOT NULL AND "automationId" <> ''
+        AND "email" IS NOT NULL AND "email" <> ''
+      GROUP BY "emailBrand", LOWER("email")
+      HAVING COUNT(DISTINCT "automationId") > 1
+    ) duplicate_groups
+  `;
   const duplicateAutomationByEmail = await prisma.$queryRaw<Array<{
     emailBrand: string;
     email: string;
@@ -103,10 +143,18 @@ async function main() {
   `;
   findings.push({
     code: 'MULTIPLE_AUTOMATION_IDS_FOR_BRAND_EMAIL',
-    count: duplicateAutomationByEmail.length,
-    sample: duplicateAutomationByEmail[0]
+    count: Number(duplicateAutomationByEmailCount[0]?.count || 0),
+    samples: duplicateAutomationByEmail
   });
 
+  const historyWithoutScheduleCount = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(*) AS count
+    FROM "DemoHistory" h
+    LEFT JOIN "LeadSchedule" s
+      ON s."emailBrand" = h."emailBrand"
+     AND s."demoSessionId" = h."sessionId"
+    WHERE s."id" IS NULL
+  `;
   const historyWithoutSchedule = await prisma.$queryRaw<Array<{ sessionId: string; emailBrand: string }>>`
     SELECT h."sessionId", h."emailBrand"
     FROM "DemoHistory" h
@@ -118,13 +166,94 @@ async function main() {
   `;
   findings.push({
     code: 'DEMO_HISTORY_WITHOUT_SESSION_SCHEDULE',
-    count: historyWithoutSchedule.length,
-    sample: historyWithoutSchedule[0]
+    count: Number(historyWithoutScheduleCount[0]?.count || 0),
+    samples: historyWithoutSchedule
+  });
+
+  const activeStateWithoutSessionScheduleCount = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    SELECT COUNT(*) AS count
+    FROM "CustomerDemoState" c
+    LEFT JOIN "LeadSchedule" s
+      ON s."emailBrand" = c."emailBrand"
+     AND s."demoSessionId" = c."activeDemoSessionId"
+    WHERE c."activeDemoSessionId" IS NOT NULL
+      AND s."id" IS NULL
+  `;
+  const activeStateWithoutSessionSchedule = await prisma.$queryRaw<Array<{ activeDemoSessionId: string; emailBrand: string; userId: string }>>`
+    SELECT c."activeDemoSessionId", c."emailBrand", c."userId"
+    FROM "CustomerDemoState" c
+    LEFT JOIN "LeadSchedule" s
+      ON s."emailBrand" = c."emailBrand"
+     AND s."demoSessionId" = c."activeDemoSessionId"
+    WHERE c."activeDemoSessionId" IS NOT NULL
+      AND s."id" IS NULL
+    LIMIT 10
+  `;
+  findings.push({
+    code: 'ACTIVE_STATE_WITHOUT_SESSION_SCHEDULE',
+    count: Number(activeStateWithoutSessionScheduleCount[0]?.count || 0),
+    samples: activeStateWithoutSessionSchedule
   });
 
   console.log(JSON.stringify({ mode: apply ? 'apply' : 'audit', findings }, null, 2));
 
   if (apply) {
+    const backfilled = await prisma.$executeRaw`
+      WITH candidate_matches AS (
+        SELECT
+          s."id" AS "scheduleId",
+          h."sessionId"
+        FROM "LeadSchedule" s
+        JOIN "DemoHistory" h
+          ON h."emailBrand" = s."emailBrand"
+         AND (
+            (s."calendarEventId" IS NOT NULL AND s."calendarEventId" <> '' AND s."calendarEventId" = h."calendarEventId")
+            OR (
+              s."automationId" IS NOT NULL AND s."automationId" <> ''
+              AND s."automationId" = h."userId"
+              AND s."dateOfDemo" = h."displayDate"
+              AND s."timeOfDemo" = h."displayTime"
+            )
+            OR (
+              s."email" IS NOT NULL AND s."email" <> ''
+              AND LOWER(s."email") = LOWER(h."email")
+              AND s."dateOfDemo" = h."displayDate"
+              AND s."timeOfDemo" = h."displayTime"
+            )
+          )
+        WHERE s."demoSessionId" IS NULL
+      ),
+      schedule_counts AS (
+        SELECT "scheduleId", COUNT(DISTINCT "sessionId") AS "sessionCount"
+        FROM candidate_matches
+        GROUP BY "scheduleId"
+      ),
+      session_counts AS (
+        SELECT "sessionId", COUNT(DISTINCT "scheduleId") AS "scheduleCount"
+        FROM candidate_matches
+        GROUP BY "sessionId"
+      ),
+      unambiguous AS (
+        SELECT cm."scheduleId", cm."sessionId"
+        FROM candidate_matches cm
+        JOIN schedule_counts sc ON sc."scheduleId" = cm."scheduleId"
+        JOIN session_counts hc ON hc."sessionId" = cm."sessionId"
+        WHERE sc."sessionCount" = 1
+          AND hc."scheduleCount" = 1
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "LeadSchedule" existing
+            WHERE existing."emailBrand" = (
+              SELECT s."emailBrand" FROM "LeadSchedule" s WHERE s."id" = cm."scheduleId"
+            )
+              AND existing."demoSessionId" = cm."sessionId"
+          )
+      )
+      UPDATE "LeadSchedule" s
+      SET "demoSessionId" = u."sessionId"
+      FROM unambiguous u
+      WHERE s."id" = u."scheduleId"
+    `;
     const terminalCleanup = await prisma.leadSchedule.updateMany({
       where: {
         status: { in: [LEAD_STATUS.DEMO_DONE, LEAD_STATUS.NO_RESPONSE] },
@@ -135,7 +264,12 @@ async function main() {
         calendarEventId: null
       }
     });
-    console.log(JSON.stringify({ applied: { terminalScheduleMeetingLinksCleared: terminalCleanup.count } }, null, 2));
+    console.log(JSON.stringify({
+      applied: {
+        legacyScheduleSessionIdsBackfilled: Number(backfilled),
+        terminalScheduleMeetingLinksCleared: terminalCleanup.count
+      }
+    }, null, 2));
   } else if (audit) {
     console.log('Audit only. Re-run with --apply to perform unambiguous cleanup.');
   }

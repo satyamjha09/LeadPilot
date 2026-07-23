@@ -3,7 +3,8 @@ import {
   findEmailDeliveryById,
   listDueEmailRetries,
   markEmailDeliveryFailed,
-  markEmailDeliverySent
+  markEmailDeliverySent,
+  reconcileOutcomeEmailMetadata
 } from './emailDelivery';
 import { sendGmailTemplate } from './googleAuth';
 import { parseEmailBrand } from '../src/lib/emailBrand';
@@ -68,13 +69,38 @@ export async function runEmailRetryScanner() {
           const stillClaimed = await findEmailDeliveryById(delivery.id);
           if (!stillClaimed) return;
 
-          await markEmailDeliverySent({
-            deliveryId: delivery.id,
-            providerMessageId: result.messageId
-          });
+          try {
+            await markEmailDeliverySent({
+              deliveryId: delivery.id,
+              providerMessageId: result.messageId
+            });
+          } catch (sentUpdateError) {
+            console.error('EMAIL_RETRY_SENT_STATE_RECONCILE_FAILED', {
+              deliveryId: delivery.id,
+              eventKey: delivery.eventKey,
+              messageId: result.messageId,
+              error: sentUpdateError instanceof Error ? sentUpdateError.message : String(sentUpdateError)
+            });
+            return;
+          }
           const outcomeStatus = terminalOutcomeStatus(delivery.emailType);
           if (outcomeStatus && delivery.demoSessionId) {
-            await markOutcomeEmailSent(delivery.demoSessionId, outcomeStatus);
+            try {
+              await markOutcomeEmailSent(delivery.demoSessionId, outcomeStatus);
+            } catch (metadataError) {
+              await reconcileOutcomeEmailMetadata({
+                deliveryId: delivery.id,
+                demoSessionId: delivery.demoSessionId,
+                emailType: delivery.emailType,
+                error: metadataError
+              });
+              console.error('EMAIL_RETRY_METADATA_RECONCILE_FAILED', {
+                deliveryId: delivery.id,
+                sessionId: delivery.demoSessionId,
+                emailType: delivery.emailType,
+                error: metadataError instanceof Error ? metadataError.message : String(metadataError)
+              });
+            }
           }
 
           console.log('EMAIL_RETRY_SUCCESS', {

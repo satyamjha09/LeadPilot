@@ -21,7 +21,7 @@ import {
   findScheduledMeetLinkFromDb,
   assertCanCreateOrReuseActiveDemo,
   assertDemoLifecycleOwnership,
-  closeActiveDemoForRow,
+  commitDemoOutcomeAndEmailIntent,
   ensureScheduledDemoHistory,
   getSheetLeadState,
   markScheduledEmailSent,
@@ -50,7 +50,6 @@ import {
 import {
   claimEmailRetryById,
   claimEmailDelivery,
-  createPendingEmailDeliveryIntent,
   findEmailDeliveryById,
   findEmailDeliveryByEventKey,
   EMAIL_DELIVERY_STATUS,
@@ -627,13 +626,37 @@ async function sendPendingOutcomeEmail(input: {
     await assertWorkflowStillValid(input.context);
     const result = await input.send();
     if (!result.messageId) throw new Error('Gmail send returned no message ID.');
-    await assertWorkflowStillValid(input.context);
-    await markEmailDeliverySent({
-      deliveryId: input.deliveryId,
-      providerMessageId: result.messageId
-    });
-    await assertWorkflowStillValid(input.context);
-    await markOutcomeEmailSent(input.sessionId, input.status);
+    try {
+      await assertWorkflowStillValid(input.context);
+      await markEmailDeliverySent({
+        deliveryId: input.deliveryId,
+        providerMessageId: result.messageId
+      });
+    } catch (sentUpdateError) {
+      console.error('OUTCOME_EMAIL_SENT_STATE_RECONCILE_FAILED', {
+        deliveryId: input.deliveryId,
+        sessionId: input.sessionId,
+        status: input.status,
+        messageId: result.messageId,
+        error: sentUpdateError instanceof Error ? sentUpdateError.message : String(sentUpdateError)
+      });
+      return {
+        sent: true,
+        messageId: result.messageId,
+        message: `${terminalEmailMessage(input.status, { sent: true })} Delivery metadata requires manual review.`
+      };
+    }
+    try {
+      await assertWorkflowStillValid(input.context);
+      await markOutcomeEmailSent(input.sessionId, input.status);
+    } catch (metadataError) {
+      console.error('OUTCOME_EMAIL_METADATA_RECONCILE_FAILED', {
+        deliveryId: input.deliveryId,
+        sessionId: input.sessionId,
+        status: input.status,
+        error: metadataError instanceof Error ? metadataError.message : String(metadataError)
+      });
+    }
     return {
       sent: true,
       messageId: result.messageId,
@@ -1238,28 +1261,22 @@ export async function sendThankYouForRow(
   });
 
   await assertWorkflowStillValid(ownerContext);
-  const intent = await createPendingEmailDeliveryIntent({
+  const commit = await commitDemoOutcomeAndEmailIntent(ownerRow, LEAD_STATUS.DEMO_DONE, ownerBrand, {
+    senderAccountKey: senderAccountKeyForContext(ownerContext),
     eventKey,
     automationId,
     demoSessionId: sessionId,
     emailType: EMAIL_TYPES.DEMO_DONE,
     recipient,
-    emailBrand: ownerBrand,
-    senderAccountKey: senderAccountKeyForContext(ownerContext),
     payloadHash,
     subject: template.subject,
     text: template.text,
     html: template.html
   });
 
-  await assertWorkflowStillValid(ownerContext);
-  await closeActiveDemoForRow(ownerRow, LEAD_STATUS.DEMO_DONE, ownerBrand, {
-    senderAccountKey: senderAccountKeyForContext(ownerContext)
-  });
-
   const emailResult = await sendPendingOutcomeEmail({
     context: ownerContext,
-    deliveryId: intent.deliveryId,
+    deliveryId: commit.delivery.deliveryId,
     sessionId,
     recipient,
     status: LEAD_STATUS.DEMO_DONE,
@@ -1279,7 +1296,7 @@ export async function sendThankYouForRow(
     'Meeting Details': '',
     lead_status: LEAD_STATUS.DEMO_DONE,
     Remarks: emailResult.message,
-    __emailDeliveryId: intent.deliveryId
+    __emailDeliveryId: commit.delivery.deliveryId
   };
 
   if (!options.skipSheetSync) {
@@ -1338,28 +1355,22 @@ export async function sendNoResponseForRow(
   });
 
   await assertWorkflowStillValid(ownerContext);
-  const intent = await createPendingEmailDeliveryIntent({
+  const commit = await commitDemoOutcomeAndEmailIntent(ownerRow, LEAD_STATUS.NO_RESPONSE, ownerBrand, {
+    senderAccountKey: senderAccountKeyForContext(ownerContext),
     eventKey,
     automationId,
     demoSessionId: sessionId,
     emailType: EMAIL_TYPES.NO_RESPONSE,
     recipient,
-    emailBrand: ownerBrand,
-    senderAccountKey: senderAccountKeyForContext(ownerContext),
     payloadHash,
     subject: template.subject,
     text: template.text,
     html: template.html
   });
 
-  await assertWorkflowStillValid(ownerContext);
-  await closeActiveDemoForRow(ownerRow, LEAD_STATUS.NO_RESPONSE, ownerBrand, {
-    senderAccountKey: senderAccountKeyForContext(ownerContext)
-  });
-
   const emailResult = await sendPendingOutcomeEmail({
     context: ownerContext,
-    deliveryId: intent.deliveryId,
+    deliveryId: commit.delivery.deliveryId,
     sessionId,
     recipient,
     status: LEAD_STATUS.NO_RESPONSE,
@@ -1379,7 +1390,7 @@ export async function sendNoResponseForRow(
     lead_status: LEAD_STATUS.NO_RESPONSE,
     'Meeting Details': '',
     Remarks: emailResult.message,
-    __emailDeliveryId: intent.deliveryId
+    __emailDeliveryId: commit.delivery.deliveryId
   };
 
   if (!options.skipSheetSync) {

@@ -11,7 +11,8 @@ const prismaMock = vi.hoisted(() => ({
     findMany: vi.fn(),
     updateMany: vi.fn()
   },
-  $executeRaw: vi.fn()
+  $executeRaw: vi.fn(),
+  $queryRaw: vi.fn()
 }));
 
 vi.mock('./db', () => ({
@@ -23,7 +24,8 @@ const {
   claimEmailRetryById,
   createPendingEmailDeliveryIntent,
   findEmailDeliveryByEventKey,
-  listEmailDeliveriesForRow
+  listEmailDeliveriesForRow,
+  markEmailDeliveryFailed
 } = await import('./emailDelivery');
 
 const baseRow: ExcelRow = {
@@ -41,6 +43,7 @@ describe('brand-scoped email delivery idempotency', () => {
     prismaMock.emailDelivery.findUnique.mockResolvedValue(null);
     prismaMock.emailDelivery.findMany.mockResolvedValue([]);
     prismaMock.$executeRaw.mockResolvedValue(1);
+    prismaMock.$queryRaw.mockResolvedValue([]);
   });
 
   it('looks up delivery state by brand and event key', async () => {
@@ -163,6 +166,55 @@ describe('brand-scoped email delivery idempotency', () => {
         nextRetryAt: null
       })
     });
+  });
+
+  it('does not downgrade SENT deliveries when later metadata reconciliation fails', async () => {
+    prismaMock.$queryRaw.mockResolvedValueOnce([
+      {
+        id: 'delivery-sent',
+        eventKey: 'event-sent',
+        automationId: 'lead_123',
+        demoSessionId: 'session-sent',
+        emailBrand: 'anywheretally',
+        senderAccountKey: 'anywheretally-google',
+        emailType: EMAIL_TYPES.DEMO_DONE,
+        recipient: 'moh@example.com',
+        payloadHash: 'hash',
+        status: 'SENT',
+        attemptCount: 1,
+        retryCount: 0,
+        maxRetries: 3,
+        nextRetryAt: null,
+        providerMessageId: 'gmail-sent',
+        subject: null,
+        textBody: null,
+        htmlBody: null,
+        sentAt: new Date(),
+        lockedAt: null,
+        lockedBy: null,
+        lastError: null,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    ]);
+    prismaMock.emailDelivery.updateMany.mockResolvedValue({ count: 1 });
+
+    await markEmailDeliveryFailed({
+      deliveryId: 'delivery-sent',
+      error: new Error('history timestamp failed')
+    });
+
+    expect(prismaMock.emailDelivery.updateMany).toHaveBeenCalledWith({
+      where: { id: 'delivery-sent', status: 'SENT' },
+      data: expect.objectContaining({
+        lastError: expect.stringContaining('Metadata reconciliation failed after provider send')
+      })
+    });
+    expect(prismaMock.emailDelivery.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'FAILED' })
+      })
+    );
   });
 
   it('rejects a missing senderAccountKey before database insert', async () => {

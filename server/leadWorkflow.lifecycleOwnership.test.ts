@@ -30,10 +30,7 @@ describe('lead workflow lifecycle ownership guards', () => {
     expect(body).toContain('const ownerBrand = active.emailBrand');
     expect(body).toContain('__senderAccountKey: senderAccountKeyForContext(ownerContext)');
     expect(body).toContain('__demoSessionId: sessionId');
-    expect(body.indexOf('createPendingEmailDeliveryIntent({')).toBeLessThan(
-      body.indexOf('closeActiveDemoForRow(ownerRow, LEAD_STATUS.DEMO_DONE, ownerBrand')
-    );
-    expect(body.indexOf('closeActiveDemoForRow(ownerRow, LEAD_STATUS.DEMO_DONE, ownerBrand')).toBeLessThan(
+    expect(body.indexOf('commitDemoOutcomeAndEmailIntent(ownerRow, LEAD_STATUS.DEMO_DONE, ownerBrand')).toBeLessThan(
       body.indexOf('sendPendingOutcomeEmail({')
     );
     expect(body).toContain('emailType: EMAIL_TYPES.DEMO_DONE');
@@ -50,10 +47,7 @@ describe('lead workflow lifecycle ownership guards', () => {
     expect(body).toContain('const ownerBrand = active.emailBrand');
     expect(body).toContain('__senderAccountKey: senderAccountKeyForContext(ownerContext)');
     expect(body).toContain('__demoSessionId: sessionId');
-    expect(body.indexOf('createPendingEmailDeliveryIntent({')).toBeLessThan(
-      body.indexOf('closeActiveDemoForRow(ownerRow, LEAD_STATUS.NO_RESPONSE, ownerBrand')
-    );
-    expect(body.indexOf('closeActiveDemoForRow(ownerRow, LEAD_STATUS.NO_RESPONSE, ownerBrand')).toBeLessThan(
+    expect(body.indexOf('commitDemoOutcomeAndEmailIntent(ownerRow, LEAD_STATUS.NO_RESPONSE, ownerBrand')).toBeLessThan(
       body.indexOf('sendPendingOutcomeEmail({')
     );
     expect(body).toContain('emailType: EMAIL_TYPES.NO_RESPONSE');
@@ -62,6 +56,23 @@ describe('lead workflow lifecycle ownership guards', () => {
     expect(body).toContain('senderAccountKey: senderAccountKeyForContext(ownerContext)');
     expect(body).toContain('emailBrandKey: emailBrandKeyForContext(ownerContext)');
     expect(body).toContain("'Meeting Details': ''");
+  });
+
+  it('keeps provider-sent outcome emails final when metadata reconciliation fails', () => {
+    const start = source.indexOf('async function sendPendingOutcomeEmail');
+    const end = source.indexOf('function flattenPlannedRows', start + 1);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const body = source.slice(start, end);
+
+    expect(body).toContain('OUTCOME_EMAIL_SENT_STATE_RECONCILE_FAILED');
+    expect(body).toContain('OUTCOME_EMAIL_METADATA_RECONCILE_FAILED');
+    const providerSend = body.indexOf('await input.send()');
+    const markSent = body.indexOf('await markEmailDeliverySent({', providerSend);
+    const markOutcome = body.indexOf('await markOutcomeEmailSent(input.sessionId, input.status)', markSent);
+    expect(providerSend).toBeGreaterThanOrEqual(0);
+    expect(markSent).toBeGreaterThan(providerSend);
+    expect(markOutcome).toBeGreaterThan(markSent);
   });
 
   it('validates Demo Done and Not Attended against DB session time only', () => {

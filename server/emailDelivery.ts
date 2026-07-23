@@ -504,6 +504,24 @@ export function classifyEmailFailure(error: unknown): 'RETRY_PENDING' | 'FAILED'
   return 'UNKNOWN';
 }
 
+export async function reconcileOutcomeEmailMetadata(input: {
+  deliveryId: string;
+  demoSessionId?: string | null;
+  emailType: string;
+  error: unknown;
+}) {
+  const message = input.error instanceof Error ? input.error.message : String(input.error || 'Outcome email metadata reconciliation failed.');
+  await prisma.emailDelivery.updateMany({
+    where: {
+      id: input.deliveryId,
+      status: EMAIL_DELIVERY_STATUS.SENT
+    },
+    data: {
+      lastError: `Metadata reconciliation failed after provider send: ${message.slice(0, 1900)}`
+    }
+  });
+}
+
 const RETRY_DELAYS_MS = [5 * 60 * 1000, 15 * 60 * 1000, 60 * 60 * 1000];
 
 function nextRetryDelayMs(nextRetryCount: number) {
@@ -513,6 +531,16 @@ function nextRetryDelayMs(nextRetryCount: number) {
 export async function markEmailDeliveryFailed(input: { deliveryId: string; error: unknown }) {
   const classification = classifyEmailFailure(input.error);
   const message = input.error instanceof Error ? input.error.message : String(input.error);
+  const current = await findEmailDeliveryById(input.deliveryId);
+  if (current?.status === EMAIL_DELIVERY_STATUS.SENT) {
+    await reconcileOutcomeEmailMetadata({
+      deliveryId: input.deliveryId,
+      demoSessionId: current.demoSessionId,
+      emailType: current.emailType,
+      error: input.error
+    });
+    return classification;
+  }
 
   if (classification === 'RETRY_PENDING') {
     const [delivery] = await prisma.$queryRaw<Array<{ retryCount: number; maxRetries: number }>>`
