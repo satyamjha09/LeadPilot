@@ -145,7 +145,7 @@ async function automationIdFromSiblingRows(leadId?: string | null) {
 }
 
 async function lockCanonicalLeadIdentity(tx: Prisma.TransactionClient, workspaceId: string, leadId: string) {
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`automation-id:${workspaceId}:${leadId}`}, 0))`;
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`automation-id:${workspaceId}:${leadId}`}, 0))::text`;
 }
 
 async function persistIdentity(input: {

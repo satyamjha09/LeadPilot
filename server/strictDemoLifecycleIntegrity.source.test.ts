@@ -124,4 +124,14 @@ describe('strict demo lifecycle integrity source guards', () => {
     expect(workflow).toContain('Local UI/state reconciliation requires retry.');
     expect(workflow).toContain("'Meeting Details': ''");
   });
+
+  it('casts advisory lock results so Prisma never deserializes PostgreSQL void columns', () => {
+    const scheduleDb = readRepoFile('server', 'scheduleDb.ts');
+    const permanentAutomationId = readRepoFile('server', 'modules', 'lead', 'identity', 'permanentAutomationId.service.ts');
+
+    expect(scheduleDb).toContain('pg_advisory_xact_lock(hashtextextended');
+    expect(scheduleDb).toContain('))::text');
+    expect(permanentAutomationId).toContain('pg_advisory_xact_lock(hashtextextended');
+    expect(permanentAutomationId).toContain('))::text');
+  });
 });

@@ -113,7 +113,7 @@ function assertHistoryMeetingStarted(history: { scheduledStartUtc?: string | nul
 }
 
 async function lockWorkflowSubject(tx: PrismaTransaction, emailBrand: string, userId: string) {
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`demo-lifecycle:${emailBrand}:${userId}`}, 0))`;
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`demo-lifecycle:${emailBrand}:${userId}`}, 0))::text`;
 }
 
 async function loadCustomerDemoState(tx: PrismaTransaction, emailBrand: EmailBrandKey, userId: string) {
