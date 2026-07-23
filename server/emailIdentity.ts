@@ -95,6 +95,7 @@ export function createEmailEventKey(input: {
   automationId: string;
   recipient?: string;
   emailType: EmailType;
+  sessionId?: unknown;
   date?: unknown;
   time?: unknown;
   reminderWindow?: string;
@@ -102,7 +103,9 @@ export function createEmailEventKey(input: {
   const stableLeadKey = clean(input.automationId) || clean(input.recipient).toLowerCase();
   let version: string;
 
-  if (input.emailType === EMAIL_TYPES.DEMO_DONE || input.emailType === EMAIL_TYPES.NO_RESPONSE) {
+  if (input.emailType === EMAIL_TYPES.DEMO_DONE) {
+    version = clean(input.sessionId);
+  } else if (input.emailType === EMAIL_TYPES.NO_RESPONSE) {
     version = [
       normalizeIdentityDate(input.date),
       normalizeIdentityTime(input.time)

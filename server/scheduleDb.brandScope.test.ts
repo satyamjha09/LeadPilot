@@ -15,7 +15,8 @@ const prismaMock = vi.hoisted(() => ({
   },
   leadSchedule: {
     findFirst: vi.fn(),
-    updateMany: vi.fn()
+    updateMany: vi.fn(),
+    update: vi.fn()
   },
   sheetLeadState: {
     findUnique: vi.fn()
@@ -32,6 +33,7 @@ const {
   applyDbTruthToRows,
   findLeadSchedule,
   getCustomerDemoState,
+  saveLeadStatusUpdate,
   getSheetLeadState
 } = await import('./scheduleDb');
 
@@ -54,6 +56,7 @@ describe('brand-scoped schedule state', () => {
     vi.clearAllMocks();
     prismaMock.customerDemoState.findUnique.mockResolvedValue(null);
     prismaMock.leadSchedule.findFirst.mockResolvedValue(null);
+    prismaMock.leadSchedule.update.mockResolvedValue({});
     prismaMock.sheetLeadState.findUnique.mockResolvedValue(null);
   });
 
@@ -94,6 +97,80 @@ describe('brand-scoped schedule state', () => {
         }
       }
     });
+  });
+
+  it('clears persisted meeting details when saving Demo Done status', async () => {
+    prismaMock.leadSchedule.findFirst.mockResolvedValue({ id: 'schedule-1' });
+
+    await saveLeadStatusUpdate(
+      {
+        ...baseRow,
+        lead_status: 'Demo Done',
+        'Meeting Details': 'https://meet.google.com/old-link'
+      },
+      {
+        status: 'Demo Done',
+        remarks: 'Thank-you email sent'
+      },
+      {
+        emailBrand: 'anywheretally',
+        senderAccountKey: 'anywheretally-google'
+      }
+    );
+
+    expect(prismaMock.leadSchedule.update).toHaveBeenCalledWith({
+      where: { id: 'schedule-1' },
+      data: expect.objectContaining({
+        meetingLink: null,
+        calendarEventId: null,
+        status: 'Demo Done',
+        remarks: 'Thank-you email sent'
+      })
+    });
+  });
+
+  it('does not restore stale meeting details from finalized Demo Done schedules', async () => {
+    prismaMock.leadSchedule.findFirst.mockResolvedValue({
+      id: 'schedule-1',
+      emailBrand: 'anywheretally',
+      senderAccountKey: 'anywheretally-google',
+      automationId: 'lead_123',
+      fullName: 'Moh Agarwal',
+      email: 'moh@example.com',
+      dateOfDemo: '15-06-2026',
+      timeOfDemo: '15:30',
+      meetingLink: 'https://meet.google.com/old-link',
+      status: 'Demo Done',
+      remarks: 'Thank-you email sent'
+    });
+
+    const [row] = await applyDbTruthToRows([baseRow], 'anywheretally');
+
+    expect(row.lead_status).toBe('Demo Done');
+    expect(row['Meeting Details']).toBe('');
+    expect(row.__dbFinalState).toBe(true);
+  });
+
+  it('does not restore stale meeting details from finalized Not Attended schedules', async () => {
+    prismaMock.leadSchedule.findFirst.mockResolvedValue({
+      id: 'schedule-1',
+      emailBrand: 'anywheretally',
+      senderAccountKey: 'anywheretally-google',
+      automationId: 'lead_123',
+      fullName: 'Moh Agarwal',
+      email: 'moh@example.com',
+      dateOfDemo: '15-06-2026',
+      timeOfDemo: '15:30',
+      meetingLink: 'https://meet.google.com/old-link',
+      status: 'Not Attended',
+      remarks: 'Not Attended email sent'
+    });
+
+    const [row] = await applyDbTruthToRows([baseRow], 'anywheretally');
+
+    expect(row.lead_status).toBe('Not Attended');
+    expect(row['Meeting Details']).toBe('');
+    expect(row.__dbFinalState).toBe(true);
   });
 
   it('does not apply TallyKonnect schedule truth while reconciling AnyWhereTally', async () => {

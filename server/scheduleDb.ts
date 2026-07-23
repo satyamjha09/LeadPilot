@@ -869,7 +869,7 @@ export async function applyDbTruthToRow(row: ExcelRow, emailBrand: EmailBrandKey
     email: row.email || schedule.email,
     'Date of Demo': normalizeLeadDate(schedule.dateOfDemo || row['Date of Demo']),
     'Time of Demo': schedule.timeOfDemo || row['Time of Demo'],
-    'Meeting Details': schedule.meetingLink || '',
+    'Meeting Details': terminalStatus ? '' : schedule.meetingLink || '',
     lead_status: shouldUseDbStatus ? dbStatus : requestedStatus,
     automation_id: restoredAutomationId,
     Remarks: schedule.remarks || row.Remarks || '',
@@ -954,11 +954,16 @@ export async function saveLeadStatusUpdate(
 ) {
   const keys = getLeadUniqueKeys(row);
   if (!keys.email || !keys.dateOfDemo || !keys.timeOfDemo) return null;
+  const normalizedStatus = normalizeLeadStatus(data.status);
+  const shouldClearMeetingDetails =
+    normalizedStatus === LEAD_STATUS.DEMO_DONE ||
+    normalizedStatus === LEAD_STATUS.NO_RESPONSE;
 
   return saveLeadScheduleRow(
     row,
     {
-      meetingLink: row['Meeting Details'] || null,
+      meetingLink: shouldClearMeetingDetails ? null : row['Meeting Details'] || null,
+      calendarEventId: shouldClearMeetingDetails ? null : undefined,
       status: data.status,
       remarks: data.remarks || null
     },

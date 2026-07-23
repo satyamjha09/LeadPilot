@@ -339,13 +339,7 @@ async function assertManualCloseAllowed(row: ExcelRow, emailBrand: EmailBrandKey
   if (!active.state.meetingLink || !active.state.calendarEventId) {
     throw new Error('An active meeting is required to update this demo.');
   }
-  let rowStartUtc = '';
-  try {
-    rowStartUtc = parseExcelDateTime(row['Date of Demo'], row['Time of Demo']).toISOString();
-  } catch {
-    rowStartUtc = '';
-  }
-  if (!hasMeetingStarted(active.state.demoStartUtc) && !hasMeetingStarted(rowStartUtc)) {
+  if (!hasMeetingStarted(active.state.demoStartUtc)) {
     throw new Error('The scheduled meeting start time has not arrived yet.');
   }
   return active;
@@ -411,6 +405,7 @@ type IdempotentEmailInput = {
   row: ExcelRow;
   context: SheetContext;
   emailType: EmailType;
+  sessionId?: unknown;
   date?: unknown;
   time?: unknown;
   reminderWindow?: string;
@@ -428,6 +423,7 @@ async function getEmailEventState(input: {
   row: ExcelRow;
   context: SheetContext;
   emailType: EmailType;
+  sessionId?: unknown;
   date?: unknown;
   time?: unknown;
   reminderWindow?: string;
@@ -437,6 +433,7 @@ async function getEmailEventState(input: {
     automationId,
     recipient: input.row.email,
     emailType: input.emailType,
+    sessionId: input.sessionId,
     date: input.date,
     time: input.time,
     reminderWindow: input.reminderWindow
@@ -453,6 +450,7 @@ async function sendIdempotentEmail(input: IdempotentEmailInput) {
     automationId,
     recipient,
     emailType: input.emailType,
+    sessionId: input.sessionId,
     date: input.date,
     time: input.time,
     reminderWindow: input.reminderWindow
@@ -591,7 +589,11 @@ export async function buildProcessLeadPlan(rows: ExcelRow[]): Promise<ProcessLea
     }
   };
 
-  const timeConflictGroups = findTimeConflictGroups(rows);
+  const rowsRequiringSheetTimeValidation = rows.filter((row) => {
+    const normalized = normalizeLeadStatus(row.lead_status);
+    return normalized === LEAD_STATUS.DEMO_SCHEDULED || normalized === LEAD_STATUS.RESCHEDULE;
+  });
+  const timeConflictGroups = findTimeConflictGroups(rowsRequiringSheetTimeValidation);
   const conflictRowIds = new Set(timeConflictGroups.flatMap((group) => group.rowIds));
   if (timeConflictGroups.length > 0) {
     plan.timeConflictGroups = timeConflictGroups;
@@ -904,6 +906,7 @@ export async function processLeadsByStatus(
       if (result.skipped) summary.skipped++;
       else summary.demoDone++;
       collectSheetUpdate(sheetUpdates, result.row, {
+        'Meeting Details': '',
         lead_status: result.row.lead_status || LEAD_STATUS.DEMO_DONE,
         Remarks: result.row.Remarks || result.message || ''
       });
@@ -1118,6 +1121,7 @@ export async function sendThankYouForRow(
     row: ownerRow,
     context: ownerContext,
     emailType: EMAIL_TYPES.DEMO_DONE,
+    sessionId: active.history?.sessionId || active.state.activeDemoSessionId,
     date: ownerRow['Date of Demo'],
     time: ownerRow['Time of Demo'],
     subject: template.subject,
@@ -1144,13 +1148,15 @@ export async function sendThankYouForRow(
       ...ownerRow,
       __emailBrand: ownerBrand,
       lead_status: LEAD_STATUS.DEMO_DONE,
+      'Meeting Details': '',
       Remarks: message
     };
     if (!options.skipSheetSync) {
       await syncSheetRow(ownerRow, ownerContext, {
+        'Meeting Details': '',
         lead_status: LEAD_STATUS.DEMO_DONE,
         Remarks: updatedRow.Remarks || ''
-      });
+      }, true);
     }
     if (emailResult.reason === 'ALREADY_SENT') {
       await assertWorkflowStillValid(ownerContext);
@@ -1165,7 +1171,7 @@ export async function sendThankYouForRow(
     await saveLeadScheduleSuccess(
       ownerRow,
       {
-        meetingLink: String(ownerRow['Meeting Details'] || ''),
+        meetingLink: '',
         gmailMessageId: emailResult.messageId,
         remarks: 'Thank-you email sent',
         status: LEAD_STATUS.DEMO_DONE
@@ -1183,15 +1189,17 @@ export async function sendThankYouForRow(
     ...ownerRow,
     __emailBrand: ownerBrand,
     lead_status: LEAD_STATUS.DEMO_DONE,
+    'Meeting Details': '',
     Remarks: 'Thank-you email sent',
     __emailDeliveryId: emailResult.deliveryId
   };
 
   if (!options.skipSheetSync) {
     await syncSheetRow(ownerRow, ownerContext, {
+      'Meeting Details': '',
       lead_status: LEAD_STATUS.DEMO_DONE,
       Remarks: 'Thank-you email sent'
-    });
+    }, true);
   }
 
   await assertWorkflowStillValid(ownerContext);
