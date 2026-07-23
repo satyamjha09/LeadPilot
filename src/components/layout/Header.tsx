@@ -2,14 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { Bell, CheckCircle2, ChevronDown, FileSpreadsheet, Key, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Sun, UserCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import Sidebar from '@/src/components/layout/Sidebar';
 import { DashboardView } from '@/src/lib/rowUtils';
@@ -83,7 +75,9 @@ export default function Header({
   onToggleSidebar
 }: HeaderProps) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const manualReviewCount = notificationCounts.manualReview;
   const emailLogsCount = notificationCounts.emailLogs;
   const notificationBadge = manualReviewCount > 99 ? '99+' : String(manualReviewCount);
@@ -92,17 +86,20 @@ export default function Header({
   const activeGoogleStatus = googleSenderStatuses[activeAccount.senderAccountKey] || authStatus;
 
   useEffect(() => {
-    if (!accountMenuOpen) return undefined;
+    if (!accountMenuOpen && !profileMenuOpen) return undefined;
 
     const handlePointerDown = (event: MouseEvent) => {
       if (accountMenuRef.current && !accountMenuRef.current.contains(event.target as Node)) {
         setAccountMenuOpen(false);
       }
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target as Node)) {
+        setProfileMenuOpen(false);
+      }
     };
 
     document.addEventListener('mousedown', handlePointerDown);
     return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [accountMenuOpen]);
+  }, [accountMenuOpen, profileMenuOpen]);
 
   const handleNotificationsClick = () => {
     if (manualReviewCount > 0) {
@@ -334,32 +331,33 @@ export default function Header({
                 </span>
               )}
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-11 rounded-full pl-2 pr-3"
-                    title={operator.email || 'Profile'}
-                  />
-                }
+            <div ref={profileMenuRef} className="relative">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-11 rounded-full pl-2 pr-3"
+                title={operator.email || 'Profile'}
+                aria-expanded={profileMenuOpen}
+                aria-haspopup="menu"
+                onClick={() => setProfileMenuOpen((open) => !open)}
               >
                 <span className={`grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br ${activeAccount.accentClass} text-xs font-bold text-white`}>
                   {profileInitials}
                 </span>
                 <span className="hidden xl:inline">Profile</span>
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-72">
-                <DropdownMenuLabel>
-                  <div className="flex items-center gap-2">
+              </Button>
+              {profileMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl"
+                >
+                  <div className="flex items-center gap-2 px-2 py-1 text-xs font-medium text-muted-foreground">
                     <UserCircle className="h-4 w-4" />
                     <span>Operator</span>
                   </div>
-                </DropdownMenuLabel>
-                <div className="px-2 py-1 text-sm">
+                  <div className="px-2 py-2 text-sm">
                   <p className="font-semibold">{operator.displayName || operator.email}</p>
                   <p className="truncate text-xs text-muted-foreground">{operator.email}</p>
                   <p className="mt-1 text-xs text-muted-foreground">Role: {operator.role}</p>
@@ -368,19 +366,38 @@ export default function Header({
                     Google: {activeGoogleStatus?.authenticated ? activeGoogleStatus.connectedEmail || senderAccountEmail(activeAccount.senderAccountKey) : 'Not connected'}
                   </p>
                 </div>
-                <DropdownMenuSeparator />
+                  <div className="my-1 h-px bg-border" />
                 {authStatus?.authenticated && (
-                  <DropdownMenuItem onClick={onClearAuth}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-start"
+                      onClick={() => {
+                        setProfileMenuOpen(false);
+                        onClearAuth();
+                      }}
+                    >
                     <Key className="h-4 w-4" />
                     Disconnect active Google
-                  </DropdownMenuItem>
+                    </Button>
                 )}
-                <DropdownMenuItem variant="destructive" onClick={() => void onLogout()}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      void onLogout();
+                    }}
+                  >
                   <LogOut className="h-4 w-4" />
                   Logout
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
       </div>
     </header>
