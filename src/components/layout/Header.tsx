@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bell, CheckCircle2, ChevronDown, FileSpreadsheet, Key, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Sun, UserCircle } from 'lucide-react';
+import { Bell, CheckCircle2, ChevronDown, Key, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Sun, UserCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -115,8 +115,8 @@ export default function Header({
 
   return (
     <header className="sticky top-0 z-30 border-b border-sky-200/70 bg-white/78 shadow-sm backdrop-blur-xl dark:border-sky-900/50 dark:bg-slate-950/78">
-      <div className="flex min-h-20 items-center justify-between gap-4 px-4 py-3 lg:px-6">
-          <div className="flex min-w-0 items-center gap-3">
+      <div className="flex min-h-20 items-center gap-3 px-4 py-3 lg:px-6">
+          <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
             <Sheet>
               <SheetTrigger
                 render={
@@ -148,13 +148,18 @@ export default function Header({
             >
               {sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
             </Button>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1 overflow-hidden">
               <h1 className="truncate text-xl font-bold tracking-normal">{pageTitle}</h1>
-              <p className="truncate text-sm text-muted-foreground">{pageDescription}</p>
+              <p
+                className="max-w-[520px] truncate text-sm text-muted-foreground"
+                title={pageDescription}
+              >
+                {pageDescription}
+              </p>
             </div>
           </div>
 
-          <div className="flex min-w-0 items-center justify-end gap-2">
+          <div className="ml-auto flex shrink-0 items-center justify-end gap-2">
             {!activeGoogleStatus?.authenticated && activeGoogleStatus?.configured ? (
               <div className="flex items-center gap-2">
                 {activeGoogleStatus.authError && (
@@ -185,7 +190,7 @@ export default function Header({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-11 min-w-[190px] justify-between rounded-xl"
+                className="h-11 w-[170px] shrink-0 justify-between rounded-xl px-3 2xl:w-[190px]"
                 aria-expanded={accountMenuOpen}
                 aria-haspopup="menu"
                 onClick={() => setAccountMenuOpen((open) => !open)}
@@ -300,27 +305,19 @@ export default function Header({
               )}
             </div>
 
-            <Button
-              type="button"
-              variant="outline"
-              className="hidden h-auto min-w-0 max-w-[290px] items-center gap-2 rounded-xl bg-card px-3 py-2 text-left text-sm shadow-sm md:flex"
-              onClick={() => onNavigate('import')}
-              aria-label="Open import leads"
-            >
-              <FileSpreadsheet className="h-4 w-4 shrink-0 text-sky-600" />
-              <div className="min-w-0">
-                <p className="truncate text-xs text-muted-foreground">Source</p>
-                <p className="truncate font-semibold">
-                  {source.type === 'google-sheet' ? source.sheetName : 'Excel import'}
-                </p>
-              </div>
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            </Button>
-
             {source.type === 'google-sheet' && onSyncNow && (
-              <Button type="button" variant="outline" size="sm" onClick={onSyncNow} disabled={isSyncing}>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-11 w-11 shrink-0 rounded-full 2xl:w-auto 2xl:px-3"
+                onClick={onSyncNow}
+                disabled={isSyncing}
+                aria-label="Sync Google Sheet"
+                title="Sync Google Sheet"
+              >
                 <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
-                Sync
+                <span className="hidden 2xl:inline">Sync</span>
               </Button>
             )}
 
@@ -351,7 +348,7 @@ export default function Header({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="h-11 rounded-full pl-2 pr-3"
+                className="h-11 shrink-0 rounded-full pl-2 pr-3"
                 title={operator.email || 'Profile'}
                 aria-expanded={profileMenuOpen}
                 aria-haspopup="menu"
@@ -360,7 +357,7 @@ export default function Header({
                 <span className={`grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br ${activeAccount.accentClass} text-xs font-bold text-white`}>
                   {profileInitials}
                 </span>
-                <span className="hidden xl:inline">Profile</span>
+                <span className="hidden 2xl:inline">Profile</span>
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
               </Button>
               {profileMenuOpen && (

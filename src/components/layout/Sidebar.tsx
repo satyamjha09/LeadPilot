@@ -21,7 +21,6 @@ import type { AuthStatus, NotificationCounts, SheetSource } from '@/src/types';
 
 const navItems: { id: DashboardView; label: string; icon: ComponentType<{ className?: string }> }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'import', label: 'Import Leads', icon: FileSpreadsheet },
   { id: 'leads', label: 'Leads', icon: List },
   { id: 'manual-review', label: 'Manual Review', icon: SearchCheck },
   { id: 'email-logs', label: 'Email Logs', icon: Mail },
@@ -97,13 +96,13 @@ export default function Sidebar({ authStatus, activeView, onNavigate, source, on
         <NavGroup title="Main" items={navItems.slice(0, 1)} activeView={activeView} onNavigate={onNavigate} />
         <NavGroup
           title="Workspace"
-          items={navItems.slice(1, 5)}
+          items={navItems.slice(1, 4)}
           activeView={activeView}
           onNavigate={onNavigate}
           notificationCounts={notificationCounts}
         />
-        <NavGroup title="Automation" items={navItems.slice(5, 6)} activeView={activeView} onNavigate={onNavigate} />
-        <NavGroup title="System" items={navItems.slice(6)} activeView={activeView} onNavigate={onNavigate} />
+        <NavGroup title="Automation" items={navItems.slice(4, 5)} activeView={activeView} onNavigate={onNavigate} />
+        <NavGroup title="System" items={navItems.slice(5)} activeView={activeView} onNavigate={onNavigate} />
       </nav>
 
       <div className="space-y-3 border-t border-white/10 p-4">

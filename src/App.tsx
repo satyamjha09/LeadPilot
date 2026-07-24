@@ -866,7 +866,7 @@ export default function App() {
       if (canProcessLead(row)) initiallySelected.add(row.id);
     });
     setSelectedRowIds(initiallySelected);
-    setActiveView('dashboard');
+    setActiveView('leads');
     toast.success(`Imported ${reconciledRows.length} rows from Excel`);
   };
 
@@ -882,7 +882,7 @@ export default function App() {
       if (canProcessLead(row)) initiallySelected.add(row.id);
     });
     setSelectedRowIds(initiallySelected);
-    setActiveView('dashboard');
+    setActiveView('leads');
     const sheetName = sheetSource.type === 'google-sheet' ? sheetSource.sheetName : 'sheet';
     toast.success(`Imported ${parsedRows.length} rows from "${sheetName}"`);
   };
@@ -1055,7 +1055,7 @@ export default function App() {
       if (canProcessLead(row)) initiallySelected.add(row.id);
     });
     setSelectedRowIds(initiallySelected);
-    setActiveView('dashboard');
+    setActiveView('leads');
     toast.success(`Prepared ${input.rows.length} row(s) from "${input.scope.sourceTabName}"`);
     await openProcessPreflight(input.rows);
   };
@@ -1516,7 +1516,7 @@ export default function App() {
 
   const isAuthActive = authMatchesSelection;
   const showLeadsSection = rows.length > 0 && activeView === 'leads';
-  const showImport = activeView === 'import' || (activeView === 'leads' && rows.length === 0);
+  const showImport = activeView === 'leads' || activeView === 'import';
   const viewCopy = getViewCopy(activeView);
 
   if (isOperatorChecking) {
@@ -1592,8 +1592,6 @@ export default function App() {
                 workspaceKey={workspaceKey}
                 emailBrand={selectedEmailBrand}
                 senderAccountKey={selectedSenderAccountKey}
-                selectedCount={selectedRowIds.size}
-                onRunAutomation={() => openProcessPreflight(processTargetFromSelection)}
                 onViewAllActivity={() => setActiveView('activity')}
               />
             )}
@@ -2022,7 +2020,7 @@ function getViewCopy(view: DashboardView) {
     },
     leads: {
       title: 'Leads',
-      description: 'Manage every lead, meeting slot, status badge, remark, and row-level action.'
+      description: 'Import, filter, select, and process leads from one workspace.'
     },
     automations: {
       title: 'Automations',

@@ -6,7 +6,6 @@ import {
   Clock3,
   FileSpreadsheet,
   Mail,
-  Play,
   Send,
   Sparkles,
   TrendingUp,
@@ -44,8 +43,6 @@ export default function DashboardOverview({
   workspaceKey,
   emailBrand,
   senderAccountKey,
-  selectedCount,
-  onRunAutomation,
   onViewAllActivity
 }: {
   rows: ExcelRow[];
@@ -58,8 +55,6 @@ export default function DashboardOverview({
   workspaceKey: WorkspaceKey;
   emailBrand: EmailBrandKey;
   senderAccountKey: SenderAccountKey;
-  selectedCount: number;
-  onRunAutomation: () => void;
   onViewAllActivity: () => void;
 }) {
   const total = Math.max(stats.total, 1);
@@ -97,7 +92,7 @@ export default function DashboardOverview({
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-[1.9fr_1fr]">
         <Card className="tk-premium-card overflow-hidden border-sky-200/80 bg-gradient-to-br from-white via-sky-50/70 to-cyan-50/70 shadow-sm dark:border-sky-500/20 dark:from-slate-950 dark:via-sky-950/20 dark:to-slate-900">
-          <CardContent className="grid gap-4 p-4 lg:grid-cols-[1.55fr_0.85fr]">
+          <CardContent className="p-4">
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-sky-700 dark:text-sky-300">
                 <Sparkles className="h-4 w-4" />
@@ -135,22 +130,6 @@ export default function DashboardOverview({
                   <span className="font-semibold text-foreground">{healthPercent}%</span>
                 </div>
               </div>
-            </div>
-            <div className="rounded-xl border bg-white/70 p-4 shadow-sm backdrop-blur dark:bg-slate-950/45">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Next Up</p>
-              <div className="mt-3 text-xl font-bold">{ready} leads ready</div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Estimated time: ~{Math.max(1, Math.ceil(ready * 0.6))} mins
-              </p>
-              <Button
-                type="button"
-                className="mt-4 h-9 w-full bg-gradient-to-r from-sky-500 to-cyan-600 text-white shadow-lg shadow-sky-500/20 hover:from-sky-400 hover:to-cyan-500"
-                onClick={onRunAutomation}
-                disabled={selectedCount === 0}
-              >
-                <Play className="h-4 w-4" />
-                Run Automation
-              </Button>
             </div>
           </CardContent>
         </Card>
