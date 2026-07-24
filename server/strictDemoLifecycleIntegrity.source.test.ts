@@ -7,16 +7,20 @@ function readRepoFile(...segments: string[]) {
 }
 
 describe('strict demo lifecycle integrity source guards', () => {
-  it('collects all automation identity candidates before selecting one', () => {
+  it('uses permanent DB identity before falling back to source and legacy schedule candidates', () => {
     const source = readRepoFile('server', 'modules', 'lead', 'identity', 'permanentAutomationId.service.ts');
 
-    expect(source).toContain('const candidates = [');
+    expect(source).toContain('async function lifecycleAutomationIdByBrandEmail');
+    expect(source).toContain('const permanentDbAutomationId = chooseUnambiguous([');
+    expect(source).toContain('...(await automationIdFromCanonicalLead(lead.id))');
+    expect(source).toContain('...(await lifecycleAutomationIdByBrandEmail(input.emailBrand, email))');
+    expect(source).toContain('const fallbackCandidates = permanentDbAutomationId');
+    expect(source).toContain('? [permanentDbAutomationId]');
     expect(source).toContain('existing,');
     expect(source).toContain('sourceAutomationId,');
-    expect(source).toContain('...(await automationIdFromCanonicalLead(lead.id))');
     expect(source).toContain('...(await automationIdFromSiblingRows(lead.id))');
     expect(source).toContain('...(await legacyAutomationIdByBrandEmail(input.emailBrand, email))');
-    expect(source).toContain('candidateAutomationIds: candidates');
+    expect(source).toContain('candidateAutomationIds: fallbackCandidates');
     expect(source).toContain('await lockCanonicalLeadIdentity(tx, input.workspaceId, input.leadId)');
     expect(source).toContain('const automationId = chooseUnambiguous([');
   });

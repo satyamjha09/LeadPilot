@@ -2,7 +2,6 @@ import { google } from 'googleapis';
 import { ExcelRow } from '../src/types';
 import { getVerifiedOAuthClient, GOOGLE_RECONNECT_MESSAGE, isInvalidGrantError } from './googleAuth';
 import { getLeadStatusParse, isValidLeadStatus, normalizeHeader } from './leadStatus';
-import { createNewAutomationId } from './emailIdentity';
 import { normalizeDisplayDate } from '../src/lib/dateFormat';
 import { parseEmailBrand, type EmailBrandKey } from '../src/lib/emailBrand';
 import { defaultSenderAccountForBrand, parseSenderAccountKey, type SenderAccountKey } from '../src/lib/senderAccount';
@@ -334,52 +333,6 @@ export async function updateGoogleSheetRowsResilient(
   }
 
   return results;
-}
-
-export async function ensureSheetAutomationIds(
-  spreadsheetId: string,
-  sheetName: string,
-  headers: string[],
-  rows: ExcelRow[],
-  access: GoogleSheetAccessContext
-) {
-  const updates: Array<{ rowNumber: number; values: Record<string, any> }> = [];
-
-  for (const row of rows) {
-    const existing = String(row.automation_id || '').trim();
-    if (existing) {
-      if (row.__automationIdRestoredFromDb) {
-        updates.push({
-          rowNumber: Number(row.__sheetRowNumber || row.__sourceRowNumber),
-          values: { automation_id: existing }
-        });
-      }
-      continue;
-    }
-
-    const automationId = createNewAutomationId();
-    row.automation_id = automationId;
-    updates.push({
-      rowNumber: Number(row.__sheetRowNumber || row.__sourceRowNumber),
-      values: { automation_id: automationId }
-    });
-  }
-
-  if (updates.length > 0) {
-    try {
-      await updateGoogleSheetRowsBatch(spreadsheetId, sheetName, headers, updates, access);
-    } catch (err) {
-      const friendly = friendlySheetsError(err);
-      console.warn('GOOGLE_SHEETS_AUTOMATION_ID_SYNC_SKIPPED', {
-        spreadsheetId,
-        sheetName,
-        status: friendly.status,
-        message: friendly.message
-      });
-    }
-  }
-
-  return rows;
 }
 
 async function retrySheetsBatchUpdate(operation: () => Promise<void>) {

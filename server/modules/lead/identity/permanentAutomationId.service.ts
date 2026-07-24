@@ -117,6 +117,31 @@ async function legacyAutomationIdByBrandEmail(emailBrand: EmailBrandKey, email: 
   return uniqueAutomationIds(rows.map((row) => row.automationId));
 }
 
+async function lifecycleAutomationIdByBrandEmail(emailBrand: EmailBrandKey, email: string) {
+  if (!email) return [];
+  const [states, histories] = await Promise.all([
+    prisma.customerDemoState.findMany({
+      where: {
+        emailBrand,
+        email: { equals: email, mode: 'insensitive' }
+      },
+      select: { userId: true }
+    }),
+    prisma.demoHistory.findMany({
+      where: {
+        emailBrand,
+        email: { equals: email, mode: 'insensitive' }
+      },
+      select: { userId: true }
+    })
+  ]);
+
+  return uniqueAutomationIds([
+    ...states.map((state) => state.userId),
+    ...histories.map((history) => history.userId)
+  ].filter((userId) => !clean(userId).includes('@')));
+}
+
 async function automationIdFromCanonicalLead(leadId?: string | null) {
   if (!leadId) return [];
   const identities = await prisma.leadIdentity.findMany({
@@ -291,17 +316,22 @@ export async function resolvePermanentAutomationId(input: {
     sourceRow
   });
 
-  const candidates = [
-    existing,
-    sourceAutomationId,
+  const permanentDbAutomationId = chooseUnambiguous([
     ...(await automationIdFromCanonicalLead(lead.id)),
-    ...(await automationIdFromSiblingRows(lead.id)),
-    ...(await legacyAutomationIdByBrandEmail(input.emailBrand, email))
-  ];
+    ...(await lifecycleAutomationIdByBrandEmail(input.emailBrand, email))
+  ]);
+  const fallbackCandidates = permanentDbAutomationId
+    ? [permanentDbAutomationId]
+    : [
+        existing,
+        sourceAutomationId,
+        ...(await automationIdFromSiblingRows(lead.id)),
+        ...(await legacyAutomationIdByBrandEmail(input.emailBrand, email))
+      ];
   const persisted = await persistIdentity({
     row: input.row,
     workspaceId: workspace.id,
-    candidateAutomationIds: candidates,
+    candidateAutomationIds: fallbackCandidates,
     sourceRow,
     leadId: lead.id
   });

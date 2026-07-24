@@ -1,8 +1,9 @@
 import { ExcelRow } from '../../src/types';
-import { ensureRequiredColumns, ensureSheetAutomationIds, googleSheetAccessForWorkspace, readSheetRows } from '../googleSheets';
+import { ensureRequiredColumns, googleSheetAccessForWorkspace, readSheetRows } from '../googleSheets';
 import { buildProcessLeadPlan } from '../leadWorkflow';
 import { applyDbTruthToRows } from '../scheduleDb';
 import type { EmailBrandKey } from '../../src/lib/emailBrand';
+import { ensureWorkflowAutomationIds } from '../workflowAutomationIds';
 
 export function createSheetSyncService() {
   const sheetProcessingLocks = new Set<string>();
@@ -66,13 +67,15 @@ export function createSheetSyncService() {
           __spreadsheetId: spreadsheetId,
           __sheetName: sheetName
         })), emailBrand);
-        const rows = await ensureSheetAutomationIds(
+        const rows = await ensureWorkflowAutomationIds(dbRows, {
+          sourceType: 'google-sheet',
           spreadsheetId,
           sheetName,
           headers,
-          dbRows,
-          sheetAccess
-        );
+          workspaceKey: emailBrand,
+          emailBrand,
+          googleAccountKey: sheetAccess.googleAccountKey
+        });
         const plan = await buildProcessLeadPlan(rows);
         return {
           rows,

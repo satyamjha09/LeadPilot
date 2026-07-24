@@ -4,7 +4,6 @@ import { getLeadStatusParse, LEAD_STATUS, normalizeHeader, normalizeLeadStatus }
 import { findScheduledMeetLinkFromDb } from '../scheduleDb';
 import { hasGoogleMeetLink, isValidEmail } from '../leadWorkflow';
 import { normalizeDisplayDate } from '../../src/lib/dateFormat';
-import { createNewAutomationId } from '../emailIdentity';
 import type { EmailBrandKey } from '../../src/lib/emailBrand';
 
 const validationRemark = (field: string) => `${field} is missing. Add it in the Excel row before scheduling.`;
@@ -145,7 +144,7 @@ export function normalizeRows(rows: Record<string, any>[], options?: { idPrefix?
 
     const automationId = String(
       findValueInRow(row, ['automation_id', 'Automation ID', 'automation id', 'AutomationId']) || ''
-    ).trim() || createNewAutomationId();
+    ).trim();
 
     const rawLeadStatus = String(
       findValueInRow(row, ['lead_status', 'Lead Status', 'lead status', 'Lead_Status', 'Status', 'status']) || ''
