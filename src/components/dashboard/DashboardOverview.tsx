@@ -9,13 +9,9 @@ import {
   Send,
   Sparkles,
   TrendingUp,
-  UserCheck,
-  Users,
-  XCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { LEAD_STATUS } from '@/src/lib/leadStatus';
 import { canProcessLead } from '@/src/lib/rowUtils';
 import { AuthStatus, DashboardActivityEvent, DashboardHealthSummary, DashboardTrendPoint, ExcelRow } from '@/src/types';
 import { emailBrandLabel, type EmailBrandKey } from '@/src/lib/emailBrand';
@@ -150,8 +146,6 @@ export default function DashboardOverview({
         </Card>
       </div>
 
-      <Pipeline stats={stats} total={total} />
-
       <div className="grid items-start gap-4 xl:grid-cols-[1fr_1fr_1.15fr]">
         <ActivityCard events={activityEvents.slice(0, 5)} onViewAllActivity={onViewAllActivity} />
         <LeadsStatusChart slices={statusSlices} total={stats.total} />
@@ -201,45 +195,6 @@ function LegendDot({ color, label, value }: { color: string; label: string; valu
       <span className={`h-2.5 w-2.5 rounded-full ${color}`} />
       <span className="min-w-8 font-semibold">{value}</span>
       <span className="text-muted-foreground">{label}</span>
-    </div>
-  );
-}
-
-function Pipeline({ stats, total }: { stats: DashboardStats; total: number }) {
-  const items = [
-    { label: 'Imported', value: stats.total, icon: Users, color: 'sky' },
-    { label: 'Ready to Schedule', value: stats.readyToSchedule, icon: Send, color: 'blue' },
-    { label: 'Scheduled Leads', value: stats.demoScheduled, icon: CalendarCheck2, color: 'cyan' },
-    { label: 'Demo Done', value: stats.demoDone, icon: CheckCircle2, color: 'green' },
-    { label: 'Not Attended', value: stats.noResponse, icon: Mail, color: 'orange' },
-    { label: 'Failed / Needs Fix', value: stats.failed, icon: AlertTriangle, color: 'red' }
-  ];
-
-  return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-      {items.map((item, index) => {
-        const Icon = item.icon;
-        const percent = Math.round((item.value / total) * 100);
-        return (
-          <div key={item.label} className="relative">
-            <Card className="tk-premium-card h-full">
-              <CardContent className="flex items-center gap-3 p-3">
-                <div className={`tk-pipeline-icon tk-pipeline-${item.color}`}>
-                  <Icon className="h-4 w-4" />
-                </div>
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold text-muted-foreground">{item.label}</p>
-                  <div className="text-lg font-bold">{item.value}</div>
-                  <p className="text-xs text-muted-foreground">{percent}%</p>
-                </div>
-              </CardContent>
-            </Card>
-            {index < items.length - 1 && (
-              <ArrowRight className="absolute -right-3 top-1/2 z-10 hidden h-5 w-5 -translate-y-1/2 text-muted-foreground xl:block" />
-            )}
-          </div>
-        );
-      })}
     </div>
   );
 }
