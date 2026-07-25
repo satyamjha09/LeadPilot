@@ -140,8 +140,8 @@ export default function DashboardOverview({
 
       <Pipeline stats={stats} total={total} />
 
-      <div className="grid items-start gap-4 xl:grid-cols-[1fr_1.15fr]">
-        <ActivityCard events={activityEvents.slice(0, 5)} onViewAllActivity={onViewAllActivity} />
+      <div className="grid items-stretch gap-4 xl:grid-cols-[1fr_1.15fr]">
+        <ActivityCard events={activityEvents.slice(0, 2)} onViewAllActivity={onViewAllActivity} />
         <TrendChart data={trendData} />
       </div>
     </div>
@@ -233,19 +233,17 @@ function Pipeline({ stats, total }: { stats: DashboardStats; total: number }) {
 
 function ActivityCard({ events, onViewAllActivity }: { events: DashboardActivityEvent[]; onViewAllActivity: () => void }) {
   return (
-    <Card className="tk-premium-card h-fit overflow-hidden">
-      <CardHeader className="flex flex-row items-center justify-between px-4 pb-3 pt-4">
+    <Card className="tk-premium-card flex h-full min-h-[220px] flex-col overflow-hidden">
+      <CardHeader className="px-4 pb-3 pt-4">
         <CardTitle className="flex items-center gap-2 text-base">
           Recent Automation Activity
         </CardTitle>
-        <span className="inline-flex items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 text-xs text-muted-foreground shadow-sm">
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          Database History
-        </span>
       </CardHeader>
-      <CardContent className="px-4 pb-4">
+      <CardContent className="flex flex-1 flex-col px-4 pb-4">
         {events.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No automation activity recorded yet.</p>
+          <div className="flex flex-1 items-center">
+            <p className="text-sm text-muted-foreground">No automation activity recorded yet.</p>
+          </div>
         ) : (
           <div className="relative space-y-3">
             <span className="absolute left-[7px] top-5 h-[calc(100%-2.5rem)] w-px bg-slate-200 dark:bg-slate-800" />
@@ -262,7 +260,7 @@ function ActivityCard({ events, onViewAllActivity }: { events: DashboardActivity
             ))}
           </div>
         )}
-        <Button type="button" variant="ghost" size="sm" className="mt-3 h-8 w-full rounded-xl" onClick={onViewAllActivity}>
+        <Button type="button" variant="ghost" size="sm" className="mt-auto h-8 w-full rounded-xl" onClick={onViewAllActivity}>
           View All Activity <ArrowRight className="h-4 w-4" />
         </Button>
       </CardContent>
@@ -383,12 +381,12 @@ function TrendChart({ data }: { data: DashboardTrendPoint[] }) {
     .join(' ');
 
   return (
-    <Card className="tk-premium-card h-fit">
+    <Card className="tk-premium-card flex h-full min-h-[220px] flex-col">
       <CardHeader className="flex flex-row items-center justify-between px-4 pb-2 pt-4">
         <CardTitle className="text-base">Daily Scheduled Leads</CardTitle>
         <span className="rounded-md border px-2 py-1 text-xs text-muted-foreground">Last 7 Days</span>
       </CardHeader>
-      <CardContent className="px-4 pb-4">
+      <CardContent className="flex flex-1 items-center px-4 pb-4">
         <svg viewBox="0 0 360 160" className="h-40 w-full overflow-visible">
           <defs>
             <linearGradient id="tkTrend" x1="0" x2="0" y1="0" y2="1">
