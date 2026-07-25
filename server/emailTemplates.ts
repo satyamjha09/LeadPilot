@@ -82,6 +82,10 @@ const EMAIL_BRANDS: Record<EmailBrandKey, EmailBrandConfig> = {
   }
 };
 
+const AWT_EMAIL_LOGO_PATH = '/images/email/anywheretally-logo.png';
+const AWT_CONFIRMATION_IMAGE_PATH = '/images/email/anywheretally-demo-confirmation.png';
+const AWT_THANK_YOU_IMAGE_PATH = '/images/email/anywheretally-demo-thankyou.png';
+
 function getEmailBrand(value: unknown): EmailBrandConfig {
   return EMAIL_BRANDS[coerceStoredEmailBrand(value)];
 }
@@ -635,180 +639,171 @@ function buildTallyKonnectScheduledHtml(input: DemoEmailInput) {
 </html>`;
 }
 
-function awtCheckItem(text: string) {
-  return `
-    <tr>
-      <td width="34" valign="top" style="width:34px; padding:7px 0; vertical-align:top;">
-        <span style="display:inline-block; width:21px; height:21px; border-radius:50%; background:#005bd7; color:#ffffff; font-size:13px; line-height:21px; text-align:center; font-weight:800;">&#10003;</span>
-      </td>
-      <td valign="top" style="padding:7px 0; font-size:15px; line-height:23px; color:#222222;">${escapeHtml(text)}</td>
-    </tr>
-  `;
-}
-
-function awtDetailRow(icon: string, label: string, value: string) {
-  return `
-    <tr>
-      <td width="64" align="center" valign="middle" style="width:64px; padding:13px 0; border-bottom:1px solid #eef1f6;">
-        <span style="display:inline-block; width:34px; height:34px; border-radius:50%; background:#edf5ff; color:#005bd7; font-size:18px; line-height:34px;">${icon}</span>
-      </td>
-      <td width="108" valign="middle" style="width:108px; padding:13px 8px; border-bottom:1px solid #eef1f6; font-size:15px; line-height:22px; color:#111827; font-weight:800;">${escapeHtml(label)}:</td>
-      <td valign="middle" style="padding:13px 8px; border-bottom:1px solid #eef1f6; font-size:15px; line-height:22px; color:#111827;">${escapeHtml(value || '-')}</td>
-    </tr>
-  `;
-}
-
 function buildAnyWhereTallyScheduledHtml(input: DemoEmailInput, brand: EmailBrandConfig) {
   const customerName = escapeHtml(String(input.fullName || '').trim() || 'there');
   const meetLink = escapeHtml(input.meetLink || '#');
   const demoDate = escapeHtml(input.date || '-');
   const demoTime = escapeHtml(input.time || '-');
-  const logoUrl = escapeHtml(brandLogoUrl(brand));
+  const logoUrl = escapeHtml(publicAssetUrl(AWT_EMAIL_LOGO_PATH));
+  const sideImageUrl = escapeHtml(publicAssetUrl(AWT_CONFIRMATION_IMAGE_PATH));
   const websiteUrl = escapeHtml(brand.websiteUrl);
   const websiteLabel = escapeHtml(brand.websiteLabel);
   const tagline = escapeHtml(brand.tagline || 'Your Tally. Anywhere. Anytime.');
 
-  return `<!doctype html>
+  return `<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="color-scheme" content="light">
-    <meta name="supported-color-schemes" content="light">
-    <title>AnyWhereTally Demo Confirmation</title>
-    <style>
-      @media only screen and (max-width: 640px) {
-        .awt-wrapper { width:100% !important; }
-        .awt-pad { padding-left:22px !important; padding-right:22px !important; }
-        .awt-hero-left, .awt-hero-right { display:block !important; width:100% !important; }
-        .awt-hero-right { padding-top:24px !important; text-align:left !important; }
-        .awt-title { font-size:34px !important; line-height:42px !important; }
-        .awt-footer-column { display:block !important; width:100% !important; text-align:left !important; padding:4px 0 !important; }
-      }
-    </style>
-  </head>
-  <body style="margin:0; padding:0; background:#f2f5fb; font-family:Arial, Helvetica, sans-serif; color:#111827;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f2f5fb;">
-      <tr>
-        <td align="center" style="padding:18px 10px;">
-          <table class="awt-wrapper" role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:640px; background:#ffffff; border:1px solid #dde5f1; border-radius:14px; overflow:hidden;">
-            <tr>
-              <td class="awt-pad" style="padding:26px 34px 22px; background:#ffffff; border-bottom:3px solid #f4c514;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                  <tr>
-                    <td width="92" valign="middle" style="width:92px;">
-                      <img src="${logoUrl}" alt="AnyWhereTally logo" width="78" style="display:block; width:78px; height:auto; border:0; outline:none;">
-                    </td>
-                    <td valign="middle" style="font-size:23px; line-height:30px; font-weight:800; color:#004aad;">AnyWhereTally</td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="awt-pad" style="padding:44px 34px 28px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                  <tr>
-                    <td class="awt-hero-left" width="58%" valign="top" style="width:58%; vertical-align:top;">
-                      <div style="font-size:21px; line-height:30px; color:#111827; margin-bottom:20px;">Hi ${customerName},</div>
-                      <div class="awt-title" style="font-size:42px; line-height:52px; font-weight:900; color:#0050c8; letter-spacing:-0.6px;">
-                        Your Tally Mobile App<br>demo is confirmed.
-                      </div>
-                      <p style="margin:22px 0 0; font-size:17px; line-height:29px; color:#222222;">
-                        We're excited to show you how AnyWhereTally can simplify your business on the go.
-                      </p>
-                    </td>
-                    <td class="awt-hero-right" width="42%" align="center" valign="middle" style="width:42%; vertical-align:middle;">
-                      <table role="presentation" width="190" height="260" cellpadding="0" cellspacing="0" border="0" style="width:190px; height:260px; background:#07152d; border-radius:26px; border:6px solid #07152d; box-shadow:0 16px 30px rgba(0,74,173,0.22);">
-                        <tr>
-                          <td style="padding:12px; background:#ffffff; border-radius:20px;">
-                            <div style="background:#005bd7; color:#ffffff; padding:10px 12px; border-radius:14px 14px 0 0; font-size:12px; font-weight:800;">Welcome back</div>
-                            <div style="padding:12px 8px; font-size:11px; line-height:18px; color:#111827;">
-                              <strong>Business Overview</strong><br>
-                              Total Sales&nbsp;&nbsp;<strong>&#8377; 23,76,000</strong><br>
-                              Receivables&nbsp;&nbsp;<strong>&#8377; 1,75,000</strong>
-                            </div>
-                            <div style="padding:0 8px 8px;">
-                              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                                <tr>
-                                  <td style="height:44px; vertical-align:bottom;"><span style="display:inline-block;width:12px;height:22px;background:#7ab6ff;"></span></td>
-                                  <td style="height:44px; vertical-align:bottom;"><span style="display:inline-block;width:12px;height:34px;background:#005bd7;"></span></td>
-                                  <td style="height:44px; vertical-align:bottom;"><span style="display:inline-block;width:12px;height:16px;background:#7ab6ff;"></span></td>
-                                  <td style="height:44px; vertical-align:bottom;"><span style="display:inline-block;width:12px;height:40px;background:#005bd7;"></span></td>
-                                  <td style="height:44px; vertical-align:bottom;"><span style="display:inline-block;width:12px;height:28px;background:#7ab6ff;"></span></td>
-                                </tr>
-                              </table>
-                            </div>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="awt-pad" style="padding:0 34px 24px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f8fbff; border:1px solid #dce7f6; border-left:6px solid #f4c514; border-radius:12px;">
-                  <tr>
-                    <td style="padding:22px 26px;">
-                      <div style="font-size:19px; line-height:26px; color:#004aad; font-weight:900; text-transform:uppercase; margin-bottom:10px;">What we'll cover</div>
-                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                        ${awtCheckItem('Real-time Tally data sync across devices')}
-                        ${awtCheckItem('Live access to sales, profit, receivables, and payables')}
-                        ${awtCheckItem('Automatically create vouchers in Tally by uploading your bills')}
-                        ${awtCheckItem('Secure multi-user access with role-based permissions')}
-                      </table>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="awt-pad" style="padding:0 34px 24px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border:1px solid #dfe7f2; border-radius:12px; overflow:hidden;">
-                  ${awtDetailRow('&#128197;', 'Date', demoDate)}
-                  ${awtDetailRow('&#128336;', 'Time', demoTime)}
-                  ${awtDetailRow('&#128205;', 'Venue', 'Google Meet')}
-                </table>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="awt-pad" style="padding:0 34px 28px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                  <tr>
-                    <td align="center" style="background:#005bd7; background-image:linear-gradient(135deg,#0066ff 0%,#004aad 100%); border-radius:10px; box-shadow:0 8px 18px rgba(0,74,173,0.22);">
-                      <a href="${meetLink}" style="display:block; padding:17px 20px; color:#ffffff; text-decoration:none; font-size:20px; line-height:26px; font-weight:900;">Join Meeting Now&nbsp;&nbsp;&#8594;</a>
-                    </td>
-                  </tr>
-                </table>
-                <p style="margin:26px 0 0; font-size:15px; line-height:25px; color:#222222;">
-                  Looking forward to meeting you!<br>
-                  <strong style="color:#004aad;">- ${escapeHtml(brand.signatureName)}</strong>
-                </p>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="awt-pad" style="padding:0 34px 22px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f0f6ff; border-radius:10px;">
-                  <tr>
-                    <td class="awt-footer-column" valign="middle" style="padding:16px 18px; font-size:15px; line-height:22px; color:#0b3378;">${tagline}</td>
-                    <td class="awt-footer-column" align="right" valign="middle" style="padding:16px 18px; font-size:14px; line-height:22px;">
-                      <a href="${websiteUrl}" style="color:#0b3378; text-decoration:none;">www.${websiteLabel}</a>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AnyWhereTally - Demo Confirmation</title>
+</head>
+<body style="margin:0; padding:0; background-color:#eef1f6; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef1f6; padding:30px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:14px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,0.06);">
+          <tr>
+            <td style="background-color:#f5b400; height:5px; line-height:5px; font-size:0;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td style="padding:28px 40px 20px 40px; border-bottom:1px solid #eef1f6;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="left" valign="middle">
+                    <img src="${logoUrl}" alt="AnyWhereTally Logo" height="46" style="display:block; border:0; outline:none;" />
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:36px 40px 10px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td valign="top" width="58%" style="padding-right:20px;">
+                    <p style="margin:0 0 14px 0; font-size:17px; color:#2b2f38;">Hi ${customerName},</p>
+                    <h1 style="margin:0 0 18px 0; font-size:30px; line-height:1.25; color:#1a56db; font-weight:800;">
+                      Your Tally Mobile App demo is confirmed.
+                    </h1>
+                    <p style="margin:0; font-size:15px; line-height:1.6; color:#5a6270;">
+                      We're excited to show you how AnyWhereTally can simplify your business on the go.
+                    </p>
+                  </td>
+                  <td valign="top" width="42%" align="center">
+                    <img src="${sideImageUrl}" alt="App preview" width="220" style="display:block; max-width:220px; width:100%; height:auto; border:0; outline:none;" />
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:24px 40px 8px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f9fc; border-left:4px solid #f5b400; border-radius:8px;">
+                <tr>
+                  <td style="padding:24px 28px;">
+                    <p style="margin:0 0 16px 0; font-size:14px; letter-spacing:0.5px; color:#1a56db; font-weight:700;">WHAT WE'LL COVER</p>
+                    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
+                      <tr>
+                        <td valign="top" style="padding-right:10px; font-size:15px; color:#1a56db;">&#10003;</td>
+                        <td style="font-size:14.5px; color:#3a3f4b; line-height:1.5;">Real-time Tally data sync across devices</td>
+                      </tr>
+                    </table>
+                    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
+                      <tr>
+                        <td valign="top" style="padding-right:10px; font-size:15px; color:#1a56db;">&#10003;</td>
+                        <td style="font-size:14.5px; color:#3a3f4b; line-height:1.5;">Live access to sales, profit, receivables, and payables</td>
+                      </tr>
+                    </table>
+                    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
+                      <tr>
+                        <td valign="top" style="padding-right:10px; font-size:15px; color:#1a56db;">&#10003;</td>
+                        <td style="font-size:14.5px; color:#3a3f4b; line-height:1.5;">Automatically create vouchers in Tally by simply uploading your bills.</td>
+                      </tr>
+                    </table>
+                    <table role="presentation" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td valign="top" style="padding-right:10px; font-size:15px; color:#1a56db;">&#10003;</td>
+                        <td style="font-size:14.5px; color:#3a3f4b; line-height:1.5;">Secure multi-user access with role-based permissions</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 40px 8px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e8ebf0; border-radius:8px;">
+                <tr>
+                  <td style="padding:16px 24px; border-bottom:1px solid #eef1f6;">
+                    <table role="presentation" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="font-size:15px; padding-right:12px;">&#128197;</td>
+                        <td style="font-size:14px; color:#1a1f29; font-weight:700; padding-right:8px;">Date:</td>
+                        <td style="font-size:14px; color:#5a6270;">${demoDate}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:16px 24px; border-bottom:1px solid #eef1f6;">
+                    <table role="presentation" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="font-size:15px; padding-right:12px;">&#128337;</td>
+                        <td style="font-size:14px; color:#1a1f29; font-weight:700; padding-right:8px;">Time:</td>
+                        <td style="font-size:14px; color:#5a6270;">${demoTime}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:16px 24px;">
+                    <table role="presentation" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td style="font-size:15px; padding-right:12px;">&#128205;</td>
+                        <td style="font-size:14px; color:#1a1f29; font-weight:700; padding-right:8px;">Venue:</td>
+                        <td style="font-size:14px; color:#5a6270;"><a href="${meetLink}" target="_blank" style="color:#1a56db; text-decoration:none;">Google Meet</a></td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:24px 40px 8px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="border-radius:8px; background-color:#1a56db;">
+                    <a href="${meetLink}" target="_blank" style="display:block; padding:16px 0; font-size:16px; font-weight:700; color:#ffffff; text-decoration:none;">
+                      Join Meeting Now &nbsp;&#8594;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:26px 40px 30px 40px;">
+              <p style="margin:0 0 4px 0; font-size:14px; color:#5a6270;">Looking forward to meeting you!</p>
+              <p style="margin:0; font-size:14px; color:#1a1f29;">&ndash; Team <span style="color:#1a56db; font-weight:700;">AnyWhereTally</span></p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#f7f9fc; padding:18px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="left" style="font-size:13px; color:#1a56db; font-weight:600;">${tagline}</td>
+                  <td align="right" style="font-size:13px; color:#1a56db;"><a href="${websiteUrl}" target="_blank" style="color:#1a56db; text-decoration:none;">www.${websiteLabel}</a></td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
 </html>`;
 }
 
@@ -1444,190 +1439,169 @@ function buildAnyWhereTallyRescheduleHtml(input: RescheduleEmailInput, brand: Em
 </html>`;
 }
 
-function awtProductCard(icon: string, title: string, description: string, href: string) {
-  const safeHref = escapeHtml(href);
-  return `
-    <td class="awt-product-column" width="33.33%" valign="top" style="width:33.33%; padding:0 8px; vertical-align:top;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border:1px solid #dfe7f2; border-radius:10px; background:#ffffff;">
-        <tr>
-          <td align="center" style="padding:22px 18px 20px;">
-            <div style="display:inline-block; width:62px; height:62px; border-radius:50%; background:#eef6ff; color:#005bd7; font-size:30px; line-height:62px; margin-bottom:12px;">${icon}</div>
-            <div style="font-size:16px; line-height:22px; color:#0050c8; font-weight:900; margin-bottom:10px;">${escapeHtml(title)}</div>
-            <div style="min-height:62px; font-size:13px; line-height:21px; color:#111827;">${escapeHtml(description)}</div>
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:16px;">
-              <tr>
-                <td align="center" style="background:#005bd7; border-radius:7px;">
-                  <a href="${safeHref}" style="display:block; padding:11px 10px; color:#ffffff; text-decoration:none; font-size:13px; line-height:18px; font-weight:800;">Explore Now&nbsp;&nbsp;&#8594;</a>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>
-    </td>
-  `;
-}
-
 function buildAnyWhereTallyThankYouHtml(input: ThankYouEmailInput, brand: EmailBrandConfig) {
   const customerName = escapeHtml(String(input.fullName || '').trim() || 'there');
-  const logoUrl = escapeHtml(brandLogoUrl(brand));
+  const logoUrl = escapeHtml(publicAssetUrl(AWT_EMAIL_LOGO_PATH));
+  const sideImageUrl = escapeHtml(publicAssetUrl(AWT_THANK_YOU_IMAGE_PATH));
   const websiteUrl = escapeHtml(brand.websiteUrl);
+  const websiteLabel = escapeHtml(brand.websiteLabel);
   const contactEmail = escapeHtml(brand.contactEmail);
   const phone = escapeHtml(brand.phone || '+91 83759 38947');
+  const trialLink = `mailto:${contactEmail}?subject=Start%20My%20Free%2030-Day%20Trial`;
 
-  return `<!doctype html>
+  return `<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="color-scheme" content="light">
-    <meta name="supported-color-schemes" content="light">
-    <title>AnyWhereTally Demo Thank You</title>
-    <style>
-      @media only screen and (max-width: 680px) {
-        .awt-wrapper { width:100% !important; }
-        .awt-pad { padding-left:22px !important; padding-right:22px !important; }
-        .awt-hero-left, .awt-hero-right { display:block !important; width:100% !important; }
-        .awt-hero-right { padding-top:22px !important; text-align:left !important; }
-        .awt-product-column { display:block !important; width:100% !important; padding:0 0 14px !important; }
-        .awt-trial-column { display:block !important; width:100% !important; text-align:left !important; padding:10px 0 !important; }
-        .awt-footer-column { display:block !important; width:100% !important; text-align:left !important; padding:7px 0 !important; }
-      }
-    </style>
-  </head>
-  <body style="margin:0; padding:0; background:#f2f5fb; font-family:Arial, Helvetica, sans-serif; color:#111827;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f2f5fb;">
-      <tr>
-        <td align="center" style="padding:18px 10px;">
-          <table class="awt-wrapper" role="presentation" width="660" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:660px; background:#ffffff; border-radius:8px; overflow:hidden;">
-            <tr>
-              <td class="awt-pad" style="padding:26px 34px 20px; border-bottom:3px solid #f4c514;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                  <tr>
-                    <td width="82" valign="middle" style="width:82px;">
-                      <img src="${logoUrl}" alt="AnyWhereTally logo" width="68" style="display:block; width:68px; height:auto; border:0; outline:none;">
-                    </td>
-                    <td valign="middle" style="font-size:20px; line-height:28px; color:#004aad; font-weight:900;">AnyWhereTally</td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="awt-pad" style="padding:34px 34px 24px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                  <tr>
-                    <td class="awt-hero-left" width="48%" valign="top" style="width:48%; vertical-align:top;">
-                      <div style="font-size:20px; line-height:28px; font-weight:800; color:#111827; margin-bottom:16px;">Hi ${customerName},</div>
-                      <div style="font-size:37px; line-height:48px; font-weight:900; color:#0050c8; letter-spacing:-0.5px;">Thank you for<br>attending the demo!</div>
-                      <p style="margin:18px 0 0; font-size:16px; line-height:27px; color:#111827;">
-                        We're glad you took the time to explore AnyWhereTally with us.
-                      </p>
-                      <p style="margin:16px 0 0; font-size:16px; line-height:27px; color:#111827;">
-                        To help you experience the app in action, we have <strong style="color:#0050c8;">something special for you.</strong>
-                      </p>
-                    </td>
-                    <td class="awt-hero-right" width="52%" align="right" valign="middle" style="width:52%; vertical-align:middle;">
-                      <table role="presentation" width="280" cellpadding="0" cellspacing="0" border="0" style="width:280px; max-width:100%;">
-                        <tr>
-                          <td align="center">
-                            <table role="presentation" width="185" cellpadding="0" cellspacing="0" border="0" style="display:inline-table; width:185px; background:#ffffff; border:7px solid #111827; border-radius:18px; box-shadow:0 12px 28px rgba(0,74,173,0.14);">
-                              <tr>
-                                <td style="padding:10px;">
-                                  <div style="background:#005bd7; color:#ffffff; padding:9px 10px; border-radius:9px; font-size:11px; line-height:15px; font-weight:800;">Business Overview</div>
-                                  <div style="padding:12px 4px; font-size:11px; line-height:18px; color:#111827;">Sales &#8377;25,75,000<br>Receivables &#8377;8,75,000<br>Trend &#9608;&#9608;&#9605;&#9608;&#9603;&#9608;</div>
-                                </td>
-                              </tr>
-                            </table>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="awt-pad" style="padding:0 34px 24px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#fffaf0; border:1px solid #f4e1b4; border-radius:12px;">
-                  <tr>
-                    <td class="awt-trial-column" width="170" align="center" valign="middle" style="width:170px; padding:26px 20px;">
-                      <span style="display:inline-block; width:92px; height:92px; border-radius:50%; background:#fff3cc; font-size:50px; line-height:92px;">&#127873;</span>
-                    </td>
-                    <td class="awt-trial-column" valign="middle" style="padding:26px 28px 26px 0;">
-                      <div style="font-size:22px; line-height:30px; color:#0050c8; font-weight:900; margin-bottom:8px;">Try it for real - on us!</div>
-                      <div style="font-size:16px; line-height:26px; color:#111827;">
-                        Get full access to a <strong>live demo setup of a company</strong> and experience the complete app for <strong>30 days - absolutely free.</strong>
-                      </div>
-                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:12px;">
-                        ${awtCheckItem('Explore all features with real data')}
-                        ${awtCheckItem('See how it fits your daily business operations')}
-                        ${awtCheckItem('No commitment - just real experience')}
-                      </table>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="awt-pad" align="center" style="padding:0 34px 20px;">
-                <div style="font-size:20px; line-height:28px; color:#111827; font-weight:900;">Explore our value-added solutions in Tally</div>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="awt-pad" style="padding:0 26px 28px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
-                  <tr>
-                    ${awtProductCard('&#128196;', 'Smart TDS', 'Automated TDS calculation, deduction tracking and seamless reporting in Tally.', websiteUrl)}
-                    ${awtProductCard('&#127974;', 'Bank Reconciliation', 'Auto-match bank statements with Tally entries and reconcile in minutes.', websiteUrl)}
-                    ${awtProductCard('&#128221;', 'GST Reconciliation', 'Match your GSTR-2B data with purchases in Tally with ease and accuracy.', websiteUrl)}
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="awt-pad" style="padding:0 34px 28px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#f0f6ff; border:1px solid #dce7f6; border-radius:10px;">
-                  <tr>
-                    <td width="100" align="center" valign="middle" style="width:100px; padding:22px 8px; font-size:48px;">&#128640;</td>
-                    <td valign="middle" style="padding:22px 12px;">
-                      <div style="font-size:20px; line-height:28px; color:#0050c8; font-weight:900;">Ready to get started?</div>
-                      <div style="margin-top:6px; font-size:14px; line-height:22px; color:#111827;">Our team will be happy to help you set up your account and make the most of your free trial.</div>
-                    </td>
-                    <td class="awt-trial-column" width="210" align="right" valign="middle" style="width:210px; padding:22px 20px;">
-                      <a href="mailto:${contactEmail}?subject=Start%20My%20Free%2030-Day%20Trial" style="display:inline-block; padding:13px 16px; background:#005bd7; color:#ffffff; text-decoration:none; border-radius:8px; font-size:13px; line-height:18px; font-weight:900;">Start My Free 30-Day Trial&nbsp;&#8594;</a>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="awt-pad" style="padding:0 34px 24px;">
-                <p style="margin:0; font-size:15px; line-height:25px; color:#111827;">Warm regards,<br><strong style="color:#004aad;">${escapeHtml(brand.signatureName)}</strong></p>
-              </td>
-            </tr>
-
-            <tr>
-              <td class="awt-pad" style="padding:0 34px 28px;">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#edf5ff; border-radius:8px;">
-                  <tr>
-                    <td class="awt-footer-column" align="center" style="padding:15px 10px; font-size:14px; line-height:20px; color:#004aad;">&#9993;&nbsp; <a href="mailto:${contactEmail}" style="color:#004aad; text-decoration:none;">${contactEmail}</a></td>
-                    <td class="awt-footer-column" align="center" style="padding:15px 10px; font-size:14px; line-height:20px; color:#004aad;">&#9742;&nbsp; ${phone}</td>
-                    <td class="awt-footer-column" align="center" style="padding:15px 10px; font-size:14px; line-height:20px; color:#004aad;">&#127760;&nbsp; <a href="${websiteUrl}" style="color:#004aad; text-decoration:none;">www.${escapeHtml(brand.websiteLabel)}</a></td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AnyWhereTally - Thank You for Attending Demo</title>
+</head>
+<body style="margin:0; padding:0; background-color:#eef1f6; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef1f6; padding:30px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="640" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:14px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,0.06);">
+          <tr>
+            <td style="background-color:#f5b400; height:5px; line-height:5px; font-size:0;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td style="padding:26px 40px 18px 40px; border-bottom:1px solid #eef1f6;">
+              <img src="${logoUrl}" alt="AnyWhereTally Logo" height="40" style="display:block; border:0; outline:none;" />
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:34px 40px 10px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td valign="top" width="55%" style="padding-right:16px;">
+                    <p style="margin:0 0 14px 0; font-size:16px; color:#2b2f38;">Hi ${customerName},</p>
+                    <h1 style="margin:0 0 18px 0; font-size:28px; line-height:1.25; color:#1a56db; font-weight:800;">
+                      Thank you for attending the demo!
+                    </h1>
+                    <p style="margin:0 0 14px 0; font-size:14.5px; line-height:1.6; color:#5a6270;">
+                      We're glad you took the time to explore AnyWhereTally with us.
+                    </p>
+                    <p style="margin:0; font-size:14.5px; line-height:1.6; color:#5a6270;">
+                      To help you experience the app in action, we have <strong style="color:#1a1f29;">something special for you.</strong>
+                    </p>
+                  </td>
+                  <td valign="top" width="45%" align="center">
+                    <img src="${sideImageUrl}" alt="AnyWhereTally dashboard preview" width="260" style="display:block; max-width:260px; width:100%; height:auto; border:0; outline:none;" />
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:26px 40px 8px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#fdf3e3; border-radius:10px;">
+                <tr>
+                  <td width="90" valign="top" align="center" style="padding:28px 0 28px 24px;">
+                    <span style="font-size:44px; line-height:1;">&#127873;</span>
+                  </td>
+                  <td valign="top" style="padding:28px 24px 28px 18px;">
+                    <p style="margin:0 0 10px 0; font-size:18px; color:#1a56db; font-weight:800;">Try it for real &ndash; on us!</p>
+                    <p style="margin:0 0 16px 0; font-size:14px; line-height:1.6; color:#3a3f4b;">
+                      Get full access to a <strong>live demo setup of a company</strong> and experience the complete app for <strong>30 days &ndash; absolutely free.</strong>
+                    </p>
+                    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:8px;">
+                      <tr>
+                        <td valign="top" style="padding-right:10px; font-size:14px; color:#f5b400;">&#10003;</td>
+                        <td style="font-size:13.5px; color:#3a3f4b; line-height:1.5;">Explore all features with real data</td>
+                      </tr>
+                    </table>
+                    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:8px;">
+                      <tr>
+                        <td valign="top" style="padding-right:10px; font-size:14px; color:#f5b400;">&#10003;</td>
+                        <td style="font-size:13.5px; color:#3a3f4b; line-height:1.5;">See how it fits your daily business operations</td>
+                      </tr>
+                    </table>
+                    <table role="presentation" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td valign="top" style="padding-right:10px; font-size:14px; color:#f5b400;">&#10003;</td>
+                        <td style="font-size:13.5px; color:#3a3f4b; line-height:1.5;">No commitment &ndash; just real experience</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:34px 40px 20px 40px; text-align:center; border-top:1px solid #eef1f6;">
+              <p style="margin:0; font-size:19px; color:#1a1f29; font-weight:800;">Explore our value-added solutions in Tally</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 40px 10px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td valign="top" width="33%" style="padding:0 6px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e8ebf0; border-radius:10px;">
+                      <tr><td align="center" style="padding:26px 16px 14px 16px;"><span style="font-size:34px;">&#128196;</span></td></tr>
+                      <tr><td align="center" style="padding:0 16px 10px 16px;"><p style="margin:0; font-size:15px; color:#1a56db; font-weight:700;">Smart TDS</p></td></tr>
+                      <tr><td align="center" style="padding:0 16px 20px 16px;"><p style="margin:0; font-size:12.5px; color:#5a6270; line-height:1.55;">Automated TDS calculation, deduction tracking and seamless reporting in Tally.</p></td></tr>
+                      <tr><td align="center" style="padding:0 16px 22px 16px;"><a href="${websiteUrl}" target="_blank" style="display:inline-block; background-color:#1a56db; color:#ffffff; font-size:12.5px; font-weight:700; text-decoration:none; padding:11px 18px; border-radius:6px;">Explore Now &nbsp;&#8594;</a></td></tr>
+                    </table>
+                  </td>
+                  <td valign="top" width="33%" style="padding:0 6px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e8ebf0; border-radius:10px;">
+                      <tr><td align="center" style="padding:26px 16px 14px 16px;"><span style="font-size:34px;">&#127974;</span></td></tr>
+                      <tr><td align="center" style="padding:0 16px 10px 16px;"><p style="margin:0; font-size:15px; color:#1a56db; font-weight:700;">Bank Reconciliation</p></td></tr>
+                      <tr><td align="center" style="padding:0 16px 20px 16px;"><p style="margin:0; font-size:12.5px; color:#5a6270; line-height:1.55;">Auto-match bank statements with Tally entries and reconcile in minutes.</p></td></tr>
+                      <tr><td align="center" style="padding:0 16px 22px 16px;"><a href="${websiteUrl}" target="_blank" style="display:inline-block; background-color:#1a56db; color:#ffffff; font-size:12.5px; font-weight:700; text-decoration:none; padding:11px 18px; border-radius:6px;">Explore Now &nbsp;&#8594;</a></td></tr>
+                    </table>
+                  </td>
+                  <td valign="top" width="33%" style="padding:0 6px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e8ebf0; border-radius:10px;">
+                      <tr><td align="center" style="padding:26px 16px 14px 16px;"><span style="font-size:34px;">&#128196;</span></td></tr>
+                      <tr><td align="center" style="padding:0 16px 10px 16px;"><p style="margin:0; font-size:15px; color:#1a56db; font-weight:700;">GST Reconciliation</p></td></tr>
+                      <tr><td align="center" style="padding:0 16px 20px 16px;"><p style="margin:0; font-size:12.5px; color:#5a6270; line-height:1.55;">Match your GSTR-2B data with purchases in Tally with ease and accuracy.</p></td></tr>
+                      <tr><td align="center" style="padding:0 16px 22px 16px;"><a href="${websiteUrl}" target="_blank" style="display:inline-block; background-color:#1a56db; color:#ffffff; font-size:12.5px; font-weight:700; text-decoration:none; padding:11px 18px; border-radius:6px;">Explore Now &nbsp;&#8594;</a></td></tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:30px 40px 8px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f0f5ff; border-radius:10px;">
+                <tr>
+                  <td width="70" valign="middle" align="center" style="padding:22px 0 22px 20px;"><span style="font-size:32px;">&#128640;</span></td>
+                  <td valign="middle" style="padding:22px 16px;">
+                    <p style="margin:0 0 6px 0; font-size:16px; color:#1a1f29; font-weight:800;">Ready to get started?</p>
+                    <p style="margin:0; font-size:13px; color:#5a6270; line-height:1.5;">Our team will be happy to help you set up your account and make the most of your free trial.</p>
+                  </td>
+                  <td valign="middle" align="right" style="padding:22px 20px;">
+                    <a href="${trialLink}" target="_blank" style="display:inline-block; white-space:nowrap; background-color:#1a56db; color:#ffffff; font-size:13px; font-weight:700; text-decoration:none; padding:13px 20px; border-radius:7px;">Start My Free 30-Day Trial &nbsp;&#8594;</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:26px 40px 30px 40px;">
+              <p style="margin:0 0 4px 0; font-size:14px; color:#5a6270;">Warm regards,</p>
+              <p style="margin:0; font-size:14px; color:#1a56db; font-weight:700;">Team AnyWhereTally</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#eef1f6; padding:18px 40px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="left" style="font-size:12.5px; color:#3a3f4b;">&#9993;&nbsp; <a href="mailto:${contactEmail}" style="color:#3a3f4b; text-decoration:none;">${contactEmail}</a></td>
+                  <td align="center" style="font-size:12.5px; color:#3a3f4b;">&#128222;&nbsp; ${phone}</td>
+                  <td align="right" style="font-size:12.5px; color:#3a3f4b;">&#127760;&nbsp; <a href="${websiteUrl}" target="_blank" style="color:#3a3f4b; text-decoration:none;">www.${websiteLabel}</a></td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
 </html>`;
 }
 

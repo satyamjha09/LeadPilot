@@ -29,12 +29,21 @@ describe('brand email template rendering', () => {
       brand: 'anywheretally'
     });
 
-    expect(scheduled.html).toContain('<title>AnyWhereTally Demo Confirmation</title>');
-    expect(scheduled.html).toContain('Your Tally Mobile App<br>demo is confirmed.');
+    expect(scheduled.html).toContain('<title>AnyWhereTally - Demo Confirmation</title>');
+    expect(scheduled.html).toContain('Your Tally Mobile App demo is confirmed.');
+    expect(scheduled.html).toContain('/images/email/anywheretally-logo.png');
+    expect(scheduled.html).toContain('/images/email/anywheretally-demo-confirmation.png');
+    expect(scheduled.html).toContain('Hi Moh Agarwal,');
+    expect(scheduled.html).toContain('23-07-2026');
+    expect(scheduled.html).toContain('14:00');
+    expect(scheduled.html).toContain('https://meet.google.com/demo');
     expect(rescheduled.html).toContain('<title>AnyWhereTally Demo Rescheduled</title>');
     expect(rescheduled.html).toContain('Your Demo Has Been<br>Rescheduled');
-    expect(thankYou.html).toContain('<title>AnyWhereTally Demo Thank You</title>');
-    expect(thankYou.html).toContain('Thank you for<br>attending the demo!');
+    expect(thankYou.html).toContain('<title>AnyWhereTally - Thank You for Attending Demo</title>');
+    expect(thankYou.html).toContain('Thank you for attending the demo!');
+    expect(thankYou.html).toContain('/images/email/anywheretally-logo.png');
+    expect(thankYou.html).toContain('/images/email/anywheretally-demo-thankyou.png');
+    expect(thankYou.html).toContain('Hi Moh Agarwal,');
   });
 
   it('uses one Not Attended template path with brand-specific product wording', () => {
